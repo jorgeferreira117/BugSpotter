@@ -6,17 +6,18 @@ class BugSpotter {
     this.recordedChunks = [];
     this.reportStatusTimeout = null;
     this.captureStatusTimeout = null;
+    this.cachedSettings = null; // Adicionar cache das configurações
   }
   
   async init() {
+    // Carregar configurações no cache
+    this.cachedSettings = await this.getSettings();
     await this.loadBugHistory();
     this.setupEventListeners();
-    // Remover esta linha:
-    // this.updateCaptureStatus('Pronto para capturar evidências', 'info');
   }
 
   setupEventListeners() {
-    // Event listeners para botões principais
+    // Event listeners for main buttons
     document.getElementById('captureScreenshot').addEventListener('click', () => this.captureScreenshot());
     document.getElementById('captureLogs').addEventListener('click', () => this.captureLogs());
     document.getElementById('captureDOM').addEventListener('click', () => this.captureDOM());
@@ -24,17 +25,17 @@ class BugSpotter {
     document.getElementById('clearHistory').addEventListener('click', () => this.clearHistory());
     document.getElementById('openSettings').addEventListener('click', () => this.openSettings());
     
-    // Event listener para o formulário de bug
+    // Event listener for bug form
     document.getElementById('bugForm').addEventListener('submit', (e) => this.submitBug(e));
     
-    // Event listener para remoção de anexos e botões do histórico
+    // Event listener for attachment removal and history buttons
     document.addEventListener('click', (e) => {
-      // Corrigir event listener para remoção de anexos
+      // Fix event listener for attachment removal
       if (e.target.closest('.remove-attachment')) {
         const index = e.target.closest('.remove-attachment').dataset.index;
         this.removeAttachment(parseInt(index));
       }
-      // Event listeners para botões do histórico
+      // Event listeners for history buttons
       if (e.target.closest('.send-btn')) {
         const index = e.target.closest('.send-btn').dataset.index;
         this.retryJiraSubmission(parseInt(index));
@@ -51,7 +52,7 @@ class BugSpotter {
     const priorityFilter = document.getElementById('filterPriority').value;
     const environmentFilter = document.getElementById('filterEnvironment').value;
     
-    // Aplicar filtros aos relatórios
+    // Apply filters to reports
     this.loadBugHistory().then(() => {
       const items = document.querySelectorAll('.history-item');
       items.forEach(item => {
@@ -76,23 +77,23 @@ class BugSpotter {
     const statusText = statusElement.querySelector('.status-text');
     const statusIcon = statusElement.querySelector('.status-icon');
     
-    // Se não há mensagem, ocultar completamente a div
+    // If no message, hide the div completely
     if (!message || message.trim() === '') {
       statusElement.style.display = 'none';
       return;
     }
     
-    // Mostrar a div e atualizar conteúdo
+    // Show the div and update content
     statusElement.style.display = 'block';
     statusText.textContent = message;
     
-    // Limpar classes anteriores
+    // Clear previous classes
     statusElement.className = 'capture-status';
     
-    // Aplicar classe baseada no tipo
+    // Apply class based on type
     statusElement.classList.add(`status-${type}`);
     
-    // Definir ícone baseado no tipo
+    // Set icon based on type
     const icons = {
       info: 'info',
       success: 'check_circle',
@@ -103,7 +104,7 @@ class BugSpotter {
     
     statusIcon.textContent = icons[type] || 'info';
     
-    // Auto-hide para todas as mensagens exceto loading
+    // Auto-hide for all messages except loading
     if (this.captureStatusTimeout) {
       clearTimeout(this.captureStatusTimeout);
     }
@@ -120,19 +121,19 @@ class BugSpotter {
     const statusText = statusElement.querySelector('.status-text');
     const statusIcon = statusElement.querySelector('.status-icon');
     
-    // Mostrar a div de status
+    // Show status div
     statusElement.style.display = 'block';
     
-    // Remover classes de status anteriores
+    // Remove previous status classes
     statusElement.classList.remove('status-info', 'status-success', 'status-error', 'status-warning', 'status-loading');
     
-    // Adicionar nova classe de status
+    // Add new status class
     statusElement.classList.add(`status-${type}`);
     
-    // Atualizar texto
+    // Update text
     statusText.textContent = message;
     
-    // Atualizar ícone baseado no tipo
+    // Update icon based on type
     const icons = {
       info: 'info',
       success: 'check_circle',
@@ -143,35 +144,35 @@ class BugSpotter {
     
     statusIcon.textContent = icons[type] || 'info';
     
-    // Limpar timeout anterior se existir
+    // Clear previous timeout if exists
     if (this.reportStatusTimeout) {
       clearTimeout(this.reportStatusTimeout);
     }
     
-    // Auto-ocultar mensagens de sucesso após 5 segundos
-    if (type === 'success') {
+    // Auto-hide messages after 3 seconds (except loading and error)
+    if (type !== 'loading' && type !== 'error') {
       this.reportStatusTimeout = setTimeout(() => {
         statusElement.style.display = 'none';
-      }, 5000);
+      }, 3000);
     }
   }
 
   async captureScreenshot() {
-    console.log('captureScreenshot iniciado');
+    console.log('captureScreenshot started');
     const button = document.getElementById('captureScreenshot');
     const btnText = button.querySelector('.btn-text');
     
-    // Verificar apenas se já está em processo
+    // Check only if already in process
     if (button.disabled) {
       return;
     }
     
-    console.log('Elementos encontrados:', { button, btnText });
+    console.log('Elements found:', { button, btnText });
     
     button.disabled = true;
-    btnText.textContent = 'Capturando...';
+    btnText.textContent = 'Capturing...';
     
-    this.updateCaptureStatus('Capturando screenshot...', 'loading');
+    this.updateCaptureStatus('Capturing screenshot...', 'loading');
     
     try {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -187,11 +188,11 @@ class BugSpotter {
       const added = this.addAttachment(attachment);
       
       if (added) {
-        this.updateCaptureStatus('Screenshot capturado com sucesso!', 'success');
+        this.updateCaptureStatus('Screenshot captured successfully!', 'success');
       }
     } catch (error) {
-      console.error('Erro ao capturar screenshot:', error);
-      this.updateCaptureStatus('Erro ao capturar screenshot', 'error');
+      console.error('Error capturing screenshot:', error);
+      this.updateCaptureStatus('Error capturing screenshot', 'error');
     } finally {
       button.disabled = false;
       btnText.textContent = 'Screenshot';
@@ -199,21 +200,21 @@ class BugSpotter {
   }
 
   async captureLogs() {
-    console.log('captureLogs iniciado');
+    console.log('captureLogs started');
     const button = document.getElementById('captureLogs');
     const btnText = button.querySelector('.btn-text');
     
-    // Verificar apenas se já está em processo
+    // Check only if already in process
     if (button.disabled) {
       return;
     }
     
-    console.log('Elementos encontrados:', { button, btnText });
+    console.log('Elements found:', { button, btnText });
     
     button.disabled = true;
-    btnText.textContent = 'Capturando...';
+    btnText.textContent = 'Capturing...';
     
-    this.updateCaptureStatus('Capturando logs...', 'loading');
+    this.updateCaptureStatus('Capturing logs...', 'loading');
     
     try {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -221,24 +222,24 @@ class BugSpotter {
       const logs = await chrome.scripting.executeScript({
         target: { tabId: tab.id },
         function: () => {
-          // Capturar logs do console
+          // Capture console logs
           const logs = [];
           
-          // Interceptar console.log, console.error, console.warn, console.info
+          // Intercept console.log, console.error, console.warn, console.info
           const originalLog = console.log;
           const originalError = console.error;
           const originalWarn = console.warn;
           const originalInfo = console.info;
           
-          // Verificar se já existem logs armazenados
+          // Check if logs are already stored
           if (window.capturedLogs && window.capturedLogs.length > 0) {
             return window.capturedLogs;
           }
           
-          // Se não há logs capturados, inicializar captura
+          // If no captured logs, initialize capture
           window.capturedLogs = [];
           
-          // Sobrescrever métodos do console para capturar logs
+          // Override console methods to capture logs
           console.log = function(...args) {
             window.capturedLogs.push(`[LOG] ${new Date().toISOString()}: ${args.join(' ')}`);
             originalLog.apply(console, args);
@@ -259,19 +260,19 @@ class BugSpotter {
             originalInfo.apply(console, args);
           };
           
-          // Capturar erros JavaScript
+          // Capture JavaScript errors
           window.addEventListener('error', (event) => {
             window.capturedLogs.push(`[JS ERROR] ${new Date().toISOString()}: ${event.message} at ${event.filename}:${event.lineno}:${event.colno}`);
           });
           
-          // Capturar erros de Promise rejeitadas
+          // Capture rejected Promise errors
           window.addEventListener('unhandledrejection', (event) => {
             window.capturedLogs.push(`[PROMISE ERROR] ${new Date().toISOString()}: ${event.reason}`);
           });
           
-          // Retornar logs existentes ou uma mensagem indicativa
+          // Return existing logs or an indicative message
           if (window.capturedLogs.length === 0) {
-            return [`[INFO] ${new Date().toISOString()}: Sistema de captura de logs inicializado. Interaja com a página para gerar logs.`];
+            return [`[INFO] ${new Date().toISOString()}: Log capture system initialized. Interact with the page to generate logs.`];
           }
           
           return window.capturedLogs;
@@ -291,14 +292,14 @@ class BugSpotter {
         const added = this.addAttachment(attachment);
         
         if (added) {
-          this.updateCaptureStatus('Logs capturados com sucesso!', 'success');
+          this.updateCaptureStatus('Logs captured successfully!', 'success');
         }
       } else {
-        this.updateCaptureStatus('Nenhum log encontrado', 'warning');
+        this.updateCaptureStatus('No logs found', 'warning');
       }
     } catch (error) {
-      console.error('Erro ao capturar logs:', error);
-      this.updateCaptureStatus('Erro ao capturar logs', 'error');
+      console.error('Error capturing logs:', error);
+      this.updateCaptureStatus('Error capturing logs', 'error');
     } finally {
       button.disabled = false;
       btnText.textContent = 'Logs';
@@ -306,7 +307,7 @@ class BugSpotter {
   }
 
   async captureDOM() {
-    console.log('captureDOM iniciado');
+    console.log('captureDOM started');
     const button = document.getElementById('captureDOM');
     const btnText = button.querySelector('.btn-text');
     
@@ -315,9 +316,9 @@ class BugSpotter {
     }
     
     button.disabled = true;
-    btnText.textContent = 'Capturando...';
+    btnText.textContent = 'Capturing...';
     
-    this.updateCaptureStatus('Capturando DOM...', 'loading');
+    this.updateCaptureStatus('Capturing DOM...', 'loading');
     
     try {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -332,7 +333,7 @@ class BugSpotter {
       const htmlContent = domData[0].result;
       
       if (!htmlContent || typeof htmlContent !== 'string') {
-        throw new Error('Falha ao capturar conteúdo DOM');
+        throw new Error('Failed to capture DOM content');
       }
       
       const attachment = {
@@ -345,11 +346,11 @@ class BugSpotter {
       const added = this.addAttachment(attachment);
       
       if (added) {
-        this.updateCaptureStatus('DOM capturado com sucesso!', 'success');
+        this.updateCaptureStatus('DOM captured successfully!', 'success');
       }
     } catch (error) {
-      console.error('Erro ao capturar DOM:', error);
-      this.updateCaptureStatus('Erro ao capturar DOM', 'error');
+      console.error('Error capturing DOM:', error);
+      this.updateCaptureStatus('Error capturing DOM', 'error');
     } finally {
       button.disabled = false;
       btnText.textContent = 'DOM';
@@ -382,7 +383,7 @@ class BugSpotter {
             data: reader.result,
             size: blob.size
           });
-          this.updateCaptureStatus('Gravação salva com sucesso!', 'success');
+          this.updateCaptureStatus('Recording saved successfully!', 'success');
         };
         reader.readAsDataURL(blob);
       };
@@ -392,13 +393,13 @@ class BugSpotter {
       
       const button = document.getElementById('startRecording');
       const btnText = button.querySelector('.btn-text');
-      btnText.textContent = 'Parar';
+      btnText.textContent = 'Stop';
       button.classList.add('recording');
       
-      this.updateCaptureStatus('Gravando tela...', 'loading');
+      this.updateCaptureStatus('Recording screen...', 'loading');
     } catch (error) {
-      console.error('Erro ao iniciar gravação:', error);
-      this.updateCaptureStatus('Erro ao iniciar gravação', 'error');
+      console.error('Error starting recording:', error);
+      this.updateCaptureStatus('Error starting recording', 'error');
     }
   }
 
@@ -409,23 +410,23 @@ class BugSpotter {
       
       const button = document.getElementById('startRecording');
       const btnText = button.querySelector('.btn-text');
-      btnText.textContent = 'Vídeo';
+      btnText.textContent = 'Video';
       button.classList.remove('recording');
       
-      this.updateCaptureStatus('Finalizando gravação...', 'loading');
+      this.updateCaptureStatus('Finalizing recording...', 'loading');
     }
   }
 
   addAttachment(attachment) {
-    // Verificar se já existe um anexo do mesmo tipo capturado recentemente (últimos 3 segundos)
+    // Check if an attachment of the same type was captured recently (last 3 seconds)
     const now = Date.now();
     const recentDuplicate = this.attachments.find(existing => 
       existing.type === attachment.type && 
-      (now - parseInt(existing.name.match(/_(\d+)\./)?.[1] || 0)) < 3000
+      (now - parseInt(existing.name.match(/_(\\d+)\\./)?.[1] || 0)) < 3000
     );
     
     if (recentDuplicate) {
-      this.updateCaptureStatus(`${attachment.type} já foi capturado recentemente. Aguarde alguns segundos.`, 'warning');
+      this.updateCaptureStatus(`${attachment.type} was already captured recently. Please wait a few seconds.`, 'warning');
       return false;
     }
     
@@ -437,7 +438,7 @@ class BugSpotter {
   removeAttachment(index) {
     this.attachments.splice(index, 1);
     this.updateAttachmentsList();
-    this.updateReportStatus('Anexo removido', 'info');
+    this.updateReportStatus('Attachment removed', 'info');
   }
 
   updateAttachmentsList() {
@@ -463,7 +464,7 @@ class BugSpotter {
             <div class="attachment-size">${this.formatFileSize(attachment.size)}</div>
           </div>
         </div>
-        <button class="btn-icon remove-attachment" data-index="${index}" title="Remover anexo">
+        <button class="btn-icon remove-attachment" data-index="${index}" title="Remove attachment">
           <span class="material-icons">delete</span>
         </button>
       `;
@@ -475,23 +476,23 @@ class BugSpotter {
   async submitBug(event) {
     event.preventDefault();
     
-    // Proteção contra múltiplos cliques
+    // Protection against multiple clicks
     const submitBtn = event.target.querySelector('.submit-btn');
     if (submitBtn.disabled) {
-      return; // Já está processando
+      return; // Already processing
     }
     
-    // Desabilitar botão e mostrar feedback visual
+    // Disable button and show visual feedback
     submitBtn.disabled = true;
     const originalText = submitBtn.innerHTML;
     submitBtn.innerHTML = `
       <span class="material-icons">hourglass_empty</span>
-      Enviando...
+      Sending...
     `;
     submitBtn.classList.add('loading');
     
-    // Mostrar status de processamento
-    this.updateReportStatus('Processando relatório...', 'loading');
+    // Show processing status
+    this.updateReportStatus('Processing report...', 'loading');
     
     const formData = new FormData(event.target);
     const bugData = {
@@ -508,50 +509,50 @@ class BugSpotter {
     };
   
     try {
-      // Tentar enviar para Jira se configurado
+      // Try to send to Jira if configured
       const settings = await this.getSettings();
       if (settings.jira && settings.jira.enabled) {
         try {
           bugData.jiraAttempted = true;
           const jiraResponse = await this.sendToJira(bugData);
-          console.log('Resposta do Jira:', jiraResponse);
+          console.log('Jira response:', jiraResponse);
           
           if (jiraResponse && jiraResponse.key) {
-            // Adicionar chave do Jira ao relatório antes de salvar
+            // Add Jira key to report before saving
             bugData.jiraKey = jiraResponse.key;
-            this.updateReportStatus(`Relatório enviado com sucesso! Ticket: ${jiraResponse.key}`, 'success');
+            this.updateReportStatus(`Report sent successfully! Ticket: ${jiraResponse.key}`, 'success');
           } else {
-            this.updateReportStatus('Salvo localmente. Erro ao enviar para Jira: Resposta inválida', 'warning');
+            this.updateReportStatus('Saved locally. Error sending to Jira: Invalid response', 'warning');
           }
         } catch (jiraError) {
-          console.error('Erro ao enviar para Jira:', jiraError);
-          this.updateReportStatus('Salvo localmente. Erro ao enviar para Jira: ' + jiraError.message, 'warning');
+          console.error('Error sending to Jira:', jiraError);
+          this.updateReportStatus('Saved locally. Error sending to Jira: ' + jiraError.message, 'warning');
         }
       } else {
-        this.updateReportStatus('Relatório salvo localmente!', 'success');
+        this.updateReportStatus('Report saved locally!', 'success');
       }
       
-      // Salvar apenas UMA vez, com ou sem jiraKey
+      // Save only ONCE, with or without jiraKey
       await this.saveBugReport(bugData);
       
-      // Limpar formulário e anexos
+      // Clear form and attachments
       event.target.reset();
       this.attachments = [];
       this.updateAttachmentsList();
       
-      // Atualizar histórico
+      // Update history
       this.loadBugHistory();
       
     } catch (error) {
-      console.error('Erro ao salvar relatório:', error);
-      this.updateReportStatus('Erro ao salvar relatório: ' + error.message, 'error');
+      console.error('Error saving report:', error);
+      this.updateReportStatus('Error saving report: ' + error.message, 'error');
     } finally {
-      // Restaurar botão sempre, independente do resultado
+      // Always restore button, regardless of result
       setTimeout(() => {
         submitBtn.disabled = false;
         submitBtn.innerHTML = originalText;
         submitBtn.classList.remove('loading');
-      }, 1000); // Pequeno delay para mostrar o resultado
+      }, 1000); // Small delay to show result
     }
   }
 
@@ -559,11 +560,11 @@ class BugSpotter {
     return new Promise((resolve, reject) => {
       chrome.storage.local.get(['settings'], (result) => {
         if (chrome.runtime.lastError) {
-          console.error('Erro ao carregar configurações:', chrome.runtime.lastError.message);
-          resolve({}); // Retorna objeto vazio em caso de erro
+          console.error('Error loading settings:', chrome.runtime.lastError.message);
+          resolve({}); // Return empty object on error
           return;
         }
-        // Retorna as configurações completas ou objeto vazio
+        // Return complete settings or empty object
         resolve(result.settings || {});
       });
     });
@@ -575,22 +576,22 @@ class BugSpotter {
         type: 'SEND_TO_JIRA',
         data: bugData
       }, (response) => {
-        // Verificar se houve erro de runtime
+        // Check for runtime error
         if (chrome.runtime.lastError) {
-          reject(new Error(`Erro de comunicação: ${chrome.runtime.lastError.message}`));
+          reject(new Error(`Communication error: ${chrome.runtime.lastError.message}`));
           return;
         }
         
-        // Verificar se response existe e tem a estrutura esperada
+        // Check if response exists and has expected structure
         if (!response) {
-          reject(new Error('Nenhuma resposta recebida do background script'));
+          reject(new Error('No response received from background script'));
           return;
         }
         
         if (response.success) {
           resolve(response.data);
         } else {
-          reject(new Error(response.error || 'Erro desconhecido'));
+          reject(new Error(response.error || 'Unknown error'));
         }
       });
     });
@@ -601,22 +602,22 @@ class BugSpotter {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
       return tab.url;
     } catch (error) {
-      return 'URL não disponível';
+      return 'URL not available';
     }
   }
 
   async saveBugReport(bugData) {
     return new Promise((resolve) => {
-      // Primeiro, verificar o uso atual do storage
+      // First, check current storage usage
       chrome.storage.local.getBytesInUse(null, (bytesInUse) => {
         const maxBytes = chrome.storage.local.QUOTA_BYTES || 5242880; // 5MB
         const usagePercent = (bytesInUse / maxBytes) * 100;
         
-        // Se o uso estiver acima de 70%, limpar dados primeiro
+        // If usage is above 70%, clean data first
         if (usagePercent > 70) {
           chrome.storage.local.get(['bugReports'], (result) => {
             let reports = result.bugReports || [];
-            // Manter apenas os 5 relatórios mais recentes
+            // Keep only the 5 most recent reports
             reports = reports.slice(0, 5);
             
             chrome.storage.local.set({ bugReports: reports }, () => {
@@ -634,16 +635,16 @@ class BugSpotter {
     chrome.storage.local.get(['bugReports'], (result) => {
       let reports = result.bugReports || [];
       
-      // Criar uma versão otimizada do bugData (sem anexos grandes)
+      // Create an optimized version of bugData (without large attachments)
       const optimizedBugData = {
         ...bugData,
         attachments: bugData.attachments ? bugData.attachments.map(att => {
           if (att.type === 'screenshot' && att.data) {
-            // Reduzir qualidade de screenshots se necessário
+            // Reduce screenshot quality if necessary
             return {
               ...att,
               data: att.data.length > 500000 ? null : att.data, // Remove screenshots > 500KB
-              note: att.data.length > 500000 ? 'Screenshot removido para economizar espaço' : att.note
+              note: att.data.length > 500000 ? 'Screenshot removed to save space' : att.note
             };
           }
           return att;
@@ -652,22 +653,22 @@ class BugSpotter {
       
       reports.unshift(optimizedBugData);
       
-      // Limitar a 10 relatórios para ser mais conservador
+      // Limit to 10 reports to be more conservative
       if (reports.length > 10) {
         reports = reports.slice(0, 10);
       }
       
       chrome.storage.local.set({ bugReports: reports }, () => {
         if (chrome.runtime.lastError) {
-          console.error('Erro ao salvar relatório:', chrome.runtime.lastError.message);
-          // Última tentativa: salvar apenas os dados essenciais
+          console.error('Error saving report:', chrome.runtime.lastError.message);
+          // Last attempt: save only essential data
           const essentialData = {
             title: bugData.title,
             description: bugData.description,
             priority: bugData.priority,
             environment: bugData.environment,
             timestamp: bugData.timestamp,
-            attachments: [] // Remove todos os anexos
+            attachments: [] // Remove all attachments
           };
           
           chrome.storage.local.set({ bugReports: [essentialData] }, () => {
@@ -690,6 +691,13 @@ class BugSpotter {
     });
   }
 
+  // Tornar getJiraTicketUrl síncrono usando o cache
+  getJiraTicketUrl(ticketKey) {
+    const baseUrl = this.cachedSettings?.jira?.baseUrl || 'https://jorgealijo.atlassian.net';
+    return `${baseUrl}/browse/${ticketKey}`;
+  }
+
+  // Modificar displayBugHistory para usar o método síncrono
   displayBugHistory(reports) {
     const container = document.getElementById('bugHistory');
     container.innerHTML = '';
@@ -698,7 +706,7 @@ class BugSpotter {
       container.innerHTML = `
         <div class="empty-state">
           <span class="material-icons empty-icon">history</span>
-          <p>Nenhum bug registrado ainda</p>
+          <p>No bugs registered yet</p>
         </div>
       `;
       return;
@@ -711,42 +719,43 @@ class BugSpotter {
       let content = '';
       
       if (report.jiraKey) {
-        // Ticket criado no Jira: IdJira-título com link + ícone apagar
+        // Agora usando o método síncrono
+        const jiraUrl = this.getJiraTicketUrl(report.jiraKey);
         content = `
           <div class="history-content-jira">
-            <a href="${this.getJiraTicketUrl(report.jiraKey)}" target="_blank" class="jira-link-full">
+            <a href="${jiraUrl}" target="_blank" class="jira-link-full">
               ${report.jiraKey} - ${report.title}
             </a>
           </div>
           <div class="history-actions-single">
-            <button class="delete-btn" data-index="${index}" title="Excluir">
+            <button class="delete-btn" data-index="${index}" title="Delete">
               <span class="material-icons">delete</span>
             </button>
           </div>
         `;
       } else if (report.jiraAttempted === false) {
-        // Ticket não enviado para Jira: título + ícone enviar
+        // Ticket not sent to Jira: title + send icon
         content = `
           <div class="history-content-pending">
             <span class="history-title-only">${report.title}</span>
           </div>
           <div class="history-actions-single">
-            <button class="send-btn" data-index="${index}" title="Enviar para Jira">
+            <button class="send-btn" data-index="${index}" title="Send to Jira">
               <span class="material-icons">send</span>
             </button>
           </div>
         `;
       } else {
-        // Status desconhecido: título + botões apagar e enviar
+        // Unknown status: title + delete and send buttons
         content = `
           <div class="history-content-unknown">
             <span class="history-title-only">${report.title}</span>
           </div>
           <div class="history-actions-double">
-            <button class="send-btn" data-index="${index}" title="Enviar para Jira">
+            <button class="send-btn" data-index="${index}" title="Send to Jira">
               <span class="material-icons">send</span>
             </button>
-            <button class="delete-btn" data-index="${index}" title="Excluir">
+            <button class="delete-btn" data-index="${index}" title="Delete">
               <span class="material-icons">delete</span>
             </button>
           </div>
@@ -758,18 +767,12 @@ class BugSpotter {
     });
   }
 
-  // Novo método para obter URL do ticket Jira
-  async getJiraTicketUrl(ticketKey) {
-    const settings = await this.getSettings();
-    return `${settings.jira.baseUrl}/browse/${ticketKey}`;
-  }
-
-  // Novo método para retry de envio para Jira
+  // New method for Jira submission retry
   async retryJiraSubmission(index) {
     try {
-      this.updateHistoryStatus('Reenviando para Jira...', 'loading');
+      this.updateHistoryStatus('Resending to Jira...', 'loading');
       
-      // Usar chrome.storage.local em vez de localStorage
+      // Use chrome.storage.local instead of localStorage
       const result = await new Promise((resolve) => {
         chrome.storage.local.get(['bugReports'], resolve);
       });
@@ -778,27 +781,27 @@ class BugSpotter {
       const report = reports[index];
       
       if (!report) {
-        throw new Error('Relatório não encontrado');
+        throw new Error('Report not found');
       }
       
       const jiraResponse = await this.sendToJira(report);
       
-      // Atualizar o relatório com o jiraKey usando chrome.storage.local
+      // Update report with jiraKey using chrome.storage.local
       reports[index].jiraKey = jiraResponse.key;
       chrome.storage.local.set({ bugReports: reports }, () => {
-        this.updateHistoryStatus(`Enviado com sucesso! Ticket: ${jiraResponse.key}`, 'success');
+        this.updateHistoryStatus(`Sent successfully! Ticket: ${jiraResponse.key}`, 'success');
         
-        // Atualizar apenas o card específico em vez de recarregar toda a lista
+        // Update only the specific card instead of reloading the entire list
         this.updateHistoryCard(index, reports[index]);
       });
       
     } catch (error) {
-      console.error('Erro ao reenviar para Jira:', error);
-      this.updateHistoryStatus('Erro ao reenviar: ' + error.message, 'error');
+      console.error('Error resending to Jira:', error);
+      this.updateHistoryStatus('Error resending: ' + error.message, 'error');
     }
   }
 
-  // Novo método para atualizar um card específico do histórico
+  // New method to update a specific history card
   updateHistoryCard(index, report) {
     const historyContainer = document.getElementById('bugHistory');
     const cards = historyContainer.querySelectorAll('.history-item');
@@ -806,30 +809,30 @@ class BugSpotter {
     if (cards[index]) {
       const card = cards[index];
       
-      // Atualizar status do Jira
+      // Update Jira status
       const jiraStatus = card.querySelector('.jira-status');
       if (jiraStatus) {
         if (report.jiraKey) {
           jiraStatus.innerHTML = `
             <span class="material-icons status-icon success">check_circle</span>
-            <span class="status-text">Enviado: ${report.jiraKey}</span>
+            <span class="status-text">Sent: ${report.jiraKey}</span>
           `;
           jiraStatus.className = 'jira-status success';
         }
       }
       
-      // Atualizar botões de ação
+      // Update action buttons
       const actionButtons = card.querySelector('.action-buttons');
       if (actionButtons && report.jiraKey) {
         const sendBtn = actionButtons.querySelector('.send-btn');
         if (sendBtn) {
-          sendBtn.style.display = 'none'; // Ocultar botão de reenvio
+          sendBtn.style.display = 'none'; // Hide resend button
         }
       }
     }
   }
 
-  // Novo método para status do histórico
+  // New method for history status
   updateHistoryStatus(message, type = 'info') {
     const statusElement = document.getElementById('historyStatus');
     const statusText = statusElement.querySelector('.status-text');
@@ -856,7 +859,7 @@ class BugSpotter {
     
     statusIcon.textContent = icons[type] || 'info';
     
-    // Auto-hide para todas as mensagens exceto loading
+    // Auto-hide for all messages except loading
     if (type !== 'loading') {
       setTimeout(() => {
         statusElement.style.display = 'none';
@@ -865,23 +868,23 @@ class BugSpotter {
   }
 
   async clearHistory() {
-    if (confirm('Tem certeza que deseja limpar todo o histórico?')) {
+    if (confirm('Are you sure you want to clear all history?')) {
       chrome.storage.local.set({ bugReports: [] }, () => {
         this.loadBugHistory();
-        this.updateCaptureStatus('Histórico limpo', 'info');
+        this.updateCaptureStatus('History cleared', 'info');
       });
     }
   }
 
   async deleteReport(index) {
-    if (confirm('Tem certeza que deseja excluir este relatório?')) {
+    if (confirm('Are you sure you want to delete this report?')) {
       chrome.storage.local.get(['bugReports'], (result) => {
         const reports = result.bugReports || [];
         reports.splice(index, 1);
         
         chrome.storage.local.set({ bugReports: reports }, () => {
           this.loadBugHistory();
-          this.updateHistoryStatus('Relatório excluído', 'success');
+          this.updateHistoryStatus('Report deleted', 'success');
         });
       });
     }
@@ -893,15 +896,15 @@ class BugSpotter {
       const report = reports[index];
       
       if (report) {
-        // Aqui você pode implementar uma modal ou nova página para visualizar o relatório
-        console.log('Visualizando relatório:', report);
-        alert(`Relatório: ${report.title}\n\nDescrição: ${report.description}\n\nPrioridade: ${report.priority}\n\nAnexos: ${report.attachments.length}`);
+        // Here you can implement a modal or new page to view the report
+        console.log('Viewing report:', report);
+        alert(`Report: ${report.title}\n\nDescription: ${report.description}\n\nPriority: ${report.priority}\n\nAttachments: ${report.attachments.length}`);
       }
     });
   }
 
   openSettings() {
-    // Abrir página de configurações
+    // Open settings page
     chrome.tabs.create({ url: chrome.runtime.getURL('settings.html') });
   }
 
@@ -913,7 +916,7 @@ class BugSpotter {
     };
     
     chrome.storage.local.set({ settings }, () => {
-      this.updateCaptureStatus('Configurações salvas', 'success');
+      this.updateCaptureStatus('Settings saved', 'success');
     });
   }
 
@@ -939,8 +942,8 @@ class BugSpotter {
   }
 }
 
-// Inicializar quando DOM estiver pronto
+// Initialize when DOM is ready
 document.addEventListener('DOMContentLoaded', () => {
   window.bugSpotter = new BugSpotter();
-  window.bugSpotter.init(); // Adicionar esta linha!
+  window.bugSpotter.init(); // Add this line!
 });

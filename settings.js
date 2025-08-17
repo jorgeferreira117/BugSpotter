@@ -103,24 +103,24 @@ class BugSpotterSettings {
     event.preventDefault();
     
     const submitButton = event.target.querySelector('button[type="submit"]');
-    const originalText = submitButton.textContent;
+    const originalHTML = submitButton.innerHTML; // Usar innerHTML em vez de textContent
     
     // Validação dos campos obrigatórios
     const jiraEnabled = document.getElementById('jiraEnabled').checked;
     
     if (jiraEnabled) {
       const requiredFields = {
-        'jiraUrl': 'URL do Jira',
+        'jiraUrl': 'Jira URL',
         'jiraEmail': 'Email',
         'jiraApiToken': 'API Token',
-        'jiraProjectKey': 'Chave do Projeto',
-        'jiraIssueType': 'ID do Tipo de Issue'
+        'jiraProjectKey': 'Project Key', // Traduzido
+        'jiraIssueType': 'Issue Type ID' // Traduzido
       };
       
       for (const [fieldId, fieldName] of Object.entries(requiredFields)) {
         const value = document.getElementById(fieldId).value.trim();
         if (!value) {
-          this.showStatus(`❌ Campo obrigatório: ${fieldName}`, 'error');
+          this.showStatus(`❌ Required field: ${fieldName}`, 'error'); // Traduzido
           return;
         }
       }
@@ -130,7 +130,7 @@ class BugSpotterSettings {
       try {
         new URL(urlValue);
       } catch {
-        this.showStatus('❌ URL do Jira inválida', 'error');
+        this.showStatus('❌ Invalid Jira URL', 'error'); // Traduzido
         return;
       }
       
@@ -138,14 +138,14 @@ class BugSpotterSettings {
       const emailValue = document.getElementById('jiraEmail').value.trim();
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
       if (!emailRegex.test(emailValue)) {
-        this.showStatus('❌ Email inválido', 'error');
+        this.showStatus('❌ Invalid email', 'error'); // Traduzido
         return;
       }
     }
     
     try {
-      // Feedback visual
-      submitButton.textContent = '💾 Salvando...';
+      // Feedback visual - preservar estrutura HTML
+      submitButton.innerHTML = '<span class="material-icons">save</span>Saving...'; // Traduzido
       submitButton.disabled = true;
       
       this.settings.jira = {
@@ -158,15 +158,15 @@ class BugSpotterSettings {
       };
 
       await this.saveSettings();
-      this.showStatus('✅ Configurações do Jira salvas com sucesso!', 'success');
+      this.showStatus('✅ Jira settings saved successfully!', 'success'); // Traduzido
       
     } catch (error) {
-      console.error('Erro ao salvar configurações do Jira:', error);
-      this.showStatus('❌ Erro ao salvar configurações do Jira', 'error');
+      console.error('Error saving Jira settings:', error); // Traduzido
+      this.showStatus('❌ Error saving Jira settings', 'error'); // Traduzido
     } finally {
-      // Restaurar botão após delay
+      // Restaurar HTML original completo
       setTimeout(() => {
-        submitButton.textContent = originalText;
+        submitButton.innerHTML = originalHTML; // Usar innerHTML
         submitButton.disabled = false;
       }, 1000);
     }
@@ -216,27 +216,28 @@ class BugSpotterSettings {
 
   async testJiraConnection() {
     const button = document.getElementById('testJiraConnection');
-    const originalText = button.textContent;
+    const originalHTML = button.innerHTML; // Capturar HTML completo
     
     // Validar campos antes de testar
     const requiredFields = {
-      'jiraUrl': 'URL do Jira',
+      'jiraUrl': 'Jira URL',
       'jiraEmail': 'Email',
       'jiraApiToken': 'API Token',
-      'jiraProjectKey': 'Chave do Projeto'
+      'jiraProjectKey': 'Project Key'
     };
     
     for (const [fieldId, fieldName] of Object.entries(requiredFields)) {
       const value = document.getElementById(fieldId).value.trim();
       if (!value) {
-        this.showStatus(`❌ Preencha o campo: ${fieldName}`, 'error');
+        this.showStatus(`❌ Please fill in the field: ${fieldName}`, 'error');
         return;
       }
     }
     
-    button.textContent = '🔄 Testando conexão...';
+    // Alterar apenas o conteúdo, mantendo a estrutura
+    button.innerHTML = '<span class="material-icons">sync</span>Testing connection...';
     button.disabled = true;
-
+  
     try {
       const jiraConfig = {
         baseUrl: document.getElementById('jiraUrl').value.trim(),
@@ -244,50 +245,54 @@ class BugSpotterSettings {
         apiToken: document.getElementById('jiraApiToken').value.trim(),
         projectKey: document.getElementById('jiraProjectKey').value.trim()
       };
-
+  
       // Validar URL
       try {
         new URL(jiraConfig.baseUrl);
       } catch {
-        throw new Error('URL do Jira inválida');
+        throw new Error('Invalid Jira URL');
       }
-
-      // Testa conexão com Jira
-      const response = await fetch(`${jiraConfig.baseUrl}/rest/api/2/project/${jiraConfig.projectKey}`, {
+  
+      // Fazer a requisição HTTP
+      const auth = btoa(`${jiraConfig.email}:${jiraConfig.apiToken}`);
+      const response = await fetch(`${jiraConfig.baseUrl}/rest/api/3/project/${jiraConfig.projectKey}`, {
         method: 'GET',
         headers: {
-          'Authorization': `Basic ${btoa(`${jiraConfig.email}:${jiraConfig.apiToken}`)}`,
+          'Authorization': `Basic ${auth}`,
+          'Accept': 'application/json',
           'Content-Type': 'application/json'
         }
       });
-
+  
       if (response.ok) {
         const project = await response.json();
-        this.showStatus(`✅ Conexão bem-sucedida! Projeto: ${project.name}`, 'success');
+        this.showStatus(`✅ Connection successful! Project: ${project.name}`, 'success');
       } else if (response.status === 401) {
-        throw new Error('Credenciais inválidas (email ou API token)');
+        throw new Error('Invalid credentials (email or API token)');
       } else if (response.status === 404) {
-        throw new Error('Projeto não encontrado. Verifique a chave do projeto.');
+        throw new Error('Project not found. Check the project key.');
       } else {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
     } catch (error) {
-      console.error('Erro ao testar conexão:', error);
-      this.showStatus(`❌ Erro na conexão: ${error.message}`, 'error');
+      console.error('Connection test error:', error);
+      this.showStatus(`❌ Connection error: ${error.message}`, 'error');
     } finally {
+      // Restaurar o HTML original completo
       setTimeout(() => {
-        button.textContent = originalText;
+        button.innerHTML = originalHTML;
         button.disabled = false;
       }, 1000);
     }
   }
 
+  // Método exportData
   async exportData() {
     const button = document.getElementById('exportData');
     const originalText = button.textContent;
     
     try {
-      button.textContent = '📤 Exportando...';
+      button.textContent = '📤 Exporting...';
       button.disabled = true;
       
       const data = await chrome.storage.local.get(null);
@@ -311,18 +316,14 @@ class BugSpotterSettings {
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
 
-      this.showStatus('✅ Dados exportados com sucesso!', 'success');
+      this.showStatus('✅ Data exported successfully!', 'success');
     } catch (error) {
       console.error('Erro ao exportar dados:', error);
-      this.showStatus('❌ Erro ao exportar dados', 'error');
-    } finally {
-      setTimeout(() => {
-        button.textContent = originalText;
-        button.disabled = false;
-      }, 1000);
+      this.showStatus('❌ Error exporting data', 'error');
     }
   }
 
+  // Método importData
   async importData() {
     const button = document.getElementById('importData');
     const originalText = button.textContent;
@@ -336,7 +337,7 @@ class BugSpotterSettings {
       if (!file) return;
 
       try {
-        button.textContent = '📥 Importando...';
+        button.textContent = '📥 Importing...';
         button.disabled = true;
         
         const text = await file.text();
@@ -344,7 +345,7 @@ class BugSpotterSettings {
         
         // Validar estrutura do arquivo
         if (!importData.version) {
-          throw new Error('Arquivo de backup inválido: versão não encontrada');
+          throw new Error('Invalid backup file: version not found');
         }
 
         if (importData.settings) {
@@ -357,13 +358,13 @@ class BugSpotterSettings {
 
         await this.loadSettings();
         this.updateUI();
-        this.showStatus('✅ Dados importados com sucesso!', 'success');
+        this.showStatus('✅ Data imported successfully!', 'success');
       } catch (error) {
         console.error('Erro ao importar dados:', error);
         if (error instanceof SyntaxError) {
-          this.showStatus('❌ Arquivo JSON inválido', 'error');
+          this.showStatus('❌ Invalid JSON file', 'error');
         } else {
-          this.showStatus(`❌ Erro ao importar: ${error.message}`, 'error');
+          this.showStatus(`❌ Import error: ${error.message}`, 'error');
         }
       } finally {
         setTimeout(() => {
@@ -376,22 +377,23 @@ class BugSpotterSettings {
     input.click();
   }
 
+  // Método clearData
   async clearData() {
     const button = document.getElementById('clearData');
     const originalText = button.textContent;
     
-    if (confirm('⚠️ Tem certeza que deseja limpar todos os dados?\n\nEsta ação irá remover:\n• Todas as configurações\n• Histórico de bugs\n• Dados de cache\n\nEsta ação não pode ser desfeita.')) {
+    if (confirm('⚠️ Are you sure you want to clear all data?\n\nThis action will remove:\n• All settings\n• Bug history\n• Cache data\n\nThis action cannot be undone.')) {
       try {
-        button.textContent = '🗑️ Limpando...';
+        button.textContent = '🗑️ Clearing...';
         button.disabled = true;
         
         await chrome.storage.local.clear();
         await this.loadSettings();
         this.updateUI();
-        this.showStatus('✅ Todos os dados foram limpos!', 'info');
+        this.showStatus('✅ All data has been cleared!', 'info');
       } catch (error) {
         console.error('Erro ao limpar dados:', error);
-        this.showStatus('❌ Erro ao limpar dados', 'error');
+        this.showStatus('❌ Error clearing data', 'error');
       } finally {
         setTimeout(() => {
           button.textContent = originalText;

@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="pt">
+<html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -10,7 +10,7 @@
 </head>
 <body>
   <div class="app-container">
-    <!-- Header compacto -->
+    <!-- Compact header -->
     <header class="app-header">
       <div class="logo-container">
         <span class="material-icons logo-icon">bug_report</span>
@@ -18,15 +18,15 @@
       </div>
     </header>
 
-    <!-- Conteúdo principal -->
+    <!-- Main content -->
     <main class="main-content">
-      <!-- Seção de Captura -->
+      <!-- Capture Section -->
       <section class="capture-section">
         <div class="section-header">
-          <h2>Capturar Evidências</h2>
+          <h2>Capture Evidence</h2>
         </div>
         
-        <!-- Grid 2x2 de botões de captura -->
+        <!-- 2x2 capture buttons grid -->
         <div class="capture-grid">
           <button id="captureScreenshot" class="capture-btn primary">
             <span class="material-icons">photo_camera</span>
@@ -45,11 +45,11 @@
           
           <button id="startRecording" class="capture-btn danger">
             <span class="material-icons">videocam</span>
-            <span class="btn-text">Vídeo</span>
+            <span class="btn-text">Video</span>
           </button>
         </div>
 
-        <!-- Status das capturas -->
+        <!-- Capture status -->
         <div id="captureStatus" class="capture-status" style="display: none;">
           <div class="status-item">
             <span class="material-icons status-icon">info</span>
@@ -58,29 +58,29 @@
         </div>
       </section>
 
-      <!-- Seção de Relatório -->
+      <!-- Report Section -->
       <section class="report-section">
         <div class="section-header">
-          <h2>Reportar Bug</h2>
+          <h2>Report Bug</h2>
         </div>
 
         <form id="bugForm" class="bug-form">
           <div class="form-group">
-            <label for="title" class="form-label">Título *</label>
+            <label for="title" class="form-label">Title *</label>
             <input type="text" id="title" name="title" class="form-input" required>
           </div>
 
           <div class="form-group">
-            <label for="description" class="form-label">Descrição *</label>
+            <label for="description" class="form-label">Description *</label>
             <textarea id="description" name="description" class="form-textarea" 
                       rows="3" required></textarea>
           </div>
 
           <div class="form-row">
             <div class="form-group">
-              <label for="priority" class="form-label">Prioridade *</label>
+              <label for="priority" class="form-label">Priority *</label>
               <select id="priority" name="priority" class="form-select" required>
-                <option value="">Selecione</option>
+                <option value="">Select</option>
                 <option value="Lowest">Lowest</option>
                 <option value="Low">Low</option>
                 <option value="Medium">Medium</option>
@@ -90,55 +90,55 @@
             </div>
 
             <div class="form-group">
-              <label for="environment" class="form-label">Ambiente *</label>
+              <label for="environment" class="form-label">Environment *</label>
               <select id="environment" name="environment" class="form-select" required>
-                <option value="">Selecione</option>
-                <option value="Production">Produção</option>
+                <option value="">Select</option>
+                <option value="Production">Production</option>
                 <option value="Staging">Staging</option>
-                <option value="Production/Staging">Produção/Staging</option>
+                <option value="Production/Staging">Production/Staging</option>
               </select>
             </div>
           </div>
 
           <div class="form-group">
-            <label for="steps" class="form-label">Passos para Reproduzir</label>
+            <label for="steps" class="form-label">Steps to Reproduce</label>
             <textarea id="steps" name="steps" class="form-textarea" 
                       rows="3"></textarea>
           </div>
 
-          <!-- Lista de anexos -->
+          <!-- Attachments list -->
           <div class="attachments-section">
-            <label class="form-label">Evidências Anexadas</label>
+            <label class="form-label">Attached Evidence</label>
             <div id="attachmentsList" class="attachments-list">
               <div class="no-attachments">
                 <span class="material-icons">attach_file</span>
-                <span>Nenhuma evidência anexada</span>
+                <span>No evidence attached</span>
               </div>
             </div>
           </div>
 
           <button type="submit" class="submit-btn">
             <span class="material-icons">send</span>
-            Enviar Relatório
+            Send Report
           </button>
           
-          <!-- Status do envio do relatório -->
+          <!-- Report submission status -->
           <div id="reportStatus" class="capture-status" style="display: none;">
             <div class="status-item">
               <span class="material-icons status-icon">info</span>
-              <span class="status-text">Pronto para enviar relatório</span>
+              <span class="status-text">Ready to send report</span>
             </div>
           </div>
         </form>
       </section>
 
-      <!-- Seção de Histórico -->
+      <!-- History Section -->
       <section class="history-section">
         <div class="section-header">
-          <h2>Histórico</h2>
+          <h2>History</h2>
         </div>
 
-        <!-- Status do histórico -->
+        <!-- History status -->
         <div id="historyStatus" class="capture-status" style="display: none;">
           <div class="status-item">
             <span class="material-icons status-icon">info</span>
@@ -146,33 +146,33 @@
           </div>
         </div>
 
-        <!-- Lista compacta de bugs -->
+        <!-- Compact bug list -->
         <div id="bugHistory" class="bug-history">
           <div class="empty-state">
             <span class="material-icons empty-icon">history</span>
-            <p>Nenhum bug registrado ainda</p>
+            <p>No bugs registered yet</p>
           </div>
         </div>
 
-        <!-- Ações do histórico -->
+        <!-- History actions -->
         <div class="history-actions">
           <button id="clearHistory" class="action-btn danger-text">
             <span class="material-icons">delete</span>
-            Limpar Histórico
+            Clear History
           </button>
         </div>
       </section>
 
-      <!-- Seção de Configurações -->
+      <!-- Settings Section -->
       <section class="settings-section">
         <div class="section-header">
-          <h2>Configurações</h2>
+          <h2>Settings</h2>
         </div>
 
         <div class="settings-actions">
           <button id="openSettings" class="action-btn">
             <span class="material-icons">settings</span>
-            Configurações Avançadas
+            Advanced Settings
           </button>
         </div>
       </section>
@@ -183,7 +183,7 @@
   <div id="loadingOverlay" class="loading-overlay hidden">
     <div class="loading-spinner">
       <span class="material-icons spinning">refresh</span>
-      <p>Processando...</p>
+      <p>Processing...</p>
     </div>
   </div>
 

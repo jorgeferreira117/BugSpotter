@@ -9,10 +9,33 @@ body {
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   font-size: 14px;
   line-height: 1.5;
-  color: #374151;
-  background: #f9fafb;
+  color: #333333;
+  background: #f5f5f5;
   width: 380px;
   min-height: 500px;
+}
+
+/* Títulos e texto principal */
+h2 {
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 12px;
+  color: #333333;
+}
+
+/* Labels e texto principal */
+label {
+  display: block;
+  font-size: 13px;
+  font-weight: 500;
+  margin-bottom: 6px;
+  color: #333333;
+}
+
+/* Texto de itens do histórico */
+.history-item-content {
+  flex: 1;
+  color: #333333;
 }
 
 /* Container principal */
@@ -24,7 +47,7 @@ body {
 
 /* Header */
 .app-header {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: #002bff;
   color: white;
   padding: 16px 20px;
   border-radius: 0 0 12px 12px;
@@ -179,8 +202,9 @@ section:hover {
   position: relative;
 }
 
+/* Botões de captura */
 .capture-btn.primary {
-  background: linear-gradient(135deg, #3b82f6, #1d4ed8);
+  background: #002bff;
   color: white;
 }
 
@@ -190,13 +214,24 @@ section:hover {
 }
 
 .capture-btn.danger {
-  background: linear-gradient(135deg, #ef4444, #dc2626);
+  background: #fa551e;
   color: white;
 }
 
 .capture-btn:hover {
   transform: translateY(-1px);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+/* Hover específico para cada tipo */
+.capture-btn.primary:hover {
+  background: #0021cc;
+  box-shadow: 0 4px 12px rgba(0, 43, 255, 0.3);
+}
+
+.capture-btn.danger:hover {
+  background: #e8491a;
+  box-shadow: 0 4px 12px rgba(250, 85, 30, 0.3);
 }
 
 .capture-btn:disabled {
@@ -291,11 +326,13 @@ section:hover {
 .form-textarea,
 .form-select {
   padding: 8px 10px;
-  border: 1px solid #d1d5db;
+  border: 1px solid #e5e7eb;
   border-radius: 6px;
   font-size: 13px;
   font-family: inherit;
   transition: border-color 0.2s ease;
+  background: #ffffff;
+  color: #333333;
 }
 
 /* Remover estilo específico para o campo título */
@@ -308,8 +345,9 @@ section:hover {
 .form-textarea:focus,
 .form-select:focus {
   outline: none;
-  border-color: #3b82f6;
+  border-color: #002bff;
   box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+  background: #ffffff;
 }
 
 .form-textarea {
@@ -409,7 +447,7 @@ section:hover {
   justify-content: center;
   gap: 6px;
   padding: 10px 16px;
-  background: linear-gradient(135deg, #10b981, #059669);
+  background: #002bff;
   color: white;
   border: none;
   border-radius: 8px;
@@ -422,8 +460,321 @@ section:hover {
 }
 
 .submit-btn:hover {
+  background: #5c7dff;
   transform: translateY(-1px);
-  box-shadow: 0 3px 10px rgba(16, 185, 129, 0.3);
+  box-shadow: 0 3px 10px rgba(0, 43, 255, 0.3);
+}
+
+.submit-btn.loading {
+  opacity: 0.7;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.submit-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Histórico */
+.bug-history {
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  color: #9ca3af;
+  text-align: center;
+}
+
+.empty-icon {
+  font-size: 32px;
+  margin-bottom: 8px;
+  opacity: 0.5;
+}
+
+.empty-state p {
+  font-size: 12px;
+  margin: 0;
+}
+
+.history-item {
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 8px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.history-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.history-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: #374151;
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.jira-status {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+}
+
+.jira-status.success {
+  color: #059669;
+}
+
+.jira-status.error {
+  color: #dc2626;
+}
+
+.jira-status .status-icon {
+  font-size: 14px;
+}
+
+.history-actions-single,
+.history-actions-double {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.send-btn,
+.delete-btn {
+  padding: 6px;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+}
+
+.send-btn {
+  color: #2563eb;
+}
+
+.send-btn:hover {
+  background: #dbeafe;
+}
+
+.delete-btn {
+  color: #dc2626;
+}
+
+.delete-btn:hover {
+  background: #fee2e2;
+}
+
+.send-btn .material-icons,
+.delete-btn .material-icons {
+  font-size: 16px;
+}
+
+/* Ações do histórico */
+.history-actions {
+  margin-top: 16px;
+}
+
+.action-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px 16px;
+  border: none;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  width: 100%;
+  background: #e0e0e0;
+  color: #333333;
+}
+
+.action-btn:hover {
+  background: #cccccc;
+  transform: translateY(-1px);
+  box-shadow: 0 3px 10px rgba(224, 224, 224, 0.3);
+}
+
+/* Configurações */
+.settings-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.settings-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px;
+  background: white;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.settings-item:hover,
+.history-item:hover {
+  background: #f9fafb;
+  border-color: #d1d5db;
+}
+
+.settings-item-content {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.settings-item .material-icons {
+  font-size: 20px;
+  color: #6b7280;
+}
+
+.settings-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.settings-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: #374151;
+}
+
+.settings-subtitle {
+  font-size: 11px;
+  color: #9ca3af;
+}
+
+/* Texto secundário e descritivo */
+.history-item-meta {
+  font-size: 11px;
+  color: #666666;
+  margin-top: 2px;
+}
+
+/* Placeholder e texto auxiliar */
+.empty-state {
+  text-align: center;
+  color: #666666;
+  font-style: italic;
+  padding: 20px;
+}
+
+/* Texto de ajuda */
+.help-text {
+  font-size: 12px;
+  color: #666666;
+  margin-top: 4px;
+}
+.empty-state .material-icons {
+  font-size: 16px;
+}
+
+.attachment-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 8px;
+  background: white;
+  border: 1px solid #e5e7eb;
+  border-radius: 4px;
+  margin-bottom: 4px;
+}
+
+.attachment-info {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+}
+
+.attachment-icon {
+  font-size: 16px;
+  color: #6b7280;
+}
+
+.attachment-details {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.attachment-name {
+  font-size: 12px;
+  font-weight: 500;
+  color: #374151;
+}
+
+.attachment-size {
+  font-size: 10px;
+  color: #9ca3af;
+}
+
+.remove-attachment {
+  background: none;
+  border: none;
+  color: #ef4444;
+  cursor: pointer;
+  padding: 2px;
+  border-radius: 4px;
+  transition: background-color 0.2s ease;
+}
+
+.remove-attachment:hover {
+  background: #fee2e2;
+}
+
+.remove-attachment .material-icons {
+  font-size: 16px;
+}
+
+/* Botão de envio */
+.submit-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px 16px;
+  background: #002bff;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  margin-top: 6px;
+  width: 100%;
+}
+
+.submit-btn:hover {
+  background: #5c7dff;
+  transform: translateY(-1px);
+  box-shadow: 0 3px 10px rgba(0, 43, 255, 0.3);
 }
 
 .submit-btn.loading {
@@ -570,14 +921,15 @@ section:hover {
 }
 
 .action-btn.danger-text {
-  background: linear-gradient(135deg, #ef4444, #dc2626);
+  background: #fa551e;
   color: white;
   border: none;
 }
 
 .action-btn.danger-text:hover {
+  background: #ff8a61;
   transform: translateY(-1px);
-  box-shadow: 0 3px 10px rgba(239, 68, 68, 0.3);
+  box-shadow: 0 3px 10px rgba(250, 85, 30, 0.3);
 }
 
 .action-btn.warning {

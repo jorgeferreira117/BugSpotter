@@ -1,136 +1,172 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>BugSpotter - Configurações</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BugSpotter - Settings</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
   <link rel="stylesheet" href="settings.css">
 </head>
 <body>
-  <div class="container">
-    <header>
-      <h1>🐛 BugSpotter - Configurações</h1>
-      <p>Configure suas integrações e preferências</p>
+  <div class="app-container">
+    <!-- Modern header with gradient -->
+    <header class="app-header">
+      <div class="logo-container">
+        <span class="material-icons logo-icon">settings</span>
+        <h1 class="app-title">BugSpotter - Settings</h1>
+      </div>
+      <p class="header-subtitle">Configure your integrations and preferences</p>
     </header>
 
-    <div class="settings-section">
-      <h2>🔗 Integração com Jira</h2>
-      <form id="jiraForm">
-        <div class="form-group">
-          <label for="jiraEnabled">
-            <input type="checkbox" id="jiraEnabled">
-            Habilitar integração com Jira
-          </label>
+    <!-- Main content -->
+    <main class="main-content">
+      <!-- Jira Section -->
+      <section class="settings-section jira-section">
+        <div class="section-header">
+          <h2><span class="material-icons">link</span>Jira Integration</h2>
         </div>
         
-        <div class="jira-config" id="jiraConfig">
+        <form id="jiraForm">
           <div class="form-group">
-            <label for="jiraUrl">URL do Jira:</label>
-            <input type="url" id="jiraUrl" value="https://jorgealijo.atlassian.net" placeholder="https://sua-empresa.atlassian.net">
+            <label for="jiraEnabled" class="checkbox-label">
+              <input type="checkbox" id="jiraEnabled">
+              <span class="checkmark"></span>
+              Enable Jira integration
+            </label>
+          </div>
+          
+          <div class="jira-config" id="jiraConfig">
+            <div class="form-group">
+              <label for="jiraUrl">Jira URL:</label>
+              <input type="url" id="jiraUrl" value="https://jorgealijo.atlassian.net" placeholder="https://your-company.atlassian.net">
+            </div>
+            
+            <div class="form-group">
+              <label for="jiraEmail">Email:</label>
+              <input type="email" id="jiraEmail" value="jorge.alijo@gmail.com" placeholder="your-email@company.com">
+            </div>
+            
+            <div class="form-group">
+              <label for="jiraApiToken">API Token:</label>
+              <input type="password" id="jiraApiToken" value="" placeholder="Your Jira API Token">
+              <small>Generate an API Token at: <a href="https://id.atlassian.com/manage-profile/security/api-tokens" target="_blank">Atlassian Account Settings</a></small>
+            </div>
+            
+            <div class="form-group">
+              <label for="jiraProjectKey">Project Key:</label>
+              <input type="text" id="jiraProjectKey" value="BUG" placeholder="Ex: PROJ, BUG, DEV">
+            </div>
+            
+            <div class="form-group">
+              <label for="jiraIssueType">Issue Type ID:</label>
+              <input type="text" id="jiraIssueType" value="10035" placeholder="Ex: 10001, 10004">
+              <small>Find the ID at: Project Settings > Issue Types</small>
+            </div>
+            
+            <button type="button" id="testJiraConnection" class="btn btn-secondary">
+              <span class="material-icons">search</span>
+              Test Connection
+            </button>
+          </div>
+          
+          <button type="submit" class="btn btn-primary btn-save-config">
+            <span class="material-icons">save</span>
+            Save Settings
+          </button>
+        </form>
+      </section>
+
+      <!-- Capture Section -->
+      <section class="settings-section capture-section">
+        <div class="section-header">
+          <h2><span class="material-icons">photo_camera</span>Capture Settings</h2>
+        </div>
+        
+        <form id="captureForm">
+          <div class="form-group">
+            <label for="autoCaptureLogs" class="checkbox-label">
+              <input type="checkbox" id="autoCaptureLogs" checked>
+              <span class="checkmark"></span>
+              Automatically capture logs when reporting bug
+            </label>
           </div>
           
           <div class="form-group">
-            <label for="jiraEmail">Email:</label>
-            <input type="email" id="jiraEmail" value="jorge.alijo@gmail.com" placeholder="seu-email@empresa.com">
+            <label for="screenshotFormat">Screenshot Format:</label>
+            <select id="screenshotFormat">
+              <option value="png">PNG (better quality)</option>
+              <option value="jpeg">JPEG (smaller size)</option>
+            </select>
           </div>
           
           <div class="form-group">
-            <label for="jiraApiToken">API Token:</label>
-            <input type="password" id="jiraApiToken" value="" placeholder="Seu API Token do Jira">
-            <small>Gere um API Token em: <a href="https://id.atlassian.com/manage-profile/security/api-tokens" target="_blank">Atlassian Account Settings</a></small>
+            <label for="maxVideoLength">Maximum video duration (seconds):</label>
+            <input type="number" id="maxVideoLength" value="30" min="10" max="60">
           </div>
           
           <div class="form-group">
-            <label for="jiraProjectKey">Chave do Projeto:</label>
-            <input type="text" id="jiraProjectKey" value="BUG" placeholder="Ex: PROJ, BUG, DEV">
+            <label for="screenshotQuality">Image quality (%):</label>
+            <div class="range-container">
+              <input type="range" id="screenshotQuality" min="50" max="100" value="90">
+              <span id="qualityValue">90%</span>
+            </div>
+          </div>
+        </form>
+      </section>
+
+      <!-- Security Section -->
+      <section class="settings-section security-section">
+        <div class="section-header">
+          <h2><span class="material-icons">security</span>Security and Privacy</h2>
+        </div>
+        
+        <form id="securityForm">
+          <div class="form-group">
+            <label for="encryptData" class="checkbox-label">
+              <input type="checkbox" id="encryptData" checked>
+              <span class="checkmark"></span>
+              Encrypt sensitive data locally
+            </label>
           </div>
           
           <div class="form-group">
-            <label for="jiraIssueType">ID do Tipo de Issue:</label>
-            <input type="text" id="jiraIssueType" value="10035" placeholder="Ex: 10001, 10004">
-            <small>Encontre o ID em: Configurações do Projeto > Tipos de Issue</small>
+            <label for="autoDelete" class="checkbox-label">
+              <input type="checkbox" id="autoDelete">
+              <span class="checkmark"></span>
+              Delete local bugs after successful submission
+            </label>
           </div>
           
-          <button type="button" id="testJiraConnection" class="btn btn-secondary">
-            🔍 Testar Conexão
+          <div class="form-group">
+            <label for="maxLocalBugs">Maximum bugs stored locally:</label>
+            <input type="number" id="maxLocalBugs" value="100" min="10" max="1000">
+          </div>
+        </form>
+      </section>
+
+      <!-- Data Section -->
+      <section class="settings-section data-section">
+        <div class="section-header">
+          <h2><span class="material-icons">storage</span>Data and Backup</h2>
+        </div>
+        
+        <div class="button-grid">
+          <button id="exportData" class="btn btn-outline">
+            <span class="material-icons">file_download</span>
+            Export Data
+          </button>
+          <button id="importData" class="btn btn-outline">
+            <span class="material-icons">file_upload</span>
+            Import Data
+          </button>
+          <button id="clearData" class="btn btn-danger">
+            <span class="material-icons">delete_forever</span>
+            Clear All Data
           </button>
         </div>
-        
-        <button type="submit" class="btn btn-primary">
-          💾 Salvar Configurações
-        </button>
-      </form>
-    </div>
-
-    <div class="settings-section">
-      <h2>📸 Configurações de Captura</h2>
-      <form id="captureForm">
-        <div class="form-group">
-          <label for="autoCaptureLogs">
-            <input type="checkbox" id="autoCaptureLogs" checked>
-            Capturar logs automaticamente ao reportar bug
-          </label>
-        </div>
-        
-        <div class="form-group">
-          <label for="screenshotFormat">Formato de Screenshot:</label>
-          <select id="screenshotFormat">
-            <option value="png">PNG (melhor qualidade)</option>
-            <option value="jpeg">JPEG (menor tamanho)</option>
-          </select>
-        </div>
-        
-        <div class="form-group">
-          <label for="maxVideoLength">Duração máxima do vídeo (segundos):</label>
-          <input type="number" id="maxVideoLength" value="30" min="10" max="60">
-        </div>
-        
-        <div class="form-group">
-          <label for="screenshotQuality">Qualidade da imagem (%):</label>
-          <input type="range" id="screenshotQuality" min="50" max="100" value="90">
-          <span id="qualityValue">90%</span>
-        </div>
-      </form>
-    </div>
-
-    <div class="settings-section">
-      <h2>🔒 Segurança e Privacidade</h2>
-      <form id="securityForm">
-        <div class="form-group">
-          <label for="encryptData">
-            <input type="checkbox" id="encryptData" checked>
-            Criptografar dados sensíveis localmente
-          </label>
-        </div>
-        
-        <div class="form-group">
-          <label for="autoDelete">
-            <input type="checkbox" id="autoDelete">
-            Deletar bugs locais após envio bem-sucedido
-          </label>
-        </div>
-        
-        <div class="form-group">
-          <label for="maxLocalBugs">Máximo de bugs armazenados localmente:</label>
-          <input type="number" id="maxLocalBugs" value="100" min="10" max="1000">
-        </div>
-      </form>
-    </div>
-
-    <div class="settings-section">
-      <h2>📊 Dados e Backup</h2>
-      <div class="button-group">
-        <button id="exportData" class="btn btn-outline">
-          📤 Exportar Dados
-        </button>
-        <button id="importData" class="btn btn-outline">
-          📥 Importar Dados
-        </button>
-        <button id="clearData" class="btn btn-danger">
-          🗑️ Limpar Todos os Dados
-        </button>
-      </div>
-    </div>
+      </section>
+    </main>
 
     <div class="status-section">
       <div id="statusMessage" class="status-message"></div>
