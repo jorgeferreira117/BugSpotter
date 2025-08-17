@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BugSpotter</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+  <link href="popup.css" rel="stylesheet">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Header compacto -->
+    <header class="app-header">
+      <div class="logo-container">
+        <span class="material-icons logo-icon">bug_report</span>
+        <h1 class="app-title">BugSpotter</h1>
+      </div>
+    </header>
+
+    <!-- Conteúdo principal -->
+    <main class="main-content">
+      <!-- Seção de Captura -->
+      <section class="capture-section">
+        <div class="section-header">
+          <h2>Capturar Evidências</h2>
+        </div>
+        
+        <!-- Grid 2x2 de botões de captura -->
+        <div class="capture-grid">
+          <button id="captureScreenshot" class="capture-btn primary">
+            <span class="material-icons">photo_camera</span>
+            <span class="btn-text">Screenshot</span>
+          </button>
+          
+          <button id="captureLogs" class="capture-btn secondary">
+            <span class="material-icons">description</span>
+            <span class="btn-text">Console</span>
+          </button>
+          
+          <button id="captureDOM" class="capture-btn secondary">
+            <span class="material-icons">code</span>
+            <span class="btn-text">DOM</span>
+          </button>
+          
+          <button id="startRecording" class="capture-btn danger">
+            <span class="material-icons">videocam</span>
+            <span class="btn-text">Vídeo</span>
+          </button>
+        </div>
+
+        <!-- Status das capturas -->
+        <div id="captureStatus" class="capture-status" style="display: none;">
+          <div class="status-item">
+            <span class="material-icons status-icon">info</span>
+            <span class="status-text"></span>
+          </div>
+        </div>
+      </section>
+
+      <!-- Seção de Relatório -->
+      <section class="report-section">
+        <div class="section-header">
+          <h2>Reportar Bug</h2>
+        </div>
+
+        <form id="bugForm" class="bug-form">
+          <div class="form-group">
+            <label for="title" class="form-label">Título *</label>
+            <input type="text" id="title" name="title" class="form-input" required>
+          </div>
+
+          <div class="form-group">
+            <label for="description" class="form-label">Descrição *</label>
+            <textarea id="description" name="description" class="form-textarea" 
+                      rows="3" required></textarea>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label for="priority" class="form-label">Prioridade *</label>
+              <select id="priority" name="priority" class="form-select" required>
+                <option value="">Selecione</option>
+                <option value="Lowest">Lowest</option>
+                <option value="Low">Low</option>
+                <option value="Medium">Medium</option>
+                <option value="High">High</option>
+                <option value="Highest">Highest</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label for="environment" class="form-label">Ambiente *</label>
+              <select id="environment" name="environment" class="form-select" required>
+                <option value="">Selecione</option>
+                <option value="Production">Produção</option>
+                <option value="Staging">Staging</option>
+                <option value="Production/Staging">Produção/Staging</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label for="steps" class="form-label">Passos para Reproduzir</label>
+            <textarea id="steps" name="steps" class="form-textarea" 
+                      rows="3"></textarea>
+          </div>
+
+          <!-- Lista de anexos -->
+          <div class="attachments-section">
+            <label class="form-label">Evidências Anexadas</label>
+            <div id="attachmentsList" class="attachments-list">
+              <div class="no-attachments">
+                <span class="material-icons">attach_file</span>
+                <span>Nenhuma evidência anexada</span>
+              </div>
+            </div>
+          </div>
+
+          <button type="submit" class="submit-btn">
+            <span class="material-icons">send</span>
+            Enviar Relatório
+          </button>
+          
+          <!-- Status do envio do relatório -->
+          <div id="reportStatus" class="capture-status" style="display: none;">
+            <div class="status-item">
+              <span class="material-icons status-icon">info</span>
+              <span class="status-text">Pronto para enviar relatório</span>
+            </div>
+          </div>
+        </form>
+      </section>
+
+      <!-- Seção de Histórico -->
+      <section class="history-section">
+        <div class="section-header">
+          <h2>Histórico</h2>
+        </div>
+
+        <!-- Status do histórico -->
+        <div id="historyStatus" class="capture-status" style="display: none;">
+          <div class="status-item">
+            <span class="material-icons status-icon">info</span>
+            <span class="status-text"></span>
+          </div>
+        </div>
+
+        <!-- Lista compacta de bugs -->
+        <div id="bugHistory" class="bug-history">
+          <div class="empty-state">
+            <span class="material-icons empty-icon">history</span>
+            <p>Nenhum bug registrado ainda</p>
+          </div>
+        </div>
+
+        <!-- Ações do histórico -->
+        <div class="history-actions">
+          <button id="clearHistory" class="action-btn danger-text">
+            <span class="material-icons">delete</span>
+            Limpar Histórico
+          </button>
+        </div>
+      </section>
+
+      <!-- Seção de Configurações -->
+      <section class="settings-section">
+        <div class="section-header">
+          <h2>Configurações</h2>
+        </div>
+
+        <div class="settings-actions">
+          <button id="openSettings" class="action-btn">
+            <span class="material-icons">settings</span>
+            Configurações Avançadas
+          </button>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- Loading overlay -->
+  <div id="loadingOverlay" class="loading-overlay hidden">
+    <div class="loading-spinner">
+      <span class="material-icons spinning">refresh</span>
+      <p>Processando...</p>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
