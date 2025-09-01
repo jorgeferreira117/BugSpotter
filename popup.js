@@ -219,8 +219,167 @@ class BugSpotter {
     try {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
       
+      // Tentar usar Chrome Debugger API primeiro
+      let logData = await this.captureLogsWithDebugger(tab.id);
+      
+      // Se falhar, usar método tradicional como fallback
+      if (!logData || logData.length === 0) {
+        console.log('Debugger API failed, using fallback method');
+        logData = await this.captureLogsTraditional(tab.id);
+      }
+      
+      if (logData && logData.length > 0) {
+        const attachment = {
+          type: 'logs',
+          name: `console_logs_${Date.now()}.txt`,
+          data: logData.join('\n'),
+          size: new Blob([logData.join('\n')]).size
+        };
+        
+        const added = this.addAttachment(attachment);
+        
+        if (added) {
+          this.updateCaptureStatus('Logs captured successfully!', 'success');
+        }
+      } else {
+        this.updateCaptureStatus('No logs found', 'warning');
+      }
+    } catch (error) {
+      console.error('Error capturing logs:', error);
+      this.updateCaptureStatus('Error capturing logs', 'error');
+    } finally {
+      button.disabled = false;
+      btnText.textContent = 'Logs';
+    }
+  }
+
+  // Novo método para capturar logs usando Chrome Debugger API
+  async captureLogsWithDebugger(tabId) {
+    try {
+      console.log('[DEBUG] Iniciando captura com Chrome Debugger API para tab:', tabId);
+      
+      // Anexar debugger
+      console.log('[DEBUG] Tentando anexar debugger...');
+      const attachResult = await chrome.runtime.sendMessage({
+        action: 'ATTACH_DEBUGGER',
+        tabId: tabId
+      });
+      
+      console.log('[DEBUG] Resultado do attach:', attachResult);
+      
+      if (!attachResult.success) {
+        console.error('[DEBUG] Falha ao anexar debugger:', attachResult.error);
+        throw new Error(attachResult.error || 'Failed to attach debugger');
+      }
+      
+      console.log('[DEBUG] Debugger anexado com sucesso, aguardando logs...');
+      
+      // Aguardar um pouco para capturar logs
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      // Obter logs do debugger
+      console.log('[DEBUG] Solicitando logs do debugger...');
+      const logsResult = await chrome.runtime.sendMessage({
+        action: 'GET_DEBUGGER_LOGS',
+        tabId: tabId
+      });
+      
+      console.log('[DEBUG] Resultado dos logs:', logsResult);
+      
+      if (!logsResult.success) {
+        console.error('[DEBUG] Falha ao obter logs:', logsResult.error);
+        throw new Error(logsResult.error || 'Failed to get debugger logs');
+      }
+      
+      console.log('[DEBUG] Logs obtidos, quantidade:', logsResult.data?.logs?.length || 0);
+      
+      // Formatar logs para exibição
+      const formattedLogs = [];
+      
+      if (logsResult.data.logs) {
+        logsResult.data.logs.forEach(log => {
+          const timestamp = new Date(log.timestamp).toISOString();
+          
+          if (log.type === 'console') {
+            // Correção: verificar se log.level existe antes de usar toUpperCase()
+            const level = log.level ? log.level.toUpperCase() : 'LOG';
+            const text = log.text || '';
+            formattedLogs.push(`[${level}] ${timestamp}: ${text}`);
+          } else if (log.type === 'console-api') {
+            // Correção: verificar se log.level existe antes de usar toUpperCase()
+            const level = log.level ? log.level.toUpperCase() : 'LOG';
+            const args = log.args ? log.args.map(arg => arg.value || arg.description || JSON.stringify(arg)).join(' ') : '';
+            formattedLogs.push(`[${level}] ${timestamp}: ${args}`);
+          }
+        });
+      }
+      
+      if (logsResult.data.networkRequests) {
+        logsResult.data.networkRequests.forEach(req => {
+          const timestamp = new Date(req.timestamp).toISOString();
+          // 🆕 CORREÇÃO: Acessar propriedades corretas dos logs de rede
+          let method = 'Unknown';
+          let status = 'Unknown';
+          let url = req.url || 'Unknown URL';
+          
+          // Se for uma requisição (Network.requestWillBeSent)
+          if (req.method) {
+            method = req.method;
+          }
+          
+          // Se for uma resposta (Network.responseReceived) ou combinado
+          if (req.status) {
+            status = req.status;
+          }
+          
+          // Se tiver texto formatado, usar ele
+          if (req.text) {
+            formattedLogs.push(`${timestamp}: ${req.text}`);
+          } else {
+            // Fallback para formatação manual
+            formattedLogs.push(`[NETWORK] ${timestamp}: ${method} ${status} ${url}`);
+          }
+        });
+      }
+      
+      console.log('[DEBUG] Logs formatados:', formattedLogs.length, 'entradas');
+      
+      // Desanexar debugger após captura
+      try {
+        await chrome.runtime.sendMessage({
+          action: 'DETACH_DEBUGGER',
+          tabId: tabId
+        });
+        console.log('[DEBUG] Debugger desanexado com sucesso');
+      } catch (detachError) {
+        console.warn('[DEBUG] Erro ao desanexar debugger:', detachError);
+      }
+      
+      return formattedLogs;
+      
+    } catch (error) {
+      console.error('[DEBUG] Debugger API capture failed:', error);
+      console.error('[DEBUG] Stack trace:', error.stack);
+      
+      // Tentar desanexar debugger em caso de erro
+      try {
+        await chrome.runtime.sendMessage({
+          action: 'DETACH_DEBUGGER',
+          tabId: tabId
+        });
+      } catch (detachError) {
+        console.warn('[DEBUG] Erro ao desanexar debugger após falha:', detachError);
+      }
+      
+      return null;
+    }
+  }
+
+  // Método tradicional como fallback
+  async captureLogsTraditional(tabId) {
+    try {
       const logs = await chrome.scripting.executeScript({
-        target: { tabId: tab.id },
+        target: { tabId: tabId },
         function: () => {
           // Capture console logs
           const logs = [];
@@ -279,30 +438,11 @@ class BugSpotter {
         }
       });
       
-      const logData = logs[0].result;
+      return logs[0].result;
       
-      if (logData && logData.length > 0) {
-        const attachment = {
-          type: 'logs',
-          name: `console_logs_${Date.now()}.txt`,
-          data: logData.join('\n'),
-          size: new Blob([logData.join('\n')]).size
-        };
-        
-        const added = this.addAttachment(attachment);
-        
-        if (added) {
-          this.updateCaptureStatus('Logs captured successfully!', 'success');
-        }
-      } else {
-        this.updateCaptureStatus('No logs found', 'warning');
-      }
     } catch (error) {
-      console.error('Error capturing logs:', error);
-      this.updateCaptureStatus('Error capturing logs', 'error');
-    } finally {
-      button.disabled = false;
-      btnText.textContent = 'Logs';
+      console.error('Traditional capture failed:', error);
+      return null;
     }
   }
 
@@ -573,7 +713,7 @@ class BugSpotter {
   async sendToJira(bugData) {
     return new Promise((resolve, reject) => {
       chrome.runtime.sendMessage({
-        type: 'SEND_TO_JIRA',
+        action: 'SEND_TO_JIRA',
         data: bugData
       }, (response) => {
         // Check for runtime error

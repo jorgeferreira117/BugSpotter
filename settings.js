@@ -216,7 +216,7 @@ class BugSpotterSettings {
 
   async testJiraConnection() {
     const button = document.getElementById('testJiraConnection');
-    const originalHTML = button.innerHTML; // Capturar HTML completo
+    const originalHTML = button.innerHTML;
     
     // Validar campos antes de testar
     const requiredFields = {
@@ -234,7 +234,6 @@ class BugSpotterSettings {
       }
     }
     
-    // Alterar apenas o conteúdo, mantendo a estrutura
     button.innerHTML = '<span class="material-icons">sync</span>Testing connection...';
     button.disabled = true;
   
@@ -246,39 +245,21 @@ class BugSpotterSettings {
         projectKey: document.getElementById('jiraProjectKey').value.trim()
       };
   
-      // Validar URL
-      try {
-        new URL(jiraConfig.baseUrl);
-      } catch {
-        throw new Error('Invalid Jira URL');
-      }
-  
-      // Fazer a requisição HTTP
-      const auth = btoa(`${jiraConfig.email}:${jiraConfig.apiToken}`);
-      const response = await fetch(`${jiraConfig.baseUrl}/rest/api/3/project/${jiraConfig.projectKey}`, {
-        method: 'GET',
-        headers: {
-          'Authorization': `Basic ${auth}`,
-          'Accept': 'application/json',
-          'Content-Type': 'application/json'
-        }
+      // 🆕 Usar background script - ESTA É A CORREÇÃO!
+      const response = await chrome.runtime.sendMessage({
+        action: 'TEST_JIRA_CONNECTION',
+        config: jiraConfig
       });
   
-      if (response.ok) {
-        const project = await response.json();
-        this.showStatus(`✅ Connection successful! Project: ${project.name}`, 'success');
-      } else if (response.status === 401) {
-        throw new Error('Invalid credentials (email or API token)');
-      } else if (response.status === 404) {
-        throw new Error('Project not found. Check the project key.');
+      if (response.success) {
+        this.showStatus(`✅ ${response.data.message}`, 'success');
       } else {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        throw new Error(response.error);
       }
     } catch (error) {
       console.error('Connection test error:', error);
       this.showStatus(`❌ Connection error: ${error.message}`, 'error');
     } finally {
-      // Restaurar o HTML original completo
       setTimeout(() => {
         button.innerHTML = originalHTML;
         button.disabled = false;
