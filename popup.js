@@ -639,6 +639,8 @@ class BugSpotter {
       title: formData.get('title'),
       description: formData.get('description'),
       steps: formData.get('steps'),
+      expectedBehavior: formData.get('expectedBehavior'),
+      actualBehavior: formData.get('actualBehavior'),
       priority: formData.get('priority'),
       environment: formData.get('environment'),
       component: formData.get('component'),

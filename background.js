@@ -785,7 +785,7 @@ class BugSpotterBackground {
         type: 'basic',
         iconUrl: 'icon48.png',
         title: 'BugSpotter',
-        message: `Bug enviado para Jira: ${result.key} com ${bugData.attachments?.length || 0} anexo(s)`
+        message: `Bug sent to Jira: ${result.key} with ${bugData.attachments?.length || 0} attachment(s)`
       });
   
       return result;
@@ -875,19 +875,25 @@ class BugSpotterBackground {
 
   formatJiraDescription(bugData) {
     return `
-*Descrição:*
+*Description:*
 ${bugData.description}
 
-*Passos para Reproduzir:*
+*Steps to Reproduce:*
 ${bugData.steps}
 
+*Expected Behavior:*
+${bugData.expectedBehavior || 'N/A'}
+
+*Actual Behavior:*
+${bugData.actualBehavior || 'N/A'}
+
 *URL:* ${bugData.url}
-*Componente:* ${bugData.component || 'N/A'}
-*Ambiente:* ${bugData.environment || 'N/A'}
-*Prioridade:* ${bugData.priority || 'Medium'}
+*Component:* ${bugData.component || 'N/A'}
+*Environment:* ${bugData.environment || 'N/A'}
+*Priority:* ${bugData.priority || 'Medium'}
 *Timestamp:* ${bugData.timestamp}
-*Evidências:* ${bugData.attachments?.length || 0} arquivo(s) anexado(s) a este ticket
-    `;
+*Evidence:* ${bugData.attachments?.length || 0} file(s) attached to this ticket
+  `;
   }
 
   // Remover este método obsoleto:
