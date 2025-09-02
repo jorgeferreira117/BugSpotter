@@ -647,7 +647,8 @@ class BugSpotter {
       url: await this.getCurrentTabUrl(),
       attachments: this.attachments,
       timestamp: new Date().toISOString(),
-      jiraAttempted: false
+      jiraAttempted: false,
+      status: 'open'
     };
   
     try {

@@ -391,6 +391,9 @@ class BugSpotterSettings {
     statusElement.className = 'status-message';
     statusElement.textContent = message;
     
+    // 🆕 CORREÇÃO: Garantir que o elemento seja visível
+    statusElement.style.display = 'block';
+    
     // Força um reflow para garantir que a animação funcione
     statusElement.offsetHeight;
     
