@@ -33,7 +33,14 @@ if (typeof window.bugSpotterContentInitialized === 'undefined') {
       
       // Salvar logs no localStorage para persistência
       this.saveLogsToStorage();
-      setInterval(() => this.saveLogsToStorage(), 5000); // Salvar a cada 5 segundos
+      // Linha 36 - armazenar referência
+      this.saveInterval = setInterval(() => this.saveLogsToStorage(), 5000);
+      // Adicionar cleanup
+      window.addEventListener('beforeunload', () => {
+        if (this.saveInterval) {
+          clearInterval(this.saveInterval);
+        }
+      });
     }
     
     // 🆕 NOVA: Capturar logs que já existem

@@ -596,11 +596,14 @@ class BugSpotter {
         recording: 'videocam'
       };
       
+      const nameElement = document.createElement('div');
+      nameElement.textContent = attachment.name;
+      
       item.innerHTML = `
         <div class="attachment-info">
           <span class="material-icons attachment-icon">${typeIcons[attachment.type]}</span>
           <div class="attachment-details">
-            <div class="attachment-name">${attachment.name}</div>
+            <div class="attachment-name"></div>
             <div class="attachment-size">${this.formatFileSize(attachment.size)}</div>
           </div>
         </div>
@@ -608,6 +611,8 @@ class BugSpotter {
           <span class="material-icons">delete</span>
         </button>
       `;
+      
+      item.querySelector('.attachment-name').appendChild(nameElement);
       
       container.appendChild(item);
     });
@@ -843,15 +848,24 @@ class BugSpotter {
   // Modificar displayBugHistory para usar o método síncrono
   displayBugHistory(reports) {
     const container = document.getElementById('bugHistory');
-    container.innerHTML = '';
+    while (container.firstChild) {
+      container.removeChild(container.firstChild);
+    }
     
     if (reports.length === 0) {
-      container.innerHTML = `
-        <div class="empty-state">
-          <span class="material-icons empty-icon">history</span>
-          <p>No bugs registered yet</p>
-        </div>
-      `;
+      const emptyState = document.createElement('div');
+      emptyState.className = 'empty-state';
+      
+      const icon = document.createElement('span');
+      icon.className = 'material-icons empty-icon';
+      icon.textContent = 'history';
+      
+      const text = document.createElement('p');
+      text.textContent = 'No bugs registered yet';
+      
+      emptyState.appendChild(icon);
+      emptyState.appendChild(text);
+      container.appendChild(emptyState);
       return;
     }
     
@@ -859,53 +873,104 @@ class BugSpotter {
       const item = document.createElement('div');
       item.className = 'history-item';
       
-      let content = '';
-      
       if (report.jiraKey) {
-        // Agora usando o método síncrono
         const jiraUrl = this.getJiraTicketUrl(report.jiraKey);
-        content = `
-          <div class="history-content-jira">
-            <a href="${jiraUrl}" target="_blank" class="jira-link-full">
-              ${report.jiraKey} - ${report.title}
-            </a>
-          </div>
-          <div class="history-actions-single">
-            <button class="delete-btn" data-index="${index}" title="Delete">
-              <span class="material-icons">delete</span>
-            </button>
-          </div>
-        `;
+        
+        const contentJira = document.createElement('div');
+        contentJira.className = 'history-content-jira';
+        
+        const link = document.createElement('a');
+        link.href = jiraUrl;
+        link.target = '_blank';
+        link.className = 'jira-link-full';
+        link.textContent = `${report.jiraKey} - ${report.title}`;
+        
+        contentJira.appendChild(link);
+        
+        const actions = document.createElement('div');
+        actions.className = 'history-actions-single';
+        
+        const deleteBtn = document.createElement('button');
+        deleteBtn.className = 'delete-btn';
+        deleteBtn.dataset.index = index;
+        deleteBtn.title = 'Delete';
+        
+        const deleteIcon = document.createElement('span');
+        deleteIcon.className = 'material-icons';
+        deleteIcon.textContent = 'delete';
+        
+        deleteBtn.appendChild(deleteIcon);
+        actions.appendChild(deleteBtn);
+        
+        item.appendChild(contentJira);
+        item.appendChild(actions);
       } else if (report.jiraAttempted === false) {
-        // Ticket not sent to Jira: title + send icon
-        content = `
-          <div class="history-content-pending">
-            <span class="history-title-only">${report.title}</span>
-          </div>
-          <div class="history-actions-single">
-            <button class="send-btn" data-index="${index}" title="Send to Jira">
-              <span class="material-icons">send</span>
-            </button>
-          </div>
-        `;
+        const contentPending = document.createElement('div');
+        contentPending.className = 'history-content-pending';
+        
+        const title = document.createElement('span');
+        title.className = 'history-title-only';
+        title.textContent = report.title;
+        
+        contentPending.appendChild(title);
+        
+        const actions = document.createElement('div');
+        actions.className = 'history-actions-single';
+        
+        const sendBtn = document.createElement('button');
+        sendBtn.className = 'send-btn';
+        sendBtn.dataset.index = index;
+        sendBtn.title = 'Send to Jira';
+        
+        const sendIcon = document.createElement('span');
+        sendIcon.className = 'material-icons';
+        sendIcon.textContent = 'send';
+        
+        sendBtn.appendChild(sendIcon);
+        actions.appendChild(sendBtn);
+        
+        item.appendChild(contentPending);
+        item.appendChild(actions);
       } else {
-        // Unknown status: title + delete and send buttons
-        content = `
-          <div class="history-content-unknown">
-            <span class="history-title-only">${report.title}</span>
-          </div>
-          <div class="history-actions-double">
-            <button class="send-btn" data-index="${index}" title="Send to Jira">
-              <span class="material-icons">send</span>
-            </button>
-            <button class="delete-btn" data-index="${index}" title="Delete">
-              <span class="material-icons">delete</span>
-            </button>
-          </div>
-        `;
+        const contentUnknown = document.createElement('div');
+        contentUnknown.className = 'history-content-unknown';
+        
+        const title = document.createElement('span');
+        title.className = 'history-title-only';
+        title.textContent = report.title;
+        
+        contentUnknown.appendChild(title);
+        
+        const actions = document.createElement('div');
+        actions.className = 'history-actions-double';
+        
+        const sendBtn = document.createElement('button');
+        sendBtn.className = 'send-btn';
+        sendBtn.dataset.index = index;
+        sendBtn.title = 'Send to Jira';
+        
+        const sendIcon = document.createElement('span');
+        sendIcon.className = 'material-icons';
+        sendIcon.textContent = 'send';
+        
+        const deleteBtn = document.createElement('button');
+        deleteBtn.className = 'delete-btn';
+        deleteBtn.dataset.index = index;
+        deleteBtn.title = 'Delete';
+        
+        const deleteIcon = document.createElement('span');
+        deleteIcon.className = 'material-icons';
+        deleteIcon.textContent = 'delete';
+        
+        sendBtn.appendChild(sendIcon);
+        deleteBtn.appendChild(deleteIcon);
+        actions.appendChild(sendBtn);
+        actions.appendChild(deleteBtn);
+        
+        item.appendChild(contentUnknown);
+        item.appendChild(actions);
       }
       
-      item.innerHTML = content;
       container.appendChild(item);
     });
   }
@@ -1089,4 +1154,10 @@ class BugSpotter {
 document.addEventListener('DOMContentLoaded', () => {
   window.bugSpotter = new BugSpotter();
   window.bugSpotter.init(); // Add this line!
+});
+
+// Adicionar error boundary global
+window.addEventListener('unhandledrejection', (event) => {
+  console.error('Unhandled promise rejection:', event.reason);
+  this.updateCaptureStatus('Erro inesperado', 'error');
 });

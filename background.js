@@ -1,3 +1,17 @@
+class RateLimiter {
+  constructor(maxRequests = 10, timeWindow = 60000) {
+    this.requests = [];
+    this.maxRequests = maxRequests;
+    this.timeWindow = timeWindow;
+  }
+  
+  canMakeRequest() {
+    const now = Date.now();
+    this.requests = this.requests.filter(time => now - time < this.timeWindow);
+    return this.requests.length < this.maxRequests;
+  }
+}
+
 class BugSpotterBackground {
   constructor() {
     // Adicionar gerenciamento de sessões debugger
@@ -5,7 +19,7 @@ class BugSpotterBackground {
     // Adicionar logs persistentes por aba
     this.persistentLogs = new Map();
     // Definir limite de logs por aba
-    this.maxLogsPerTab = 1000;
+    this.maxLogsPerTab = 200; // Reduzido de 1000 para 200
     this.init();
   }
 
@@ -63,7 +77,7 @@ class BugSpotterBackground {
   }
   
   cleanupOldLogs() {
-    const maxAge = 30 * 60 * 1000; // 30 minutos
+    const maxAge = 15 * 60 * 1000; // Reduzido de 30 para 15 minutos
     const now = Date.now();
     
     for (const [tabId, data] of this.persistentLogs.entries()) {
@@ -73,8 +87,25 @@ class BugSpotterBackground {
         return (now - logTime) < maxAge;
       });
       
+      // Limpar também networkRequests e errors
+      if (data.networkRequests) {
+        data.networkRequests = data.networkRequests.filter(req => {
+          const reqTime = new Date(req.timestamp).getTime();
+          return (now - reqTime) < maxAge;
+        });
+      }
+      
+      if (data.errors) {
+        data.errors = data.errors.filter(error => {
+          const errorTime = new Date(error.timestamp).getTime();
+          return (now - errorTime) < maxAge;
+        });
+      }
+      
       // Se não há logs, remover a entrada
-      if (data.logs.length === 0) {
+      if (data.logs.length === 0 && 
+          (!data.networkRequests || data.networkRequests.length === 0) &&
+          (!data.errors || data.errors.length === 0)) {
         this.persistentLogs.delete(tabId);
       }
     }
@@ -407,8 +438,12 @@ class BugSpotterBackground {
 
   addToBuffer(array, item) {
     array.push(item);
-    if (array.length > this.maxLogsPerTab) {  // ← Propriedade indefinida!
-      array.shift();
+    // Usar limite mais conservador para melhor performance
+    const limit = this.maxLogsPerTab || 200;
+    if (array.length > limit) {
+      // Remove múltiplos itens de uma vez se necessário
+      const excess = array.length - limit;
+      array.splice(0, excess);
     }
   }
 
