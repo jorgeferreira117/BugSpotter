@@ -1011,11 +1011,13 @@ class BugSpotter {
   }
 
   async clearHistory() {
-    if (confirm('Are you sure you want to clear all history?')) {
-      chrome.storage.local.set({ bugReports: [] }, () => {
-        this.loadBugHistory();
-        this.updateCaptureStatus('History cleared', 'info');
-      });
+    try {
+      await chrome.storage.local.remove('bugReports');
+      await this.loadBugHistory();
+      this.updateHistoryStatus('History cleared', 'info');
+    } catch (error) {
+      console.error('Error clearing history:', error);
+      this.updateHistoryStatus('Error clearing history', 'error');
     }
   }
 
@@ -1058,9 +1060,7 @@ class BugSpotter {
       maxFileSize: document.getElementById('maxFileSize').value
     };
     
-    chrome.storage.local.set({ settings }, () => {
-      this.updateCaptureStatus('Settings saved', 'success');
-    });
+    chrome.storage.local.set({ settings }, () => {});
   }
 
   calculateDataUrlSize(dataUrl) {
