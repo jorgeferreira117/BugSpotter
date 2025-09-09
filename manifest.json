@@ -4,24 +4,25 @@
   "version": "1.0.0",
   "description": "Extensão para identificar, registrar e analisar bugs diretamente no browser",
   "permissions": [
-    "activeTab",
     "storage",
     "scripting",
     "tabs",
-    "debugger",
+    "activeTab",
     "desktopCapture",
     "tabCapture",
     "contextMenus",
-    "notifications"
+    "notifications",
+    "debugger"
   ],
   "host_permissions": [
-    "<all_urls>"
+    "https://*/*",
+    "http://localhost/*"
   ],
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;"
   },
   "action": {
-    "default_popup": "popup.html",
+    "default_popup": "src/ui/popup.html",
     "default_title": "BugSpotter",
     "default_icon": {
       "16": "icon16.png",
@@ -30,8 +31,9 @@
     }
   },
   "background": {
-    "service_worker": "background.js"
+    "service_worker": "src/background/background.js"
   },
+  "options_page": "src/ui/settings.html",
   "icons": {
     "16": "icon16.png",
     "48": "icon48.png",
