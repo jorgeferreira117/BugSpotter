@@ -592,15 +592,25 @@ class BugSpotterBackground {
       }
   
       console.log(`Tentando anexar debugger para tab ${tabId}`);
-      await chrome.debugger.attach({tabId}, "1.3");
       
-      // Habilitar domínios necessários
-      await chrome.debugger.sendCommand({tabId}, "Runtime.enable");
-      await chrome.debugger.sendCommand({tabId}, "Console.enable");
-      await chrome.debugger.sendCommand({tabId}, "Network.enable");
-      
-      // Configurações avançadas para capturar todos os tipos de logs
-      await chrome.debugger.sendCommand({tabId}, "Runtime.setAsyncCallStackDepth", { maxDepth: 32 });
+      try {
+        await chrome.debugger.attach({tabId}, "1.3");
+        
+        // Habilitar domínios necessários
+        await chrome.debugger.sendCommand({tabId}, "Runtime.enable");
+        await chrome.debugger.sendCommand({tabId}, "Console.enable");
+        await chrome.debugger.sendCommand({tabId}, "Network.enable");
+        
+        // Configurações avançadas para capturar todos os tipos de logs
+        await chrome.debugger.sendCommand({tabId}, "Runtime.setAsyncCallStackDepth", { maxDepth: 32 });
+      } catch (debuggerError) {
+        // Tratamento específico para erro de tab inexistente durante operações do debugger
+        if (debuggerError.message && debuggerError.message.includes('No tab with given id')) {
+          console.log(`Aviso: Tab ${tabId} foi fechada durante anexação do debugger`);
+          return { success: false, message: 'Tab was closed during debugger attachment' };
+        }
+        throw debuggerError;
+      }
       // ❌ REMOVER esta linha que causa o erro:
       // await chrome.debugger.sendCommand({tabId}, "Console.setMonitoringXHREnabled", { enabled: true });
       
@@ -627,7 +637,12 @@ class BugSpotterBackground {
           console.log('Aviso: Aba não existe mais, pulando captura de logs do content script');
         }
       } catch (e) {
-        console.log('Aviso: Não foi possível obter logs do content script:', e.message);
+        // Tratamento específico para erro de tab inexistente
+        if (e.message && e.message.includes('No tab with given id')) {
+          console.log(`Aviso: Tab ${tabId} foi fechada durante a operação, pulando captura de logs do content script`);
+        } else {
+          console.log('Aviso: Não foi possível obter logs do content script:', e.message);
+        }
       }
       
       // Tentar capturar logs do console do navegador
@@ -668,7 +683,12 @@ class BugSpotterBackground {
         }
         }
       } catch (e) {
-        console.log('Aviso: Não foi possível obter logs do browser console:', e.message);
+        // Tratamento específico para erro de tab inexistente
+        if (e.message && e.message.includes('No tab with given id')) {
+          console.log(`Aviso: Tab ${tabId} foi fechada durante avaliação do Runtime, pulando captura de logs do browser`);
+        } else {
+          console.log('Aviso: Não foi possível obter logs do browser console:', e.message);
+        }
       }
       
       // 🆕 NÃO LIMPAR CONSOLE - comentar estas linhas para preservar logs
@@ -709,7 +729,7 @@ class BugSpotterBackground {
 
   // Desanexar debugger de uma aba
   async detachDebugger(tabId) {
-    return await this.errorHandler.safeExecute(async () => {
+    try {
       if (!chrome.debugger) {
         console.warn('Chrome debugger API not available');
         return;
@@ -720,7 +740,15 @@ class BugSpotterBackground {
         this.debuggerSessions.delete(tabId);
         console.log(`Debugger detached from tab ${tabId}`);
       }
-    }, 'Desanexar debugger', false);
+    } catch (error) {
+      // Tratamento específico para erro de tab inexistente
+      if (error.message && error.message.includes('No tab with given id')) {
+        console.log(`Aviso: Tab ${tabId} já foi fechada, removendo sessão do debugger`);
+        this.debuggerSessions.delete(tabId);
+      } else {
+        this.errorHandler.handleError(error, 'Desanexar debugger');
+      }
+    }
   }
 
   // Cleanup automático de sessão
@@ -883,14 +911,7 @@ class BugSpotterBackground {
           }
           break;
 
-        case 'GET_PERFORMANCE_REPORT':
-          try {
-            const report = this.performanceMonitor.generateReport();
-            sendResponse({ success: true, data: report });
-          } catch (error) {
-            sendResponse({ success: false, error: error.message });
-          }
-          break;
+
 
         default:
           sendResponse({ success: false, error: 'Unknown message type' });
@@ -923,6 +944,13 @@ class BugSpotterBackground {
       this.performanceMonitor.endOperation(operationId, true);
       return result;
     } catch (error) {
+      // Tratamento específico para erro de tab inexistente
+      if (error.message && error.message.includes('No tab with given id')) {
+        console.log(`Aviso: Tab ${tabId} foi fechada durante captura de screenshot, retornando null`);
+        this.performanceMonitor.endOperation(operationId, true);
+        return null;
+      }
+      
       this.performanceMonitor.endOperation(operationId, false, {
         message: error.message,
         stack: error.stack
@@ -936,6 +964,14 @@ class BugSpotterBackground {
     this.performanceMonitor.startOperation(operationId, 'logCapture', { tabId });
     
     try {
+      // Verificar se a aba ainda existe antes de executar script
+      const tabStillExists = await this.tabExists(tabId);
+      if (!tabStillExists) {
+        console.log(`Aviso: Tab ${tabId} não existe mais, retornando array vazio`);
+        this.performanceMonitor.endOperation(operationId, true);
+        return [];
+      }
+
       const result = await this.errorHandler.safeExecute(async () => {
         const results = await chrome.scripting.executeScript({
           target: { tabId },
@@ -950,6 +986,13 @@ class BugSpotterBackground {
       this.performanceMonitor.endOperation(operationId, true);
       return result;
     } catch (error) {
+      // Tratamento específico para erro de tab inexistente
+      if (error.message && error.message.includes('No tab with given id')) {
+        console.log(`Aviso: Tab ${tabId} foi fechada durante execução do script, retornando array vazio`);
+        this.performanceMonitor.endOperation(operationId, true);
+        return [];
+      }
+      
       this.performanceMonitor.endOperation(operationId, false, {
         message: error.message,
         stack: error.stack
