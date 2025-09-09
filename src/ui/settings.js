@@ -157,6 +157,9 @@ class BugSpotterSettings {
     } else {
       config.classList.add('disabled');
     }
+    
+    // Atualizar estado dos campos de prioridade quando Jira integration é alterado
+    this.updatePriorityFieldsState();
   }
 
   async saveJiraSettings(event) {
