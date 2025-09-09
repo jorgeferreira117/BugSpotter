@@ -616,6 +616,13 @@ section:hover {
   box-shadow: 0 3px 10px rgba(224, 224, 224, 0.3);
 }
 
+/* Container dos botões de configurações */
+.settings-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
 /* Configurações */
 .settings-list {
   display: flex;

@@ -60,8 +60,52 @@
             
             <div class="form-group">
               <label for="jiraIssueType">Issue Type ID:</label>
-              <input type="text" id="jiraIssueType" value="10035" placeholder="Ex: 10001, 10004">
-              <small>Find the ID at: Project Settings > Issue Types</small>
+              <input type="text" id="jiraIssueType" placeholder="e.g., 10001">
+            </div>
+            
+            <!-- Nova seção de configuração de prioridades -->
+            <div class="form-group priority-config">
+              <label class="form-label">Priority Configuration:</label>
+              <div class="priority-list">
+                <div class="priority-item" data-priority="highest">
+                  <input type="text" id="priorityHighest" placeholder="Highest" value="Highest">
+                  <button type="button" class="btn-remove-priority" title="Remove priority">
+                    <span class="material-icons">remove_circle</span>
+                  </button>
+                </div>
+                <div class="priority-item" data-priority="high">
+                  <input type="text" id="priorityHigh" placeholder="High" value="High">
+                  <button type="button" class="btn-remove-priority" title="Remove priority">
+                    <span class="material-icons">remove_circle</span>
+                  </button>
+                </div>
+                <div class="priority-item" data-priority="medium">
+                  <input type="text" id="priorityMedium" placeholder="Medium" value="Medium">
+                  <button type="button" class="btn-remove-priority" title="Remove priority">
+                    <span class="material-icons">remove_circle</span>
+                  </button>
+                </div>
+                <div class="priority-item" data-priority="low">
+                  <input type="text" id="priorityLow" placeholder="Low" value="Low">
+                  <button type="button" class="btn-remove-priority" title="Remove priority">
+                    <span class="material-icons">remove_circle</span>
+                  </button>
+                </div>
+                <div class="priority-item" data-priority="lowest">
+                  <input type="text" id="priorityLowest" placeholder="Lowest" value="Lowest">
+                  <button type="button" class="btn-remove-priority" title="Remove priority">
+                    <span class="material-icons">remove_circle</span>
+                  </button>
+                </div>
+              </div>
+              <button type="button" id="addPriority" class="btn btn-outline">
+                <span class="material-icons">add_circle</span>
+                Add Priority Level
+              </button>
+              <button type="button" id="resetPriorities" class="btn btn-outline">
+                <span class="material-icons">refresh</span>
+                Reset to Default
+              </button>
             </div>
             
             <button type="button" id="testJiraConnection" class="btn btn-secondary">
@@ -173,6 +217,7 @@
     </div>
   </div>
   
+  <script src="../modules/ErrorHandler.js"></script>
   <script src="settings.js"></script>
 </body>
 </html>

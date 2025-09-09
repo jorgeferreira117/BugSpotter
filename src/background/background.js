@@ -1,32 +1,46 @@
-class RateLimiter {
-  constructor(maxRequests = 10, timeWindow = 60000) {
-    this.requests = [];
-    this.maxRequests = maxRequests;
-    this.timeWindow = timeWindow;
-  }
-  
-  canMakeRequest() {
-    const now = Date.now();
-    this.requests = this.requests.filter(time => now - time < this.timeWindow);
-    return this.requests.length < this.maxRequests;
-  }
-}
+// Importar módulos - Manifest V3 compatível
+importScripts('../modules/SecurityManager.js');
+importScripts('../modules/ErrorHandler.js');
+importScripts('../modules/StorageManager.js');
+importScripts('../utils/RateLimiter.js');
+importScripts('../utils/PerformanceMonitor.js');
+
+// Remover classes duplicadas - agora importadas dos módulos
+// SecurityManager, ErrorHandler, StorageManager e RateLimiter são importados
 
 class BugSpotterBackground {
   constructor() {
+    this.rateLimiter = new RateLimiter();
     // Adicionar gerenciamento de sessões debugger
     this.debuggerSessions = new Map();
     // Adicionar logs persistentes por aba
     this.persistentLogs = new Map();
     // Definir limite de logs por aba
     this.maxLogsPerTab = 200; // Reduzido de 1000 para 200
+    
+    // Inicializar módulos de forma compatível com Manifest V3
+    this.initializeModules();
+    this.cleanupInterval = null;
     this.init();
+  }
+
+  initializeModules() {
+    // Inicializar módulos diretamente
+    this.securityManager = new SecurityManager();
+    this.errorHandler = new ErrorHandler();
+    this.storageManager = new StorageManager();
+    this.performanceMonitor = new PerformanceMonitor();
   }
 
   init() {
     this.setupEventListeners();
     this.setupContextMenus();
     this.setupDebuggerListeners();
+    
+    // Cleanup quando a extensão é descarregada
+    chrome.runtime.onSuspend.addListener(() => {
+      this.cleanup();
+    });
   }
 
   setupEventListeners() {
@@ -65,62 +79,155 @@ class BugSpotterBackground {
       this.cleanupTabData(tabId);
     });
     
-    // Limpar logs antigos periodicamente
-    setInterval(() => {
+    // Limpar logs antigos periodicamente com referência armazenada
+    this.cleanupInterval = setInterval(() => {
       this.cleanupOldLogs();
+      this.optimizeStorage();
     }, 5 * 60 * 1000); // A cada 5 minutos
   }
   
   cleanupTabData(tabId) {
+    // Cleanup completo dos dados da aba
     this.debuggerSessions.delete(tabId);
     this.persistentLogs.delete(tabId);
+    
+    // Desanexar debugger se ainda estiver anexado
+    try {
+      chrome.debugger.detach({ tabId });
+    } catch (error) {
+      // Ignorar erros se já estiver desanexado
+    }
+  }
+
+  // Função auxiliar para verificar se uma aba existe
+  async tabExists(tabId) {
+    try {
+      await chrome.tabs.get(tabId);
+      return true;
+    } catch (error) {
+      if (error.message && error.message.includes('No tab with given id')) {
+        return false;
+      }
+      throw error; // Re-throw outros tipos de erro
+    }
   }
   
-  cleanupOldLogs() {
-    const maxAge = 15 * 60 * 1000; // Reduzido de 30 para 15 minutos
-    const now = Date.now();
+  async optimizeStorage() {
+    try {
+      // Gerar relatório de uso de storage
+      const report = await this.storageManager.generateReport();
+      
+      // Se o uso estiver alto (>80%), fazer limpeza agressiva
+      if (report.usage > 0.8) {
+        console.log('Alto uso de storage detectado, iniciando limpeza agressiva');
+        
+        // Limpar dados antigos mais agressivamente
+        const aggressiveCutoff = Date.now() - (3 * 24 * 60 * 60 * 1000); // 3 dias
+        
+        for (const [tabId, data] of this.persistentLogs.entries()) {
+          if (data.timestamp && data.timestamp < aggressiveCutoff) {
+            this.persistentLogs.delete(tabId);
+          }
+        }
+        
+        // Forçar limpeza do StorageManager
+        await this.storageManager.cleanup(true);
+      }
+      
+      // Log do status do storage
+      if (report.usage > 0.5) {
+        console.log(`Storage usage: ${(report.usage * 100).toFixed(1)}%`);
+      }
+    } catch (error) {
+      this.errorHandler.handleError(error, 'optimizeStorage');
+    }
+  }
+
+  // Método de cleanup centralizado
+  cleanup() {
+    if (this.cleanupInterval) {
+      clearInterval(this.cleanupInterval);
+      this.cleanupInterval = null;
+    }
     
-    for (const [tabId, data] of this.persistentLogs.entries()) {
-      // Remover logs muito antigos
-      data.logs = data.logs.filter(log => {
-        const logTime = new Date(log.timestamp).getTime();
-        return (now - logTime) < maxAge;
-      });
+    // Desanexar todos os debuggers ativos
+    for (const tabId of this.debuggerSessions.keys()) {
+      try {
+        chrome.debugger.detach({ tabId });
+      } catch (error) {
+        // Ignorar erros
+      }
+    }
+    
+    // Limpar todos os Maps
+    this.debuggerSessions.clear();
+    this.persistentLogs.clear();
+    
+    // Fazer limpeza final do storage
+    if (this.storageManager) {
+      this.storageManager.cleanup().catch(console.error);
+    }
+  }
+  
+  async cleanupOldLogs() {
+    try {
+      // Usar StorageManager para limpeza automática
+      const cleanupStats = await this.storageManager.cleanup();
       
-      // Limpar também networkRequests e errors
-      if (data.networkRequests) {
-        data.networkRequests = data.networkRequests.filter(req => {
-          const reqTime = new Date(req.timestamp).getTime();
-          return (now - reqTime) < maxAge;
+      // Limpeza adicional de dados em memória
+      const maxAge = 15 * 60 * 1000; // Reduzido de 30 para 15 minutos
+      const now = Date.now();
+      
+      for (const [tabId, data] of this.persistentLogs.entries()) {
+        // Remover logs muito antigos
+        data.logs = data.logs.filter(log => {
+          const logTime = new Date(log.timestamp).getTime();
+          return (now - logTime) < maxAge;
         });
+        
+        // Limpar também networkRequests e errors
+        if (data.networkRequests) {
+          data.networkRequests = data.networkRequests.filter(req => {
+            const reqTime = new Date(req.timestamp).getTime();
+            return (now - reqTime) < maxAge;
+          });
+        }
+        
+        if (data.errors) {
+          data.errors = data.errors.filter(error => {
+            const errorTime = new Date(error.timestamp).getTime();
+            return (now - errorTime) < maxAge;
+          });
+        }
+        
+        // Se não há logs, remover a entrada
+        if (data.logs.length === 0 && 
+            (!data.networkRequests || data.networkRequests.length === 0) &&
+            (!data.errors || data.errors.length === 0)) {
+          this.persistentLogs.delete(tabId);
+        }
       }
       
-      if (data.errors) {
-        data.errors = data.errors.filter(error => {
-          const errorTime = new Date(error.timestamp).getTime();
-          return (now - errorTime) < maxAge;
-        });
-      }
-      
-      // Se não há logs, remover a entrada
-      if (data.logs.length === 0 && 
-          (!data.networkRequests || data.networkRequests.length === 0) &&
-          (!data.errors || data.errors.length === 0)) {
-        this.persistentLogs.delete(tabId);
-      }
+      console.log('Limpeza automática:', cleanupStats);
+    } catch (error) {
+      this.errorHandler.handleError(error, 'cleanupOldLogs');
     }
   }
 
   // Nova função para configurar listeners do debugger
   setupDebuggerListeners() {
-    chrome.debugger.onEvent.addListener((source, method, params) => {
-      this.handleDebuggerEvent(source, method, params);
-    });
+    if (chrome.debugger && chrome.debugger.onEvent) {
+      chrome.debugger.onEvent.addListener((source, method, params) => {
+        this.handleDebuggerEvent(source, method, params);
+      });
 
-    chrome.debugger.onDetach.addListener((source, reason) => {
-      console.log(`Debugger detached from tab ${source.tabId}: ${reason}`);
-      this.debuggerSessions.delete(source.tabId);
-    });
+      chrome.debugger.onDetach.addListener((source, reason) => {
+        console.log(`Debugger detached from tab ${source.tabId}: ${reason}`);
+        this.debuggerSessions.delete(source.tabId);
+      });
+    } else {
+      console.warn('Chrome debugger API not available. Some features may not work.');
+    }
   }
 
   // Gerenciar eventos do debugger com buffer circular
@@ -250,6 +357,12 @@ class BugSpotterBackground {
         // 🆕 NOVO: Capturar corpo da resposta para erros HTTP
         if (params.response.status >= 400) {
           try {
+            // Verificar se a API debugger está disponível
+            if (!chrome.debugger) {
+              console.warn('Chrome debugger API not available for Network.getResponseBody');
+              return;
+            }
+            
             // Obter o corpo da resposta para erros
             chrome.debugger.sendCommand({tabId}, "Network.getResponseBody", {
               requestId: params.requestId
@@ -458,7 +571,20 @@ class BugSpotterBackground {
 
   // Anexar debugger a uma aba
   async attachDebugger(tabId) {
-    try {
+    return await this.errorHandler.executeWithRetry(async () => {
+      // Verificar se a API debugger está disponível
+      if (!chrome.debugger) {
+        console.warn('Chrome debugger API not available');
+        return { success: false, message: 'Debugger API not available' };
+      }
+
+      // Verificar se a aba ainda existe
+      const tabStillExists = await this.tabExists(tabId);
+      if (!tabStillExists) {
+        console.log(`Aba ${tabId} não existe mais, não é possível anexar debugger`);
+        return { success: false, message: 'Tab no longer exists' };
+      }
+
       // Verificar se já está anexado
       if (this.debuggerSessions.has(tabId)) {
         console.log(`Debugger já anexado para tab ${tabId}`);
@@ -481,18 +607,24 @@ class BugSpotterBackground {
       // 🆕 CAPTURAR LOGS EXISTENTES ANTES DE LIMPAR
       let existingLogs = [];
       try {
-        // Tentar obter logs do content script primeiro
-        const contentLogs = await chrome.tabs.sendMessage(tabId, { action: 'getLogs' });
-        if (contentLogs && contentLogs.logs) {
-          existingLogs = contentLogs.logs.map(log => ({
-            type: 'console-existing',
-            level: log.level,
-            text: log.message,
-            timestamp: log.timestamp,
-            url: log.url,
-            source: 'content-script'
-          }));
-          console.log(`[DEBUG] Logs existentes capturados do content script: ${existingLogs.length}`);
+        // Verificar se a aba ainda existe antes de tentar enviar mensagem
+        const tabStillExists = await this.tabExists(tabId);
+        if (tabStillExists) {
+          // Tentar obter logs do content script primeiro
+          const contentLogs = await chrome.tabs.sendMessage(tabId, { action: 'getLogs' });
+          if (contentLogs && contentLogs.logs) {
+            existingLogs = contentLogs.logs.map(log => ({
+              type: 'console-existing',
+              level: log.level,
+              text: log.message,
+              timestamp: log.timestamp,
+              url: log.url,
+              source: 'content-script'
+            }));
+            console.log(`[DEBUG] Logs existentes capturados do content script: ${existingLogs.length}`);
+          }
+        } else {
+          console.log('Aviso: Aba não existe mais, pulando captura de logs do content script');
         }
       } catch (e) {
         console.log('Aviso: Não foi possível obter logs do content script:', e.message);
@@ -500,7 +632,10 @@ class BugSpotterBackground {
       
       // Tentar capturar logs do console do navegador
       try {
-        const consoleResult = await chrome.debugger.sendCommand({tabId}, "Runtime.evaluate", {
+        if (!chrome.debugger) {
+          console.warn('Chrome debugger API not available for Runtime.evaluate');
+        } else {
+          const consoleResult = await chrome.debugger.sendCommand({tabId}, "Runtime.evaluate", {
           expression: `
             (function() {
               if (window.bugSpotterLogs) {
@@ -530,6 +665,7 @@ class BugSpotterBackground {
             existingLogs = [...existingLogs, ...formattedBrowserLogs];
             console.log(`[DEBUG] Logs adicionais do browser: ${formattedBrowserLogs.length}`);
           }
+        }
         }
       } catch (e) {
         console.log('Aviso: Não foi possível obter logs do browser console:', e.message);
@@ -568,23 +704,23 @@ class BugSpotterBackground {
       console.log(`✅ Debugger anexado com sucesso para tab ${tabId}. Logs existentes: ${existingLogs.length}`);
       return { success: true, message: 'Debugger attached successfully', existingLogs: existingLogs.length };
       
-    } catch (error) {
-      console.error(`❌ Erro ao anexar debugger para tab ${tabId}:`, error);
-      return { success: false, error: error.message };
-    }
+    }, 'Anexar debugger');
   }
 
   // Desanexar debugger de uma aba
   async detachDebugger(tabId) {
-    try {
+    return await this.errorHandler.safeExecute(async () => {
+      if (!chrome.debugger) {
+        console.warn('Chrome debugger API not available');
+        return;
+      }
+      
       if (this.debuggerSessions.has(tabId)) {
         await chrome.debugger.detach({tabId});
         this.debuggerSessions.delete(tabId);
         console.log(`Debugger detached from tab ${tabId}`);
       }
-    } catch (error) {
-      console.error('Erro ao desanexar debugger:', error);
-    }
+    }, 'Desanexar debugger', false);
   }
 
   // Cleanup automático de sessão
@@ -716,6 +852,46 @@ class BugSpotterBackground {
           }
           break;
 
+        case 'VALIDATE_INPUT':
+          try {
+            const validation = this.errorHandler.validateInput(
+              message.data, 
+              message.schema, 
+              message.context || 'Input Validation'
+            );
+            sendResponse({ 
+              success: validation.isValid, 
+              errors: validation.errors 
+            });
+          } catch (error) {
+            sendResponse({ 
+              success: false, 
+              errors: ['Validation service unavailable'] 
+            });
+          }
+          break;
+
+        case 'GET_PERFORMANCE_STATS':
+          try {
+            const operationType = message.operationType;
+            const stats = operationType ? 
+              this.performanceMonitor.getStats(operationType) : 
+              this.performanceMonitor.getAllStats();
+            sendResponse({ success: true, data: stats });
+          } catch (error) {
+            sendResponse({ success: false, error: error.message });
+          }
+          break;
+
+        case 'GET_PERFORMANCE_REPORT':
+          try {
+            const report = this.performanceMonitor.generateReport();
+            sendResponse({ success: true, data: report });
+          } catch (error) {
+            sendResponse({ success: false, error: error.message });
+          }
+          break;
+
         default:
           sendResponse({ success: false, error: 'Unknown message type' });
       }
@@ -726,29 +902,59 @@ class BugSpotterBackground {
   }
 
   async captureScreenshot(tabId) {
+    const operationId = this.performanceMonitor.generateOperationId('screenshot');
+    this.performanceMonitor.startOperation(operationId, 'screenshot', { tabId });
+    
     try {
-      const screenshot = await chrome.tabs.captureVisibleTab(null, {
-        format: 'png',
-        quality: 90
-      });
-      return screenshot;
+      // Verificar se a aba ainda existe antes de capturar screenshot
+      const tabStillExists = await this.tabExists(tabId);
+      if (!tabStillExists) {
+        throw new Error(`Aba ${tabId} não existe mais, não é possível capturar screenshot`);
+      }
+
+      const result = await this.errorHandler.safeExecute(async () => {
+        const screenshot = await chrome.tabs.captureVisibleTab(null, {
+          format: 'png',
+          quality: 90
+        });
+        return screenshot;
+      }, 'Captura de screenshot', null);
+      
+      this.performanceMonitor.endOperation(operationId, true);
+      return result;
     } catch (error) {
-      throw new Error(`Failed to capture screenshot: ${error.message}`);
+      this.performanceMonitor.endOperation(operationId, false, {
+        message: error.message,
+        stack: error.stack
+      });
+      throw error;
     }
   }
 
   async getConsoleLogs(tabId) {
+    const operationId = this.performanceMonitor.generateOperationId('logCapture');
+    this.performanceMonitor.startOperation(operationId, 'logCapture', { tabId });
+    
     try {
-      const results = await chrome.scripting.executeScript({
-        target: { tabId },
-        function: () => {
-          // Retorna logs capturados pelo content script
-          return window.bugSpotterLogs || [];
-        }
-      });
-      return results[0].result;
+      const result = await this.errorHandler.safeExecute(async () => {
+        const results = await chrome.scripting.executeScript({
+          target: { tabId },
+          function: () => {
+            // Retorna logs capturados pelo content script
+            return window.bugSpotterLogs || [];
+          }
+        });
+        return results[0].result;
+      }, 'Obter logs do console', []);
+      
+      this.performanceMonitor.endOperation(operationId, true);
+      return result;
     } catch (error) {
-      throw new Error(`Failed to get console logs: ${error.message}`);
+      this.performanceMonitor.endOperation(operationId, false, {
+        message: error.message,
+        stack: error.stack
+      });
+      throw error;
     }
   }
 
@@ -777,7 +983,15 @@ class BugSpotterBackground {
   }
 
   async sendToJira(bugData) {
+    const operationId = this.performanceMonitor.generateOperationId('jiraSubmission');
+    this.performanceMonitor.startOperation(operationId, 'jiraSubmission', { 
+      title: bugData.title,
+      priority: bugData.priority,
+      hasAttachments: !!(bugData.attachments && bugData.attachments.length > 0)
+    });
+    
     try {
+      const result = await this.errorHandler.executeWithRetry(async () => {
       const settings = await this.getSettings();
       
       if (!settings.jira || !settings.jira.enabled) {
@@ -791,7 +1005,7 @@ class BugSpotterBackground {
           summary: bugData.title,
           description: this.formatJiraDescription(bugData),
           issuetype: { id: settings.jira.issueTypeId || '10035' },
-          priority: { name: this.mapPriorityToJira(bugData.priority) }
+          priority: { name: await this.mapPriorityToJira(bugData.priority) }
         }
       };
   
@@ -811,22 +1025,40 @@ class BugSpotterBackground {
       const result = await response.json();
       
       // Segundo, anexar os arquivos se existirem
+      let attachmentResult = null;
       if (bugData.attachments && bugData.attachments.length > 0) {
-        await this.attachFilesToJiraIssue(result.key, bugData.attachments, settings);
+        attachmentResult = await this.attachFilesToJiraIssue(result.key, bugData.attachments, settings);
+      }
+
+      // Notifica sucesso (usando caminho absoluto para o ícone)
+      const notificationMessage = attachmentResult 
+        ? `Bug sent to Jira: ${result.key}. Attachments: ${attachmentResult.successful.length}/${attachmentResult.totalProcessed} successful`
+        : `Bug sent to Jira: ${result.key}`;
+        
+      try {
+        chrome.notifications.create({
+          type: 'basic',
+          iconUrl: chrome.runtime.getURL('icon48.png'),
+          title: 'BugSpotter',
+          message: notificationMessage
+        });
+      } catch (notificationError) {
+        console.warn('Erro ao criar notificação:', notificationError);
+        // Não falhar o envio por causa da notificação
       }
   
-      // Notifica sucesso
-      chrome.notifications.create({
-        type: 'basic',
-        iconUrl: 'icon48.png',
-        title: 'BugSpotter',
-        message: `Bug sent to Jira: ${result.key} with ${bugData.attachments?.length || 0} attachment(s)`
-      });
-  
-      return result;
+        return result;
+        
+      }, 3, 1000);
       
+      this.performanceMonitor.endOperation(operationId, true);
+      return result;
     } catch (error) {
-      throw new Error(`Failed to send to Jira: ${error.message}`);
+      this.performanceMonitor.endOperation(operationId, false, {
+        message: error.message,
+        stack: error.stack
+      });
+      throw error;
     }
   }
   
@@ -834,67 +1066,94 @@ class BugSpotterBackground {
   async attachFilesToJiraIssue(issueKey, attachments, settings) {
     console.log(`Iniciando envio de ${attachments.length} anexo(s) para issue ${issueKey}`);
     
-    // No método attachFilesToJiraIssue, linha ~240
+    const failedAttachments = [];
+    const successfulAttachments = [];
+    
     for (const attachment of attachments) {
-    // Validação mais robusta
-    if (!attachment || !attachment.data || typeof attachment.data !== 'string' || attachment.data.trim() === '') {
-    console.warn(`Anexo ${attachment?.name || 'desconhecido'} não possui dados válidos ou não é uma string`);
-    continue; // Pular este anexo em vez de falhar
-    }
-    
-    let blob;
-    
-    // Verificar se é base64 (screenshot) ou texto puro (DOM/console)
-    if (attachment.data.startsWith('data:')) {
-      // É base64 (screenshot)
-      console.log('Processando anexo base64 (screenshot)');
-      const base64Data = attachment.data.split(',')[1];
-      const byteCharacters = atob(base64Data);
-      const byteNumbers = new Array(byteCharacters.length);
-      
-      for (let i = 0; i < byteCharacters.length; i++) {
-        byteNumbers[i] = byteCharacters.charCodeAt(i);
+      try {
+        // Validação mais robusta
+        if (!attachment || !attachment.data || typeof attachment.data !== 'string' || attachment.data.trim() === '') {
+          console.warn(`Anexo ${attachment?.name || 'desconhecido'} não possui dados válidos ou não é uma string`);
+          failedAttachments.push({ name: attachment?.name || 'desconhecido', error: 'Dados inválidos' });
+          continue;
+        }
+        
+        let blob;
+        
+        // Verificar se é base64 (screenshot) ou texto puro (DOM/console)
+        if (attachment.data.startsWith('data:')) {
+          // É base64 (screenshot)
+          console.log('Processando anexo base64 (screenshot)');
+          try {
+            const base64Data = attachment.data.split(',')[1];
+            const byteCharacters = atob(base64Data);
+            const byteNumbers = new Array(byteCharacters.length);
+            
+            for (let i = 0; i < byteCharacters.length; i++) {
+              byteNumbers[i] = byteCharacters.charCodeAt(i);
+            }
+            
+            const byteArray = new Uint8Array(byteNumbers);
+            blob = new Blob([byteArray], { type: this.getMimeType(attachment.type) });
+          } catch (base64Error) {
+            console.error(`Erro ao processar base64 do anexo ${attachment.name}:`, base64Error);
+            failedAttachments.push({ name: attachment.name, error: 'Erro no processamento base64' });
+            continue;
+          }
+        } else {
+          // É texto puro (DOM/console)
+          console.log('Processando anexo de texto (DOM/console)');
+          blob = new Blob([attachment.data], { type: this.getMimeType(attachment.type) });
+        }
+        
+        console.log(`Blob criado: ${blob.size} bytes, tipo: ${blob.type}`);
+        
+        // Criar FormData para multipart/form-data
+        const formData = new FormData();
+        formData.append('file', blob, attachment.name);
+        
+        console.log(`Enviando anexo para: ${settings.jira.baseUrl}/rest/api/2/issue/${issueKey}/attachments`);
+        
+        // Enviar anexo para Jira
+        const attachResponse = await fetch(`${settings.jira.baseUrl}/rest/api/2/issue/${issueKey}/attachments`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Basic ${btoa(`${settings.jira.email}:${settings.jira.apiToken}`)}`,
+            'X-Atlassian-Token': 'nocheck'
+            // Não definir Content-Type - deixar o browser definir com boundary
+          },
+          body: formData
+        });
+        
+        console.log(`Resposta do anexo ${attachment.name}: ${attachResponse.status} ${attachResponse.statusText}`);
+        
+        if (!attachResponse.ok) {
+          const errorText = await attachResponse.text();
+          console.error(`Erro ao anexar ${attachment.name}:`, attachResponse.statusText, errorText);
+          failedAttachments.push({ name: attachment.name, error: `${attachResponse.status}: ${attachResponse.statusText}` });
+        } else {
+          const responseData = await attachResponse.json();
+          console.log(`Anexo ${attachment.name} enviado com sucesso:`, responseData);
+          successfulAttachments.push(attachment.name);
+        }
+      } catch (attachmentError) {
+        console.error(`Erro inesperado ao processar anexo ${attachment?.name}:`, attachmentError);
+        failedAttachments.push({ name: attachment?.name || 'desconhecido', error: attachmentError.message });
       }
-      
-      const byteArray = new Uint8Array(byteNumbers);
-      blob = new Blob([byteArray], { type: this.getMimeType(attachment.type) });
-    } else {
-      // É texto puro (DOM/console)
-      console.log('Processando anexo de texto (DOM/console)');
-      blob = new Blob([attachment.data], { type: this.getMimeType(attachment.type) });
     }
     
-    console.log(`Blob criado: ${blob.size} bytes, tipo: ${blob.type}`);
+    console.log(`Finalizado envio de anexos. Sucessos: ${successfulAttachments.length}, Falhas: ${failedAttachments.length}`);
     
-    // Criar FormData para multipart/form-data
-    const formData = new FormData();
-    formData.append('file', blob, attachment.name);
-    
-    console.log(`Enviando anexo para: ${settings.jira.baseUrl}/rest/api/2/issue/${issueKey}/attachments`);
-    
-    // Enviar anexo para Jira
-    const attachResponse = await fetch(`${settings.jira.baseUrl}/rest/api/2/issue/${issueKey}/attachments`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Basic ${btoa(`${settings.jira.email}:${settings.jira.apiToken}`)}`,
-        'X-Atlassian-Token': 'nocheck'
-        // Não definir Content-Type - deixar o browser definir com boundary
-      },
-      body: formData
-    });
-    
-    console.log(`Resposta do anexo ${attachment.name}: ${attachResponse.status} ${attachResponse.statusText}`);
-    
-    if (!attachResponse.ok) {
-      const errorText = await attachResponse.text();
-      console.error(`Erro ao anexar ${attachment.name}:`, attachResponse.statusText, errorText);
-    } else {
-      const responseData = await attachResponse.json();
-      console.log(`Anexo ${attachment.name} enviado com sucesso:`, responseData);
-    }
+    // Se houver falhas, logar mas não falhar completamente
+    if (failedAttachments.length > 0) {
+      console.warn('Alguns anexos falharam:', failedAttachments);
     }
     
-    console.log('Finalizado envio de anexos');
+    return {
+      successful: successfulAttachments,
+      failed: failedAttachments,
+      totalProcessed: attachments.length
+    };
   }
   
   // Método auxiliar para determinar MIME type
@@ -934,23 +1193,123 @@ ${bugData.actualBehavior || 'N/A'}
   // Remover este método obsoleto:
   // mapSeverityToPriority(severity) { ... }
 
-  mapPriorityToJira(priority) {
-    const mapping = {
-      'Highest': 'Highest',
-      'High': 'High',
-      'Medium': 'Medium', 
-      'Low': 'Low',
-      'Lowest': 'Lowest'
-    };
-    return mapping[priority] || 'Medium';
+  async mapPriorityToJira(priority) {
+    try {
+      const result = await chrome.storage.local.get(['settings']);
+      const priorities = result.settings?.jira?.priorities || {
+        'highest': 'Highest',
+        'high': 'High',
+        'medium': 'Medium', 
+        'low': 'Low',
+        'lowest': 'Lowest'
+      };
+      
+      // Mapear tanto por chave quanto por valor
+      const priorityValue = priorities[priority] || priority;
+      
+      // Se não encontrar, usar Medium como padrão
+      return priorityValue || priorities['medium'] || 'Medium';
+    } catch (error) {
+      console.error('Erro ao carregar configurações de prioridade:', error);
+      return 'Medium';
+    }
   }
 
   async getSettings() {
-    return new Promise((resolve) => {
-      chrome.storage.local.get(['settings'], (result) => {
-        resolve(result.settings || {});
+    try {
+      // Tentar usar StorageManager primeiro
+      const settings = await this.storageManager.retrieve('jira_settings', 'chrome');
+      if (settings) {
+        return settings;
+      }
+      
+      // Fallback para chrome.storage.local
+      return new Promise((resolve) => {
+        chrome.storage.local.get(['settings'], (result) => {
+          resolve(result.settings || {});
+        });
       });
-    });
+    } catch (error) {
+      this.errorHandler.handleError(error, 'getSettings');
+      return {};
+    }
+  }
+
+  /**
+   * Armazena configurações do Jira de forma segura
+   */
+  async storeSecureJiraSettings(jiraConfig, masterPassword) {
+    try {
+      const validation = this.securityManager.validatePassword(masterPassword);
+      if (!validation.isValid) {
+        throw new Error('Senha mestre não atende aos requisitos de segurança');
+      }
+
+      const success = await this.securityManager.storeSecureData(
+        'jira_credentials',
+        JSON.stringify({
+          email: jiraConfig.email,
+          apiToken: jiraConfig.apiToken,
+          baseUrl: jiraConfig.baseUrl,
+          projectKey: jiraConfig.projectKey
+        }),
+        masterPassword
+      );
+
+      if (!success) {
+        throw new Error('Falha ao armazenar credenciais do Jira');
+      }
+
+      // Armazenar configurações não sensíveis normalmente
+      const publicSettings = {
+        ...jiraConfig,
+        email: undefined,
+        apiToken: undefined
+      };
+      
+      await chrome.storage.local.set({ jira_public_settings: publicSettings });
+      return true;
+    } catch (error) {
+      console.error('Erro ao armazenar configurações seguras do Jira:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Recupera configurações do Jira de forma segura
+   */
+  async getSecureJiraSettings(masterPassword) {
+    try {
+      const credentials = await this.securityManager.getSecureData('jira_credentials', masterPassword);
+      if (!credentials) {
+        return null;
+      }
+
+      const parsedCredentials = JSON.parse(credentials);
+      const publicSettings = await chrome.storage.local.get(['jira_public_settings']);
+      
+      return {
+        ...publicSettings.jira_public_settings,
+        ...parsedCredentials
+      };
+    } catch (error) {
+      console.error('Erro ao recuperar configurações seguras do Jira:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Remove configurações seguras do Jira
+   */
+  async removeSecureJiraSettings() {
+    try {
+      await this.securityManager.removeSecureData('jira_credentials');
+      await chrome.storage.local.remove(['jira_public_settings']);
+      return true;
+    } catch (error) {
+      console.error('Erro ao remover configurações seguras do Jira:', error);
+      return false;
+    }
   }
 
   async testJiraConnection(config) {

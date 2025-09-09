@@ -7,13 +7,23 @@ class BugSpotter {
     this.reportStatusTimeout = null;
     this.captureStatusTimeout = null;
     this.cachedSettings = null; // Adicionar cache das configurações
+    this.errorHandler = new ErrorHandler(); // Inicializar ErrorHandler
   }
   
   async init() {
     // Carregar configurações no cache
     this.cachedSettings = await this.getSettings();
     await this.loadBugHistory();
+    await this.loadPriorityOptions();
     this.setupEventListeners();
+    
+    // ADICIONAR: Listener para mudanças nas configurações
+    chrome.storage.onChanged.addListener((changes, namespace) => {
+      if (namespace === 'local' && changes.settings) {
+        this.loadPriorityOptions(); // Recarregar prioridades quando settings mudam
+        this.cachedSettings = changes.settings.newValue; // Atualizar cache
+      }
+    });
   }
 
   setupEventListeners() {
@@ -24,6 +34,12 @@ class BugSpotter {
     document.getElementById('startRecording').addEventListener('click', () => this.startRecording());
     document.getElementById('clearHistory').addEventListener('click', () => this.clearHistory());
     document.getElementById('openSettings').addEventListener('click', () => this.openSettings());
+    
+    // Event listener para métricas de performance
+    const performanceBtn = document.getElementById('showPerformance');
+    if (performanceBtn) {
+      performanceBtn.addEventListener('click', () => this.showPerformanceStats());
+    }
     
     // Event listener for bug form
     document.getElementById('bugForm').addEventListener('submit', (e) => this.submitBug(e));
@@ -627,6 +643,82 @@ class BugSpotter {
       return; // Already processing
     }
     
+    const formData = new FormData(event.target);
+    const bugData = {
+      title: formData.get('title'),
+      description: formData.get('description'),
+      steps: formData.get('steps'),
+      expectedBehavior: formData.get('expectedBehavior'),
+      actualBehavior: formData.get('actualBehavior'),
+      priority: formData.get('priority'),
+      environment: formData.get('environment'),
+      component: formData.get('component')
+    };
+    
+    // Schema de validação
+    const validationSchema = {
+      title: {
+        required: true,
+        type: 'string',
+        minLength: 5,
+        maxLength: 200
+      },
+      description: {
+        required: true,
+        type: 'string',
+        minLength: 10,
+        maxLength: 2000
+      },
+      priority: {
+        required: true,
+        type: 'string'
+      },
+      environment: {
+        required: true,
+        type: 'string'
+      }
+    };
+    
+    // Validar dados de entrada
+    try {
+      // Usar ErrorHandler se disponível
+      if (typeof chrome !== 'undefined' && chrome.runtime) {
+        const response = await chrome.runtime.sendMessage({
+          action: 'VALIDATE_INPUT',
+          data: bugData,
+          schema: validationSchema,
+          context: 'Bug Report'
+        });
+        
+        if (!response.success) {
+          this.updateReportStatus(`❌ ${response.errors.join(', ')}`, 'error');
+          return;
+        }
+      } else {
+        // Validação básica como fallback
+        if (!bugData.title || bugData.title.length < 5) {
+          this.updateReportStatus('❌ Title must be at least 5 characters long', 'error');
+          return;
+        }
+        if (!bugData.description || bugData.description.length < 10) {
+          this.updateReportStatus('❌ Description must be at least 10 characters long', 'error');
+          return;
+        }
+        if (!bugData.priority) {
+          this.updateReportStatus('❌ Priority is required', 'error');
+          return;
+        }
+        if (!bugData.environment) {
+          this.updateReportStatus('❌ Environment is required', 'error');
+          return;
+        }
+      }
+    } catch (error) {
+      console.error('Validation error:', error);
+      this.updateReportStatus('❌ Validation failed', 'error');
+      return;
+    }
+    
     // Disable button and show visual feedback
     submitBtn.disabled = true;
     const originalText = submitBtn.innerHTML;
@@ -639,22 +731,12 @@ class BugSpotter {
     // Show processing status
     this.updateReportStatus('Processing report...', 'loading');
     
-    const formData = new FormData(event.target);
-    const bugData = {
-      title: formData.get('title'),
-      description: formData.get('description'),
-      steps: formData.get('steps'),
-      expectedBehavior: formData.get('expectedBehavior'),
-      actualBehavior: formData.get('actualBehavior'),
-      priority: formData.get('priority'),
-      environment: formData.get('environment'),
-      component: formData.get('component'),
-      url: await this.getCurrentTabUrl(),
-      attachments: this.attachments,
-      timestamp: new Date().toISOString(),
-      jiraAttempted: false,
-      status: 'open'
-    };
+    // Completar dados do bug
+    bugData.url = await this.getCurrentTabUrl();
+    bugData.attachments = this.attachments;
+    bugData.timestamp = new Date().toISOString();
+    bugData.jiraAttempted = false;
+    bugData.status = 'open';
   
     try {
       // Try to send to Jira if configured
@@ -705,17 +787,59 @@ class BugSpotter {
   }
 
   async getSettings() {
-    return new Promise((resolve, reject) => {
-      chrome.storage.local.get(['settings'], (result) => {
-        if (chrome.runtime.lastError) {
-          console.error('Error loading settings:', chrome.runtime.lastError.message);
-          resolve({}); // Return empty object on error
-          return;
+    try {
+      const result = await chrome.storage.local.get(['settings']);
+      const settings = result.settings || {};
+      console.log('🔍 Storage carregado no popup:', result);
+      
+      // Definir prioridades padrão
+      const defaultPriorities = {
+        'highest': 'Highest',
+        'high': 'High',
+        'medium': 'Medium',
+        'low': 'Low',
+        'lowest': 'Lowest'
+      };
+      
+      const finalSettings = {
+        autoCapture: settings.popup?.autoCapture ?? true,
+        includeConsole: settings.popup?.includeConsole ?? true,
+        maxFileSize: settings.popup?.maxFileSize ?? 5,
+        jira: {
+          enabled: settings.jira?.enabled ?? false,
+          url: settings.jira?.url || '',
+          username: settings.jira?.username || '',
+          token: settings.jira?.token || '',
+          projectKey: settings.jira?.projectKey || '',
+          priorities: settings.jira?.priorities || defaultPriorities
         }
-        // Return complete settings or empty object
-        resolve(result.settings || {});
-      });
-    });
+      };
+      
+      console.log('✅ Configurações finais do popup:', finalSettings.jira.priorities);
+      return finalSettings;
+      
+    } catch (error) {
+      console.error('❌ Erro ao carregar configurações:', error);
+      return {
+        autoCapture: true,
+        includeConsole: true,
+        maxFileSize: 5,
+        jira: {
+          enabled: false,
+          url: '',
+          username: '',
+          token: '',
+          projectKey: '',
+          priorities: {
+            'highest': 'Highest',
+            'high': 'High',
+            'medium': 'Medium',
+            'low': 'Low',
+            'lowest': 'Lowest'
+          }
+        }
+      };
+    }
   }
 
   async sendToJira(bugData) {
@@ -1114,18 +1238,279 @@ class BugSpotter {
   }
 
   openSettings() {
-    // Open settings page
-    chrome.tabs.create({ url: chrome.runtime.getURL('settings.html') });
+    // Open settings page in a new tab
+    chrome.tabs.create({ url: chrome.runtime.getURL('src/ui/settings.html') });
   }
 
-  saveSettings() {
-    const settings = {
-      autoCapture: document.getElementById('autoCapture').checked,
-      includeConsole: document.getElementById('includeConsole').checked,
-      maxFileSize: document.getElementById('maxFileSize').value
-    };
+  async showPerformanceStats() {
+    try {
+      const response = await chrome.runtime.sendMessage({
+        action: 'GET_PERFORMANCE_REPORT'
+      });
+      
+      if (response.success) {
+        this.displayPerformanceReport(response.data);
+      } else {
+        console.error('Erro ao obter métricas de performance:', response.error);
+        this.updateCaptureStatus('Erro ao carregar métricas de performance', 'error');
+      }
+    } catch (error) {
+      console.error('Erro ao solicitar métricas de performance:', error);
+      this.updateCaptureStatus('Erro ao carregar métricas de performance', 'error');
+    }
+  }
+
+  displayPerformanceReport(report) {
+    const modal = document.createElement('div');
+    modal.className = 'performance-modal';
+    modal.innerHTML = `
+      <div class="performance-modal-content">
+        <div class="performance-header">
+          <h3>📊 Métricas de Performance</h3>
+          <button class="close-performance">&times;</button>
+        </div>
+        <div class="performance-body">
+          <div class="performance-summary">
+            <div class="metric-card">
+              <h4>Operações Ativas</h4>
+              <span class="metric-value">${report.activeOperations}</span>
+            </div>
+            <div class="metric-card">
+              <h4>Tipos de Métricas</h4>
+              <span class="metric-value">${report.totalMetricsTypes}</span>
+            </div>
+            <div class="metric-card">
+              <h4>Uso de Memória</h4>
+              <span class="metric-value">${this.formatBytes(report.memoryUsage)}</span>
+            </div>
+          </div>
+          
+          <div class="performance-stats">
+            ${this.renderPerformanceStats(report.stats)}
+          </div>
+          
+          ${report.slowOperations.length > 0 ? `
+            <div class="slow-operations">
+              <h4>⚠️ Operações Lentas</h4>
+              ${this.renderSlowOperations(report.slowOperations)}
+            </div>
+          ` : ''}
+        </div>
+      </div>
+    `;    
     
-    chrome.storage.local.set({ settings }, () => {});
+    // Adicionar event listener para o botão de fechar
+    modal.addEventListener('click', (e) => {
+      if (e.target.classList.contains('close-performance') || e.target.classList.contains('performance-modal')) {
+        modal.remove();
+      }
+    });
+    
+    // Adicionar estilos
+    const style = document.createElement('style');
+    style.textContent = `
+      .performance-modal {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0, 0, 0, 0.8);
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        z-index: 10000;
+      }
+      .performance-modal-content {
+        background: white;
+        border-radius: 8px;
+        max-width: 600px;
+        max-height: 80vh;
+        overflow-y: auto;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+      }
+      .performance-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 20px;
+        border-bottom: 1px solid #eee;
+      }
+      .close-performance {
+        background: none;
+        border: none;
+        font-size: 24px;
+        cursor: pointer;
+        color: #666;
+      }
+      .performance-body {
+        padding: 20px;
+      }
+      .performance-summary {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+        gap: 15px;
+        margin-bottom: 20px;
+      }
+      .metric-card {
+        background: #f8f9fa;
+        padding: 15px;
+        border-radius: 6px;
+        text-align: center;
+      }
+      .metric-card h4 {
+        margin: 0 0 10px 0;
+        font-size: 12px;
+        color: #666;
+        text-transform: uppercase;
+      }
+      .metric-value {
+        font-size: 24px;
+        font-weight: bold;
+        color: #2196F3;
+      }
+      .operation-stat {
+        background: #fff;
+        border: 1px solid #ddd;
+        border-radius: 6px;
+        padding: 15px;
+        margin-bottom: 10px;
+      }
+      .operation-stat h5 {
+        margin: 0 0 10px 0;
+        color: #333;
+      }
+      .stat-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+        gap: 10px;
+        font-size: 12px;
+      }
+      .stat-item {
+        display: flex;
+        justify-content: space-between;
+      }
+      .slow-op {
+        background: #fff3cd;
+        border: 1px solid #ffeaa7;
+        border-radius: 4px;
+        padding: 10px;
+        margin-bottom: 8px;
+        font-size: 12px;
+      }
+    `;
+    document.head.appendChild(style);
+    document.body.appendChild(modal);
+  }
+
+  renderPerformanceStats(stats) {
+    if (!stats || Object.keys(stats).length === 0) {
+      return '<p>Nenhuma métrica disponível ainda.</p>';
+    }
+    
+    return Object.entries(stats).map(([type, stat]) => {
+      if (!stat) return '';
+      
+      return `
+        <div class="operation-stat">
+          <h5>🔧 ${type}</h5>
+          <div class="stat-grid">
+            <div class="stat-item">
+              <span>Total:</span>
+              <strong>${stat.totalOperations}</strong>
+            </div>
+            <div class="stat-item">
+              <span>Sucesso:</span>
+              <strong>${stat.successRate.toFixed(1)}%</strong>
+            </div>
+            <div class="stat-item">
+              <span>Média:</span>
+              <strong>${stat.avgDuration.toFixed(1)}ms</strong>
+            </div>
+            <div class="stat-item">
+              <span>Mín:</span>
+              <strong>${stat.minDuration.toFixed(1)}ms</strong>
+            </div>
+            <div class="stat-item">
+              <span>Máx:</span>
+              <strong>${stat.maxDuration.toFixed(1)}ms</strong>
+            </div>
+            <div class="stat-item">
+              <span>Mediana:</span>
+              <strong>${stat.medianDuration.toFixed(1)}ms</strong>
+            </div>
+            ${stat.threshold ? `
+              <div class="stat-item">
+                <span>Threshold:</span>
+                <strong>${stat.threshold}ms</strong>
+              </div>
+              <div class="stat-item">
+                <span>Lentas:</span>
+                <strong>${stat.slowOperations}</strong>
+              </div>
+            ` : ''}
+          </div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  renderSlowOperations(slowOps) {
+    return slowOps.slice(0, 5).map(op => `
+      <div class="slow-op">
+        <strong>${op.type}</strong> - ${op.duration.toFixed(1)}ms
+        <br><small>${new Date(op.timestamp).toLocaleTimeString()}</small>
+        ${op.errorInfo ? `<br><small style="color: #d32f2f;">Erro: ${op.errorInfo.message}</small>` : ''}
+      </div>
+    `).join('');
+  }
+
+  formatBytes(bytes) {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  }
+
+  async saveSettings() {
+    try {
+      console.log('🔍 Salvando configurações do popup...');
+      
+      // Carregar configurações existentes primeiro
+      const result = await chrome.storage.local.get(['settings']);
+      const existingSettings = result.settings || {};
+      console.log('📦 Configurações existentes:', existingSettings);
+      
+      // Fazer merge profundo preservando todas as configurações
+      const updatedSettings = this.deepMerge(existingSettings, {
+        popup: {
+          autoCapture: document.getElementById('autoCapture').checked,
+          includeConsole: document.getElementById('includeConsole').checked,
+          maxFileSize: parseInt(document.getElementById('maxFileSize').value) || 5
+        }
+      });
+      
+      console.log('💾 Configurações após merge:', updatedSettings);
+      await chrome.storage.local.set({ settings: updatedSettings });
+      console.log('✅ Configurações do popup salvas');
+      
+    } catch (error) {
+      console.error('❌ Erro ao salvar configurações do popup:', error);
+    }
+  }
+
+  // Adicionar método deepMerge ao popup.js
+  deepMerge(target, source) {
+    const result = { ...target };
+    for (const key in source) {
+      if (source[key] && typeof source[key] === 'object' && !Array.isArray(source[key])) {
+        result[key] = this.deepMerge(result[key] || {}, source[key]);
+      } else {
+        result[key] = source[key];
+      }
+    }
+    return result;
   }
 
   calculateDataUrlSize(dataUrl) {
@@ -1146,6 +1531,72 @@ class BugSpotter {
       this.stopRecording();
     } else {
       this.startRecording();
+    }
+  }
+
+  async loadPriorityOptions() {
+    try {
+      console.log('🔄 Carregando opções de prioridade...');
+      const result = await chrome.storage.local.get(['settings']);
+      console.log('📦 Storage completo:', result);
+      
+      const defaultPriorities = {
+        'highest': 'Highest',
+        'high': 'High', 
+        'medium': 'Medium',
+        'low': 'Low',
+        'lowest': 'Lowest'
+      };
+      
+      const priorities = result.settings?.jira?.priorities || defaultPriorities;
+      console.log('🎯 Prioridades a serem usadas:', priorities);
+      
+      const prioritySelect = document.getElementById('priority');
+      if (!prioritySelect) {
+        console.error('❌ Priority select element not found');
+        return;
+      }
+      
+      // Salvar valor atual antes de recriar opções
+      const currentValue = prioritySelect.value;
+      console.log('💾 Valor atual do select:', currentValue);
+      
+      prioritySelect.innerHTML = '<option value="">Select</option>';
+      
+      // Definir ordem específica das prioridades (do mais alto para o mais baixo)
+      const priorityOrder = ['highest', 'high', 'medium', 'low', 'lowest'];
+      
+      // Adicionar prioridades na ordem correta
+      priorityOrder.forEach(key => {
+        if (priorities[key]) {
+          const option = document.createElement('option');
+          option.value = key;
+          option.textContent = priorities[key];
+          prioritySelect.appendChild(option);
+          console.log(`➕ Adicionada opção: ${key} = ${priorities[key]}`);
+        }
+      });
+      
+      // Adicionar qualquer prioridade personalizada que não esteja na ordem padrão
+      Object.entries(priorities).forEach(([key, value]) => {
+        if (!priorityOrder.includes(key)) {
+          const option = document.createElement('option');
+          option.value = key;
+          option.textContent = value;
+          prioritySelect.appendChild(option);
+          console.log(`➕ Adicionada opção personalizada: ${key} = ${value}`);
+        }
+      });
+      
+      // Restaurar valor se ainda existir
+      if (currentValue && priorities[currentValue]) {
+        prioritySelect.value = currentValue;
+        console.log('🔄 Valor restaurado:', currentValue);
+      }
+      
+      console.log('✅ Dropdown atualizada com sucesso');
+    } catch (error) {
+      console.error('❌ Erro ao carregar prioridades:', error);
     }
   }
 }
