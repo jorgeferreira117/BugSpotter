@@ -43,6 +43,20 @@ class BugSpotterSettings {
     document.getElementById('jiraForm').addEventListener('submit', (e) => this.saveJiraSettings(e));
     document.getElementById('jiraEnabled').addEventListener('change', () => this.toggleJiraConfig());
     document.getElementById('testJiraConnection').addEventListener('click', () => this.testJiraConnection());
+    
+    // 🆕 Monitorar mudanças nos campos do Jira para atualizar estado das prioridades
+    ['jiraUrl', 'jiraEmail', 'jiraApiToken', 'jiraProjectKey'].forEach(fieldId => {
+      const field = document.getElementById(fieldId);
+      if (field) {
+        field.addEventListener('input', () => {
+          // Pequeno delay para permitir que o usuário termine de digitar
+          clearTimeout(this.jiraFieldsTimeout);
+          this.jiraFieldsTimeout = setTimeout(() => {
+            this.updatePriorityFieldsState();
+          }, 500);
+        });
+      }
+    });
   
     // Priority management - REMOVER AUTO-SAVE
     document.getElementById('addPriority').addEventListener('click', () => this.addPriorityLevel());
@@ -399,6 +413,12 @@ class BugSpotterSettings {
   
       if (response.success) {
         this.showStatus(`✅ ${response.data.message}`, 'success');
+        
+        // 🆕 Atualizar prioridades automaticamente se disponíveis
+        if (response.data.priorities && response.data.priorities.mapped) {
+          await this.updatePrioritiesFromJira(response.data.priorities.mapped);
+          this.showStatus(`✅ Connection successful! Priorities updated automatically.`, 'success');
+        }
       } else {
         throw new Error(response.error);
       }
@@ -697,30 +717,136 @@ class BugSpotterSettings {
   }
 
   async loadPriorityUI() {
-    const priorities = this.settings.jira.priorities || this.defaultSettings.jira.priorities;
     const priorityList = document.querySelector('.priority-list');
+    if (!priorityList) return;
     
     // Limpar lista atual
     priorityList.innerHTML = '';
     
-    // Adicionar cada prioridade
+    // Carregar prioridades das configurações
+    const priorities = this.settings.jira.priorities || this.defaultSettings.jira.priorities;
+    
     Object.entries(priorities).forEach(([key, value]) => {
-      const priorityItem = document.createElement('div');
-      priorityItem.className = 'priority-item';
-      priorityItem.setAttribute('data-priority', key);
-      
-      priorityItem.innerHTML = `
-        <input type="text" id="priority${key}" placeholder="${value}" value="${value}">
-        <button type="button" class="btn-remove-priority" title="Remove priority">
-          <span class="material-icons">remove_circle</span>
-        </button>
-      `;
-      
+      const priorityItem = this.createPriorityItem(key, value);
       priorityList.appendChild(priorityItem);
     });
     
-    // Bind event listeners
+    // Re-bind eventos dos botões de remoção
     this.bindPriorityRemoveButtons();
+    
+    // 🆕 Verificar se deve desabilitar campos de prioridade
+    this.updatePriorityFieldsState();
+  }
+
+  createPriorityItem(key, value) {
+    const div = document.createElement('div');
+    div.className = 'priority-item';
+    div.setAttribute('data-priority', key);
+    
+    div.innerHTML = `
+      <input type="text" value="${value}" placeholder="Priority name">
+      <button type="button" class="btn-remove-priority" title="Remove priority">
+        <span class="material-icons">remove_circle</span>
+      </button>
+    `;
+    
+    return div;
+  }
+
+  /**
+   * Atualiza as prioridades com dados do Jira
+   */
+  async updatePrioritiesFromJira(jiraPriorities) {
+    try {
+      // Atualizar configurações
+      this.settings.jira.priorities = jiraPriorities;
+      this.settings.jira.prioritiesSource = 'jira'; // Marcar como vindo do Jira
+      
+      // Salvar configurações
+      await this.saveSettings();
+      
+      // Atualizar interface
+      await this.loadPriorityUI();
+      
+      console.log('✅ Prioridades atualizadas do Jira:', jiraPriorities);
+    } catch (error) {
+      console.error('Erro ao atualizar prioridades do Jira:', error);
+      this.showStatus(`❌ Error updating priorities: ${error.message}`, 'error');
+    }
+  }
+
+  /**
+   * Atualiza o estado dos campos de prioridade (habilitado/desabilitado)
+   */
+  updatePriorityFieldsState() {
+    const hasJiraCredentials = this.hasValidJiraCredentials();
+    const prioritiesFromJira = this.settings.jira.prioritiesSource === 'jira';
+    
+    // Desabilitar campos se as prioridades vieram do Jira
+    const priorityInputs = document.querySelectorAll('.priority-item input');
+    const removeButtons = document.querySelectorAll('.btn-remove-priority');
+    const addButton = document.getElementById('addPriority');
+    const resetButton = document.getElementById('resetPriorities');
+    
+    const shouldDisable = hasJiraCredentials && prioritiesFromJira;
+    
+    priorityInputs.forEach(input => {
+      input.disabled = shouldDisable;
+      if (shouldDisable) {
+        input.title = 'Priorities are automatically managed from Jira';
+      } else {
+        input.title = '';
+      }
+    });
+    
+    removeButtons.forEach(button => {
+      button.disabled = shouldDisable;
+      if (shouldDisable) {
+        button.title = 'Priorities are automatically managed from Jira';
+      } else {
+        button.title = 'Remove priority';
+      }
+    });
+    
+    if (addButton) {
+      addButton.disabled = shouldDisable;
+      if (shouldDisable) {
+        addButton.title = 'Priorities are automatically managed from Jira';
+      } else {
+        addButton.title = '';
+      }
+    }
+    
+    if (resetButton) {
+      resetButton.disabled = shouldDisable;
+      if (shouldDisable) {
+        resetButton.title = 'Priorities are automatically managed from Jira';
+      } else {
+        resetButton.title = '';
+      }
+    }
+    
+    // Adicionar classe CSS para indicar estado desabilitado
+    const priorityConfig = document.querySelector('.priority-config');
+    if (priorityConfig) {
+      if (shouldDisable) {
+        priorityConfig.classList.add('jira-managed');
+      } else {
+        priorityConfig.classList.remove('jira-managed');
+      }
+    }
+  }
+
+  /**
+   * Verifica se há credenciais válidas do Jira
+   */
+  hasValidJiraCredentials() {
+    const jiraUrl = document.getElementById('jiraUrl')?.value?.trim();
+    const jiraEmail = document.getElementById('jiraEmail')?.value?.trim();
+    const jiraApiToken = document.getElementById('jiraApiToken')?.value?.trim();
+    const jiraProjectKey = document.getElementById('jiraProjectKey')?.value?.trim();
+    
+    return jiraUrl && jiraEmail && jiraApiToken && jiraProjectKey;
   }
 }
 

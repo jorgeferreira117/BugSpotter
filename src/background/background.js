@@ -1330,10 +1330,20 @@ ${bugData.actualBehavior || 'N/A'}
 
       if (response.ok) {
         const project = await response.json();
+        
+        // 🆕 Buscar prioridades automaticamente após conexão bem-sucedida
+        let priorities = null;
+        try {
+          priorities = await this.fetchJiraPriorities(config);
+        } catch (priorityError) {
+          console.warn('Não foi possível buscar prioridades:', priorityError.message);
+        }
+        
         return {
           success: true,
           message: `Connection successful! Project: ${project.name}`,
-          project: project
+          project: project,
+          priorities: priorities
         };
       } else if (response.status === 401) {
         throw new Error('Invalid credentials (email or API token)');
@@ -1346,6 +1356,45 @@ ${bugData.actualBehavior || 'N/A'}
       if (error.message.includes('Invalid URL')) {
         throw new Error('Invalid Jira URL');
       }
+      throw error;
+    }
+  }
+
+  /**
+   * Busca as prioridades disponíveis no Jira
+   */
+  async fetchJiraPriorities(config) {
+    try {
+      const auth = btoa(`${config.email}:${config.apiToken}`);
+      const response = await fetch(`${config.baseUrl}/rest/api/3/priority`, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Basic ${auth}`,
+          'Accept': 'application/json',
+          'Content-Type': 'application/json'
+        }
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to fetch priorities: ${response.statusText}`);
+      }
+
+      const priorities = await response.json();
+      
+      // Transformar em formato adequado para as configurações
+      const priorityMap = {};
+      priorities.forEach(priority => {
+        // Usar o nome em lowercase como chave para compatibilidade
+        const key = priority.name.toLowerCase().replace(/\s+/g, '');
+        priorityMap[key] = priority.name;
+      });
+
+      return {
+        raw: priorities,
+        mapped: priorityMap
+      };
+    } catch (error) {
+      console.error('Erro ao buscar prioridades do Jira:', error);
       throw error;
     }
   }
