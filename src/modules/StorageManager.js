@@ -331,6 +331,42 @@ class StorageManager {
   }
 
   /**
+   * Alias para performMaintenance - usado pelo background.js
+   */
+  async cleanup(aggressive = false) {
+    if (aggressive) {
+      // Limpeza mais agressiva - reduzir TTL temporariamente
+      const originalMaxAge = this.maxItemAge;
+      this.maxItemAge = 3 * 24 * 60 * 60 * 1000; // 3 dias ao invés de 7
+      
+      const result = await this.performMaintenance();
+      
+      // Restaurar TTL original
+      this.maxItemAge = originalMaxAge;
+      
+      return result;
+    }
+    
+    return await this.performMaintenance();
+  }
+
+  /**
+   * Alias para generateStorageReport - usado pelo background.js
+   */
+  async generateReport() {
+    const report = await this.generateStorageReport();
+    
+    // Adicionar campo usage para compatibilidade
+    if (report && report.chrome) {
+      const maxSize = this.maxStorageSize;
+      const currentSize = report.chrome.totalSize || 0;
+      report.usage = currentSize / maxSize;
+    }
+    
+    return report;
+  }
+
+  /**
    * Cleanup ao destruir a instância
    */
   destroy() {
