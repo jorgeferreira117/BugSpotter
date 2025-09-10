@@ -1358,7 +1358,8 @@ ${bugData.actualBehavior || 'N/A'}
   async testJiraConnection(config) {
     try {
       // Validar URL
-      new URL(config.baseUrl);
+      const url = new URL(config.baseUrl);
+      console.log('Testing Jira connection to:', `${config.baseUrl}/rest/api/3/project/${config.projectKey}`);
       
       // Fazer a requisição HTTP
       const auth = btoa(`${config.email}:${config.apiToken}`);
@@ -1371,7 +1372,18 @@ ${bugData.actualBehavior || 'N/A'}
         }
       });
 
+      console.log('Jira response status:', response.status, response.statusText);
+      console.log('Jira response headers:', Object.fromEntries(response.headers.entries()));
+
       if (response.ok) {
+        // Verificar se a resposta é JSON válido
+        const contentType = response.headers.get('content-type');
+        if (!contentType || !contentType.includes('application/json')) {
+          const responseText = await response.text();
+          console.error('Expected JSON but received:', contentType, responseText.substring(0, 200));
+          throw new Error(`Invalid response format. Expected JSON but received ${contentType || 'unknown'}. This might indicate a proxy, firewall, or incorrect Jira URL.`);
+        }
+
         const project = await response.json();
         
         // 🆕 Buscar prioridades automaticamente após conexão bem-sucedida
@@ -1393,11 +1405,26 @@ ${bugData.actualBehavior || 'N/A'}
       } else if (response.status === 404) {
         throw new Error('Project not found. Check the project key.');
       } else {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        // Tentar ler a resposta para mais detalhes do erro
+        let errorDetails = '';
+        try {
+          const responseText = await response.text();
+          if (responseText.includes('<!DOCTYPE') || responseText.includes('<html')) {
+            errorDetails = ' (Received HTML response - check if URL is correct and accessible)';
+          } else {
+            errorDetails = ` - ${responseText.substring(0, 100)}`;
+          }
+        } catch (e) {
+          // Ignorar erro ao ler resposta
+        }
+        throw new Error(`HTTP ${response.status}: ${response.statusText}${errorDetails}`);
       }
     } catch (error) {
       if (error.message.includes('Invalid URL')) {
-        throw new Error('Invalid Jira URL');
+        throw new Error('Invalid Jira URL format');
+      }
+      if (error.name === 'TypeError' && error.message.includes('fetch')) {
+        throw new Error('Network error: Unable to connect to Jira. Check URL and network connectivity.');
       }
       throw error;
     }
