@@ -261,6 +261,51 @@ class PerformanceMonitor {
       throw error;
     }
   }
+
+  // Métodos de debug para desenvolvedores
+  enableDebugMode() {
+    this.debugMode = true;
+    console.log('[PerformanceMonitor] Modo debug ativado. Use window.bugSpotterDebug para acessar métricas.');
+    
+    // Expor métodos de debug no window para desenvolvedores
+    if (typeof window !== 'undefined') {
+      window.bugSpotterDebug = {
+        getStats: (type) => this.getStats(type),
+        getAllStats: () => this.getAllStats(),
+        getReport: () => this.generateReport(),
+        getSlowOps: (type) => this.getSlowOperations(type),
+        getRecentMetrics: (type, limit) => this.getRecentMetrics(type, limit),
+        clearMetrics: () => {
+          this.metrics = [];
+          console.log('[PerformanceMonitor] Métricas limpas.');
+        },
+        help: () => {
+          console.log(`
+🐛 BugSpotter Debug Console
+
+Comandos disponíveis:
+- getStats(type): Estatísticas de um tipo específico
+- getAllStats(): Todas as estatísticas
+- getReport(): Relatório completo
+- getSlowOps(type): Operações lentas
+- getRecentMetrics(type, limit): Métricas recentes
+- clearMetrics(): Limpar todas as métricas
+- help(): Mostrar esta ajuda
+
+Exemplo: bugSpotterDebug.getStats('screenshot')
+`);
+        }
+      };
+    }
+  }
+
+  disableDebugMode() {
+    this.debugMode = false;
+    if (typeof window !== 'undefined' && window.bugSpotterDebug) {
+      delete window.bugSpotterDebug;
+      console.log('[PerformanceMonitor] Modo debug desativado.');
+    }
+  }
 }
 
 // Exportar para uso em outros módulos
@@ -268,4 +313,10 @@ if (typeof module !== 'undefined' && module.exports) {
   module.exports = PerformanceMonitor;
 } else if (typeof window !== 'undefined') {
   window.PerformanceMonitor = PerformanceMonitor;
+  
+  // Ativar modo debug automaticamente em desenvolvimento
+  if (window.location && (window.location.hostname === 'localhost' || window.location.protocol === 'chrome-extension:')) {
+    const monitor = new PerformanceMonitor();
+    monitor.enableDebugMode();
+  }
 }

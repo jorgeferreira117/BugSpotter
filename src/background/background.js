@@ -87,16 +87,38 @@ class BugSpotterBackground {
   }
   
   cleanupTabData(tabId) {
+    console.log(`[CLEANUP] Iniciando limpeza de dados para tab ${tabId}`);
+    
+    // Verificar se há dados para limpar
+    const hasDebuggerSession = this.debuggerSessions.has(tabId);
+    const hasPersistentLogs = this.persistentLogs.has(tabId);
+    
+    if (hasDebuggerSession || hasPersistentLogs) {
+      console.log(`[CLEANUP] Tab ${tabId} - Debugger: ${hasDebuggerSession}, Logs: ${hasPersistentLogs}`);
+    }
+    
     // Cleanup completo dos dados da aba
     this.debuggerSessions.delete(tabId);
-    this.persistentLogs.delete(tabId);
+    
+    // Preservar logs persistentes por mais tempo (opcional)
+    // this.persistentLogs.delete(tabId);
     
     // Desanexar debugger se ainda estiver anexado
     try {
-      chrome.debugger.detach({ tabId });
+      if (chrome.debugger && hasDebuggerSession) {
+        chrome.debugger.detach({ tabId });
+        console.log(`[CLEANUP] Debugger desanexado para tab ${tabId}`);
+      }
     } catch (error) {
-      // Ignorar erros se já estiver desanexado
+      // Tratamento específico para erro de tab inexistente
+      if (error.message && error.message.includes('No tab with given id')) {
+        console.log(`[CLEANUP] Tab ${tabId} já foi fechada, debugger já desanexado`);
+      } else {
+        console.log(`[CLEANUP] Erro ao desanexar debugger da tab ${tabId}:`, error.message);
+      }
     }
+    
+    console.log(`[CLEANUP] Limpeza concluída para tab ${tabId}`);
   }
 
   // Função auxiliar para verificar se uma aba existe
@@ -174,6 +196,32 @@ class BugSpotterBackground {
       // Usar StorageManager para limpeza automática
       const cleanupStats = await this.storageManager.cleanup();
       
+      // ✅ NOVO: Limpar logs persistentes de tabs fechadas há muito tempo
+      const tabCleanupTime = Date.now() - (2 * 60 * 60 * 1000); // 2 horas atrás
+      const closedTabsToCleanup = [];
+      
+      for (const [tabId, persistentData] of this.persistentLogs.entries()) {
+        // Verificar se a tab ainda existe
+        const tabExists = await this.tabExists(tabId);
+        if (!tabExists) {
+          // Se a tab não existe há mais de 2 horas, marcar para limpeza
+          const lastActivity = persistentData.logs.length > 0 ? 
+            Math.max(...persistentData.logs.map(log => new Date(log.timestamp).getTime())) : 0;
+          
+          if (lastActivity < tabCleanupTime) {
+            closedTabsToCleanup.push(tabId);
+          }
+        }
+      }
+      
+      // Limpar dados de tabs fechadas
+      for (const tabId of closedTabsToCleanup) {
+        const persistentData = this.persistentLogs.get(tabId);
+        const logCount = persistentData?.logs?.length || 0;
+        this.persistentLogs.delete(tabId);
+        console.log(`[CLEANUP] Removidos logs persistentes de tab fechada ${tabId} (${logCount} logs)`);
+      }
+      
       // Limpeza adicional de dados em memória
       const maxAge = 15 * 60 * 1000; // Reduzido de 30 para 15 minutos
       const now = Date.now();
@@ -208,7 +256,12 @@ class BugSpotterBackground {
         }
       }
       
-      console.log('Limpeza automática:', cleanupStats);
+      // ✅ NOVO: Log de estatísticas de limpeza
+      const activeSessionsCount = this.debuggerSessions.size;
+      const persistentLogsCount = this.persistentLogs.size;
+      console.log(`[CLEANUP] Estatísticas - Sessões ativas: ${activeSessionsCount}, Logs persistentes: ${persistentLogsCount}`);
+      console.log('[CLEANUP] Limpeza automática:', cleanupStats);
+      
     } catch (error) {
       this.errorHandler.handleError(error, 'cleanupOldLogs');
     }
@@ -592,15 +645,25 @@ class BugSpotterBackground {
       }
   
       console.log(`Tentando anexar debugger para tab ${tabId}`);
-      await chrome.debugger.attach({tabId}, "1.3");
       
-      // Habilitar domínios necessários
-      await chrome.debugger.sendCommand({tabId}, "Runtime.enable");
-      await chrome.debugger.sendCommand({tabId}, "Console.enable");
-      await chrome.debugger.sendCommand({tabId}, "Network.enable");
-      
-      // Configurações avançadas para capturar todos os tipos de logs
-      await chrome.debugger.sendCommand({tabId}, "Runtime.setAsyncCallStackDepth", { maxDepth: 32 });
+      try {
+        await chrome.debugger.attach({tabId}, "1.3");
+        
+        // Habilitar domínios necessários
+        await chrome.debugger.sendCommand({tabId}, "Runtime.enable");
+        await chrome.debugger.sendCommand({tabId}, "Console.enable");
+        await chrome.debugger.sendCommand({tabId}, "Network.enable");
+        
+        // Configurações avançadas para capturar todos os tipos de logs
+        await chrome.debugger.sendCommand({tabId}, "Runtime.setAsyncCallStackDepth", { maxDepth: 32 });
+      } catch (debuggerError) {
+        // Tratamento específico para erro de tab inexistente durante operações do debugger
+        if (debuggerError.message && debuggerError.message.includes('No tab with given id')) {
+          console.log(`Aviso: Tab ${tabId} foi fechada durante anexação do debugger`);
+          return { success: false, message: 'Tab was closed during debugger attachment' };
+        }
+        throw debuggerError;
+      }
       // ❌ REMOVER esta linha que causa o erro:
       // await chrome.debugger.sendCommand({tabId}, "Console.setMonitoringXHREnabled", { enabled: true });
       
@@ -627,7 +690,12 @@ class BugSpotterBackground {
           console.log('Aviso: Aba não existe mais, pulando captura de logs do content script');
         }
       } catch (e) {
-        console.log('Aviso: Não foi possível obter logs do content script:', e.message);
+        // Tratamento específico para erro de tab inexistente
+        if (e.message && e.message.includes('No tab with given id')) {
+          console.log(`Aviso: Tab ${tabId} foi fechada durante a operação, pulando captura de logs do content script`);
+        } else {
+          console.log('Aviso: Não foi possível obter logs do content script:', e.message);
+        }
       }
       
       // Tentar capturar logs do console do navegador
@@ -668,7 +736,12 @@ class BugSpotterBackground {
         }
         }
       } catch (e) {
-        console.log('Aviso: Não foi possível obter logs do browser console:', e.message);
+        // Tratamento específico para erro de tab inexistente
+        if (e.message && e.message.includes('No tab with given id')) {
+          console.log(`Aviso: Tab ${tabId} foi fechada durante avaliação do Runtime, pulando captura de logs do browser`);
+        } else {
+          console.log('Aviso: Não foi possível obter logs do browser console:', e.message);
+        }
       }
       
       // 🆕 NÃO LIMPAR CONSOLE - comentar estas linhas para preservar logs
@@ -709,7 +782,7 @@ class BugSpotterBackground {
 
   // Desanexar debugger de uma aba
   async detachDebugger(tabId) {
-    return await this.errorHandler.safeExecute(async () => {
+    try {
       if (!chrome.debugger) {
         console.warn('Chrome debugger API not available');
         return;
@@ -720,7 +793,15 @@ class BugSpotterBackground {
         this.debuggerSessions.delete(tabId);
         console.log(`Debugger detached from tab ${tabId}`);
       }
-    }, 'Desanexar debugger', false);
+    } catch (error) {
+      // Tratamento específico para erro de tab inexistente
+      if (error.message && error.message.includes('No tab with given id')) {
+        console.log(`Aviso: Tab ${tabId} já foi fechada, removendo sessão do debugger`);
+        this.debuggerSessions.delete(tabId);
+      } else {
+        this.errorHandler.handleError(error, 'Desanexar debugger');
+      }
+    }
   }
 
   // Cleanup automático de sessão
@@ -771,13 +852,41 @@ class BugSpotterBackground {
     try {
       switch (message.action) {
         case 'CAPTURE_SCREENSHOT':
-          const screenshot = await this.captureScreenshot(sender.tab.id);
-          sendResponse({ success: true, data: screenshot });
+          try {
+            const tabId = sender.tab?.id;
+            if (!tabId) {
+              throw new Error('No tab ID available');
+            }
+            // ✅ VALIDAR se a tab ainda existe
+            const tabExists = await this.tabExists(tabId);
+            if (!tabExists) {
+              throw new Error(`Tab ${tabId} no longer exists`);
+            }
+            const screenshot = await this.captureScreenshot(tabId);
+            sendResponse({ success: true, data: screenshot });
+          } catch (error) {
+            console.log(`[INFO] Screenshot failed: ${error.message}`);
+            sendResponse({ success: false, error: error.message });
+          }
           break;
 
         case 'GET_CONSOLE_LOGS':
-          const logs = await this.getConsoleLogs(sender.tab.id);
-          sendResponse({ success: true, data: logs });
+          try {
+            const tabId = sender.tab?.id;
+            if (!tabId) {
+              throw new Error('No tab ID available');
+            }
+            // ✅ VALIDAR se a tab ainda existe
+            const tabExists = await this.tabExists(tabId);
+            if (!tabExists) {
+              throw new Error(`Tab ${tabId} no longer exists`);
+            }
+            const logs = await this.getConsoleLogs(tabId);
+            sendResponse({ success: true, data: logs });
+          } catch (error) {
+            console.log(`[INFO] Get console logs failed: ${error.message}`);
+            sendResponse({ success: false, error: error.message });
+          }
           break;
 
         case 'ATTACH_DEBUGGER':
@@ -786,9 +895,15 @@ class BugSpotterBackground {
             if (!tabId) {
               throw new Error('No tab ID provided');
             }
+            // ✅ VALIDAR se a tab ainda existe
+            const tabExists = await this.tabExists(tabId);
+            if (!tabExists) {
+              throw new Error(`Tab ${tabId} no longer exists`);
+            }
             await this.attachDebugger(tabId);
             sendResponse({ success: true });
           } catch (error) {
+            console.log(`[INFO] Attach debugger failed: ${error.message}`);
             sendResponse({ success: false, error: error.message });
           }
           break;
@@ -799,9 +914,18 @@ class BugSpotterBackground {
             if (!tabId) {
               throw new Error('No tab ID provided');
             }
+            // ✅ VALIDAR se a tab ainda existe (opcional para detach)
+            const tabExists = await this.tabExists(tabId);
+            if (!tabExists) {
+              console.log(`[INFO] Tab ${tabId} no longer exists, cleaning up debugger session`);
+              this.debuggerSessions.delete(tabId);
+              sendResponse({ success: true, message: 'Tab closed, session cleaned up' });
+              break;
+            }
             await this.detachDebugger(tabId);
             sendResponse({ success: true });
           } catch (error) {
+            console.log(`[INFO] Detach debugger failed: ${error.message}`);
             sendResponse({ success: false, error: error.message });
           }
           break;
@@ -811,6 +935,34 @@ class BugSpotterBackground {
             const tabId = message.tabId || sender.tab?.id;
             if (!tabId) {
               throw new Error('No tab ID provided');
+            }
+            
+            // ✅ VALIDAR se a tab ainda existe (opcional para logs)
+            const tabExists = await this.tabExists(tabId);
+            if (!tabExists) {
+              console.log(`[INFO] Tab ${tabId} no longer exists, returning persistent logs only`);
+              // Retornar apenas logs persistentes se a tab não existir mais
+              const persistentLogs = this.getPersistentLogs(tabId);
+              const domainFilter = message.domainFilter || null;
+              
+              const filteredLogs = domainFilter ? {
+                logs: persistentLogs.logs.filter(log => !log.url || log.url.includes(domainFilter)),
+                networkRequests: persistentLogs.networkRequests.filter(req => req.url.includes(domainFilter)),
+                errors: persistentLogs.errors.filter(err => !err.url || err.url.includes(domainFilter))
+              } : persistentLogs;
+              
+              const combinedLogs = {
+                logs: filteredLogs.logs,
+                networkRequests: filteredLogs.networkRequests,
+                errors: filteredLogs.errors,
+                totalLogs: filteredLogs.logs.length,
+                totalErrors: filteredLogs.errors.length,
+                domainFilter: domainFilter,
+                tabClosed: true
+              };
+              
+              sendResponse({ success: true, data: combinedLogs });
+              break;
             }
             
             // 🆕 Suporte para filtro de domínio
@@ -823,11 +975,13 @@ class BugSpotterBackground {
               errors: sessionLogs.errors,
               totalLogs: sessionLogs.logs.length,
               totalErrors: sessionLogs.errors.length,
-              domainFilter: domainFilter
+              domainFilter: domainFilter,
+              tabClosed: false
             };
             
             sendResponse({ success: true, data: combinedLogs });
           } catch (error) {
+            console.log(`[INFO] Get debugger logs failed: ${error.message}`);
             sendResponse({ success: false, error: error.message });
           }
           break;
@@ -883,14 +1037,7 @@ class BugSpotterBackground {
           }
           break;
 
-        case 'GET_PERFORMANCE_REPORT':
-          try {
-            const report = this.performanceMonitor.generateReport();
-            sendResponse({ success: true, data: report });
-          } catch (error) {
-            sendResponse({ success: false, error: error.message });
-          }
-          break;
+
 
         default:
           sendResponse({ success: false, error: 'Unknown message type' });
@@ -923,6 +1070,13 @@ class BugSpotterBackground {
       this.performanceMonitor.endOperation(operationId, true);
       return result;
     } catch (error) {
+      // Tratamento específico para erro de tab inexistente
+      if (error.message && error.message.includes('No tab with given id')) {
+        console.log(`Aviso: Tab ${tabId} foi fechada durante captura de screenshot, retornando null`);
+        this.performanceMonitor.endOperation(operationId, true);
+        return null;
+      }
+      
       this.performanceMonitor.endOperation(operationId, false, {
         message: error.message,
         stack: error.stack
@@ -936,6 +1090,14 @@ class BugSpotterBackground {
     this.performanceMonitor.startOperation(operationId, 'logCapture', { tabId });
     
     try {
+      // Verificar se a aba ainda existe antes de executar script
+      const tabStillExists = await this.tabExists(tabId);
+      if (!tabStillExists) {
+        console.log(`Aviso: Tab ${tabId} não existe mais, retornando array vazio`);
+        this.performanceMonitor.endOperation(operationId, true);
+        return [];
+      }
+
       const result = await this.errorHandler.safeExecute(async () => {
         const results = await chrome.scripting.executeScript({
           target: { tabId },
@@ -950,6 +1112,13 @@ class BugSpotterBackground {
       this.performanceMonitor.endOperation(operationId, true);
       return result;
     } catch (error) {
+      // Tratamento específico para erro de tab inexistente
+      if (error.message && error.message.includes('No tab with given id')) {
+        console.log(`Aviso: Tab ${tabId} foi fechada durante execução do script, retornando array vazio`);
+        this.performanceMonitor.endOperation(operationId, true);
+        return [];
+      }
+      
       this.performanceMonitor.endOperation(operationId, false, {
         message: error.message,
         stack: error.stack
@@ -1315,7 +1484,8 @@ ${bugData.actualBehavior || 'N/A'}
   async testJiraConnection(config) {
     try {
       // Validar URL
-      new URL(config.baseUrl);
+      const url = new URL(config.baseUrl);
+      console.log('Testing Jira connection to:', `${config.baseUrl}/rest/api/3/project/${config.projectKey}`);
       
       // Fazer a requisição HTTP
       const auth = btoa(`${config.email}:${config.apiToken}`);
@@ -1328,24 +1498,99 @@ ${bugData.actualBehavior || 'N/A'}
         }
       });
 
+      console.log('Jira response status:', response.status, response.statusText);
+      console.log('Jira response headers:', Object.fromEntries(response.headers.entries()));
+
       if (response.ok) {
+        // Verificar se a resposta é JSON válido
+        const contentType = response.headers.get('content-type');
+        if (!contentType || !contentType.includes('application/json')) {
+          const responseText = await response.text();
+          console.error('Expected JSON but received:', contentType, responseText.substring(0, 200));
+          throw new Error(`Invalid response format. Expected JSON but received ${contentType || 'unknown'}. This might indicate a proxy, firewall, or incorrect Jira URL.`);
+        }
+
         const project = await response.json();
+        
+        // 🆕 Buscar prioridades automaticamente após conexão bem-sucedida
+        let priorities = null;
+        try {
+          priorities = await this.fetchJiraPriorities(config);
+        } catch (priorityError) {
+          console.warn('Não foi possível buscar prioridades:', priorityError.message);
+        }
+        
         return {
           success: true,
           message: `Connection successful! Project: ${project.name}`,
-          project: project
+          project: project,
+          priorities: priorities
         };
       } else if (response.status === 401) {
         throw new Error('Invalid credentials (email or API token)');
       } else if (response.status === 404) {
         throw new Error('Project not found. Check the project key.');
       } else {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        // Tentar ler a resposta para mais detalhes do erro
+        let errorDetails = '';
+        try {
+          const responseText = await response.text();
+          if (responseText.includes('<!DOCTYPE') || responseText.includes('<html')) {
+            errorDetails = ' (Received HTML response - check if URL is correct and accessible)';
+          } else {
+            errorDetails = ` - ${responseText.substring(0, 100)}`;
+          }
+        } catch (e) {
+          // Ignorar erro ao ler resposta
+        }
+        throw new Error(`HTTP ${response.status}: ${response.statusText}${errorDetails}`);
       }
     } catch (error) {
       if (error.message.includes('Invalid URL')) {
-        throw new Error('Invalid Jira URL');
+        throw new Error('Invalid Jira URL format');
       }
+      if (error.name === 'TypeError' && error.message.includes('fetch')) {
+        throw new Error('Network error: Unable to connect to Jira. Check URL and network connectivity.');
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Busca as prioridades disponíveis no Jira
+   */
+  async fetchJiraPriorities(config) {
+    try {
+      const auth = btoa(`${config.email}:${config.apiToken}`);
+      const response = await fetch(`${config.baseUrl}/rest/api/3/priority`, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Basic ${auth}`,
+          'Accept': 'application/json',
+          'Content-Type': 'application/json'
+        }
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to fetch priorities: ${response.statusText}`);
+      }
+
+      const priorities = await response.json();
+      
+      // Transformar em formato adequado para as configurações
+      const priorityMap = {};
+      priorities.forEach(priority => {
+        // Usar o nome em lowercase como chave para compatibilidade
+        const key = priority.name.toLowerCase().replace(/\s+/g, '');
+        priorityMap[key] = priority.name;
+      });
+
+      return {
+        raw: priorities,
+        mapped: priorityMap
+      };
+    } catch (error) {
+      console.error('Erro ao buscar prioridades do Jira:', error);
       throw error;
     }
   }
@@ -1365,8 +1610,14 @@ ${bugData.actualBehavior || 'N/A'}
     if (this.shouldAutoAttach(tab.url)) {
       console.log(`Auto-anexando debugger para: ${tab.url}`);
       // 🆕 REDUZIR delay para capturar logs mais cedo
-      setTimeout(() => {
-        this.attachDebugger(tabId);
+      setTimeout(async () => {
+        // ✅ VALIDAR se a tab ainda existe antes de anexar debugger
+        const tabStillExists = await this.tabExists(tabId);
+        if (tabStillExists) {
+          this.attachDebugger(tabId);
+        } else {
+          console.log(`[INFO] Tab ${tabId} foi fechada antes do auto-attach do debugger`);
+        }
       }, 500); // Reduzido de 1000ms para 500ms
     }
   }

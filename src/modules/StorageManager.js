@@ -38,8 +38,12 @@ class StorageManager {
 
       if (storage === 'chrome' && typeof chrome !== 'undefined' && chrome.storage) {
         await chrome.storage.local.set({ [key]: item });
-      } else {
+      } else if (typeof localStorage !== 'undefined') {
         localStorage.setItem(key, JSON.stringify(item));
+      } else {
+        // Fallback para contexto de service worker
+        console.warn('localStorage não disponível, usando chrome.storage.local como fallback');
+        await chrome.storage.local.set({ [key]: item });
       }
 
       return true;
@@ -59,9 +63,14 @@ class StorageManager {
       if (storage === 'chrome' && typeof chrome !== 'undefined' && chrome.storage) {
         const result = await chrome.storage.local.get([key]);
         item = result[key];
-      } else {
+      } else if (typeof localStorage !== 'undefined') {
         const stored = localStorage.getItem(key);
         item = stored ? JSON.parse(stored) : null;
+      } else {
+        // Fallback para contexto de service worker
+        console.warn('localStorage não disponível, usando chrome.storage.local como fallback');
+        const result = await chrome.storage.local.get([key]);
+        item = result[key];
       }
 
       if (!item) {
@@ -90,8 +99,12 @@ class StorageManager {
     try {
       if (storage === 'chrome' && typeof chrome !== 'undefined' && chrome.storage) {
         await chrome.storage.local.remove([key]);
-      } else {
+      } else if (typeof localStorage !== 'undefined') {
         localStorage.removeItem(key);
+      } else {
+        // Fallback para contexto de service worker
+        console.warn('localStorage não disponível, usando chrome.storage.local como fallback');
+        await chrome.storage.local.remove([key]);
       }
       return true;
     } catch (error) {
@@ -108,8 +121,13 @@ class StorageManager {
       if (storage === 'chrome' && typeof chrome !== 'undefined' && chrome.storage) {
         const result = await chrome.storage.local.get(null);
         return Object.keys(result);
-      } else {
+      } else if (typeof localStorage !== 'undefined') {
         return Object.keys(localStorage);
+      } else {
+        // Fallback para contexto de service worker
+        console.warn('localStorage não disponível, usando chrome.storage.local como fallback');
+        const result = await chrome.storage.local.get(null);
+        return Object.keys(result);
       }
     } catch (error) {
       console.error('Erro ao listar chaves:', error);
@@ -131,10 +149,18 @@ class StorageManager {
           totalSize += this.calculateSize(value);
           itemCount++;
         }
-      } else {
+      } else if (typeof localStorage !== 'undefined') {
         for (let i = 0; i < localStorage.length; i++) {
           const key = localStorage.key(i);
           const value = localStorage.getItem(key);
+          totalSize += this.calculateSize(value);
+          itemCount++;
+        }
+      } else {
+        // Fallback para contexto de service worker
+        console.warn('localStorage não disponível, usando chrome.storage.local como fallback');
+        const result = await chrome.storage.local.get(null);
+        for (const [key, value] of Object.entries(result)) {
           totalSize += this.calculateSize(value);
           itemCount++;
         }
@@ -193,9 +219,14 @@ class StorageManager {
         if (storage === 'chrome' && typeof chrome !== 'undefined' && chrome.storage) {
           const result = await chrome.storage.local.get([key]);
           item = result[key];
-        } else {
+        } else if (typeof localStorage !== 'undefined') {
           const stored = localStorage.getItem(key);
           item = stored ? JSON.parse(stored) : null;
+        } else {
+          // Fallback para contexto de service worker
+          console.warn('localStorage não disponível, usando chrome.storage.local como fallback');
+          const result = await chrome.storage.local.get([key]);
+          item = result[key];
         }
 
         if (item && item.timestamp) {
@@ -328,6 +359,42 @@ class StorageManager {
         itemCount: chromeUsage.itemCount + localUsage.itemCount
       }
     };
+  }
+
+  /**
+   * Alias para performMaintenance - usado pelo background.js
+   */
+  async cleanup(aggressive = false) {
+    if (aggressive) {
+      // Limpeza mais agressiva - reduzir TTL temporariamente
+      const originalMaxAge = this.maxItemAge;
+      this.maxItemAge = 3 * 24 * 60 * 60 * 1000; // 3 dias ao invés de 7
+      
+      const result = await this.performMaintenance();
+      
+      // Restaurar TTL original
+      this.maxItemAge = originalMaxAge;
+      
+      return result;
+    }
+    
+    return await this.performMaintenance();
+  }
+
+  /**
+   * Alias para generateStorageReport - usado pelo background.js
+   */
+  async generateReport() {
+    const report = await this.generateStorageReport();
+    
+    // Adicionar campo usage para compatibilidade
+    if (report && report.chrome) {
+      const maxSize = this.maxStorageSize;
+      const currentSize = report.chrome.totalSize || 0;
+      report.usage = currentSize / maxSize;
+    }
+    
+    return report;
   }
 
   /**
