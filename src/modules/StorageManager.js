@@ -38,8 +38,12 @@ class StorageManager {
 
       if (storage === 'chrome' && typeof chrome !== 'undefined' && chrome.storage) {
         await chrome.storage.local.set({ [key]: item });
-      } else {
+      } else if (typeof localStorage !== 'undefined') {
         localStorage.setItem(key, JSON.stringify(item));
+      } else {
+        // Fallback para contexto de service worker
+        console.warn('localStorage não disponível, usando chrome.storage.local como fallback');
+        await chrome.storage.local.set({ [key]: item });
       }
 
       return true;
@@ -59,9 +63,14 @@ class StorageManager {
       if (storage === 'chrome' && typeof chrome !== 'undefined' && chrome.storage) {
         const result = await chrome.storage.local.get([key]);
         item = result[key];
-      } else {
+      } else if (typeof localStorage !== 'undefined') {
         const stored = localStorage.getItem(key);
         item = stored ? JSON.parse(stored) : null;
+      } else {
+        // Fallback para contexto de service worker
+        console.warn('localStorage não disponível, usando chrome.storage.local como fallback');
+        const result = await chrome.storage.local.get([key]);
+        item = result[key];
       }
 
       if (!item) {
@@ -90,8 +99,12 @@ class StorageManager {
     try {
       if (storage === 'chrome' && typeof chrome !== 'undefined' && chrome.storage) {
         await chrome.storage.local.remove([key]);
-      } else {
+      } else if (typeof localStorage !== 'undefined') {
         localStorage.removeItem(key);
+      } else {
+        // Fallback para contexto de service worker
+        console.warn('localStorage não disponível, usando chrome.storage.local como fallback');
+        await chrome.storage.local.remove([key]);
       }
       return true;
     } catch (error) {
@@ -206,9 +219,14 @@ class StorageManager {
         if (storage === 'chrome' && typeof chrome !== 'undefined' && chrome.storage) {
           const result = await chrome.storage.local.get([key]);
           item = result[key];
-        } else {
+        } else if (typeof localStorage !== 'undefined') {
           const stored = localStorage.getItem(key);
           item = stored ? JSON.parse(stored) : null;
+        } else {
+          // Fallback para contexto de service worker
+          console.warn('localStorage não disponível, usando chrome.storage.local como fallback');
+          const result = await chrome.storage.local.get([key]);
+          item = result[key];
         }
 
         if (item && item.timestamp) {
