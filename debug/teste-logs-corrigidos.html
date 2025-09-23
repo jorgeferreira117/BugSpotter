@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Teste Logs Corrigidos - BugSpotter</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+        }
+        .test-button {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 15px 30px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            margin: 10px;
+            display: block;
+            width: 100%;
+        }
+        .test-button:hover {
+            background: #45a049;
+        }
+        .error-button {
+            background: #f44336;
+        }
+        .error-button:hover {
+            background: #da190b;
+        }
+        .info {
+            background: #e3f2fd;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 20px 0;
+            border-left: 4px solid #2196f3;
+        }
+        .status {
+            margin-top: 20px;
+            padding: 10px;
+            border-radius: 5px;
+            font-weight: bold;
+            min-height: 100px;
+            overflow-y: auto;
+            background: #f9f9f9;
+            border: 1px solid #ddd;
+        }
+        .log-entry {
+            margin: 5px 0;
+            padding: 5px;
+            border-left: 3px solid #ccc;
+            font-family: monospace;
+            font-size: 12px;
+        }
+        .log-info { border-left-color: #2196f3; }
+        .log-warn { border-left-color: #ff9800; }
+        .log-error { border-left-color: #f44336; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔧 Teste Logs Corrigidos - BugSpotter</h1>
+        
+        <div class="info">
+            <strong>📋 Verificações:</strong>
+            <ul>
+                <li>✅ Logs não devem ser recuperados múltiplas vezes</li>
+                <li>✅ Não deve haver erros de compressão</li>
+                <li>✅ Logs devem estar em ordem cronológica</li>
+                <li>✅ Salvamento deve ser controlado (não excessivo)</li>
+            </ul>
+        </div>
+
+        <button class="test-button" onclick="gerarLogsSequenciais()">📝 Gerar Logs Sequenciais</button>
+        <button class="test-button error-button" onclick="gerarErros()">🔴 Gerar Erros</button>
+        <button class="test-button" onclick="verificarLogs()">🔍 Verificar Logs Salvos</button>
+        <button class="test-button" onclick="limparLogs()">🧹 Limpar Logs</button>
+        
+        <div id="status" class="status">
+            <div class="log-entry log-info">Sistema iniciado. Aguardando testes...</div>
+        </div>
+    </div>
+
+    <script>
+        let logCounter = 0;
+        const statusDiv = document.getElementById('status');
+
+        function addLogToDisplay(message, type = 'info') {
+            const timestamp = new Date().toLocaleTimeString();
+            const logEntry = document.createElement('div');
+            logEntry.className = `log-entry log-${type}`;
+            logEntry.textContent = `[${timestamp}] ${message}`;
+            statusDiv.appendChild(logEntry);
+            statusDiv.scrollTop = statusDiv.scrollHeight;
+        }
+
+        function gerarLogsSequenciais() {
+            addLogToDisplay('Gerando logs sequenciais...', 'info');
+            
+            for (let i = 1; i <= 10; i++) {
+                setTimeout(() => {
+                    console.log(`Log sequencial ${i} - Timestamp: ${new Date().toISOString()}`);
+                    addLogToDisplay(`Log ${i} gerado`, 'info');
+                }, i * 100);
+            }
+        }
+
+        function gerarErros() {
+            addLogToDisplay('Gerando erros de teste...', 'warn');
+            
+            setTimeout(() => {
+                console.error('Erro de teste 1 - ReferenceError simulado');
+                addLogToDisplay('Erro 1 gerado', 'error');
+            }, 100);
+            
+            setTimeout(() => {
+                console.warn('Aviso de teste - Warning simulado');
+                addLogToDisplay('Warning gerado', 'warn');
+            }, 200);
+            
+            setTimeout(() => {
+                console.error('Erro de teste 2 - TypeError simulado');
+                addLogToDisplay('Erro 2 gerado', 'error');
+            }, 300);
+        }
+
+        function verificarLogs() {
+            addLogToDisplay('Verificando logs salvos...', 'info');
+            
+            // Verificar localStorage
+            try {
+                const savedLogs = localStorage.getItem('bugSpotter_logs');
+                if (savedLogs) {
+                    const logData = JSON.parse(savedLogs);
+                    addLogToDisplay(`Encontrados ${logData.logs ? logData.logs.length : 0} logs no localStorage`, 'info');
+                    
+                    if (logData.logs && logData.logs.length > 0) {
+                        // Verificar ordem cronológica
+                        let ordenado = true;
+                        for (let i = 1; i < logData.logs.length; i++) {
+                            const anterior = new Date(logData.logs[i-1].timestamp);
+                            const atual = new Date(logData.logs[i].timestamp);
+                            if (anterior > atual) {
+                                ordenado = false;
+                                break;
+                            }
+                        }
+                        
+                        addLogToDisplay(`Logs estão ${ordenado ? 'em ordem cronológica ✅' : 'fora de ordem ❌'}`, ordenado ? 'info' : 'error');
+                        
+                        // Mostrar últimos 3 logs
+                        const ultimosLogs = logData.logs.slice(-3);
+                        ultimosLogs.forEach((log, index) => {
+                            addLogToDisplay(`Log ${index + 1}: [${log.level}] ${log.message.substring(0, 50)}...`, 'info');
+                        });
+                    }
+                } else {
+                    addLogToDisplay('Nenhum log encontrado no localStorage', 'warn');
+                }
+            } catch (error) {
+                addLogToDisplay(`Erro ao verificar logs: ${error.message}`, 'error');
+            }
+        }
+
+        function limparLogs() {
+            localStorage.removeItem('bugSpotter_logs');
+            statusDiv.innerHTML = '<div class="log-entry log-info">Logs limpos. Sistema reiniciado.</div>';
+            addLogToDisplay('Logs do localStorage removidos', 'info');
+        }
+
+        // Monitorar console para detectar mensagens de recuperação
+        const originalLog = console.log;
+        console.log = function(...args) {
+            const message = args.join(' ');
+            if (message.includes('Recuperados') && message.includes('logs salvos')) {
+                addLogToDisplay(`🔍 Detectado: ${message}`, 'warn');
+            }
+            originalLog.apply(console, args);
+        };
+
+        // Log inicial
+        console.log('🧪 Página de teste de logs corrigidos carregada');
+        addLogToDisplay('Página carregada. Extensão BugSpotter deve estar ativa.', 'info');
+    </script>
+</body>
+</html>

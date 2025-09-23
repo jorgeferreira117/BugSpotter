@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Teste - Logs de Debug da Extensão</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        .button {
+            background: #007cba;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+            font-size: 14px;
+        }
+        .button:hover {
+            background: #005a87;
+        }
+        .button.danger {
+            background: #dc3545;
+        }
+        .button.danger:hover {
+            background: #c82333;
+        }
+        .logs-container {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+            padding: 15px;
+            max-height: 400px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            white-space: pre-wrap;
+        }
+        .log-entry {
+            margin-bottom: 5px;
+            padding: 2px 0;
+        }
+        .log-debug { color: #6c757d; }
+        .log-info { color: #17a2b8; }
+        .log-warn { color: #ffc107; }
+        .log-error { color: #dc3545; }
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+        .stat-card {
+            background: #e9ecef;
+            padding: 15px;
+            border-radius: 4px;
+            text-align: center;
+        }
+        .stat-number {
+            font-size: 24px;
+            font-weight: bold;
+            color: #495057;
+        }
+        .stat-label {
+            font-size: 12px;
+            color: #6c757d;
+            margin-top: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔍 Análise de Logs de Debug da Extensão</h1>
+        <p>Esta página verifica se logs de debug da própria extensão BugSpotter estão sendo capturados desnecessariamente.</p>
+        
+        <div class="stats" id="stats">
+            <div class="stat-card">
+                <div class="stat-number" id="totalLogs">0</div>
+                <div class="stat-label">Total de Logs</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number" id="debugLogs">0</div>
+                <div class="stat-label">Logs de Debug</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number" id="extensionLogs">0</div>
+                <div class="stat-label">Logs da Extensão</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number" id="noiseLogs">0</div>
+                <div class="stat-label">Logs Desnecessários</div>
+            </div>
+        </div>
+
+        <div>
+            <button class="button" onclick="analyzeCurrentLogs()">📊 Analisar Logs Atuais</button>
+            <button class="button" onclick="generateTestLogs()">🧪 Gerar Logs de Teste</button>
+            <button class="button" onclick="filterNoiseLogs()">🔍 Mostrar Apenas Ruído</button>
+            <button class="button" onclick="clearLogs()">🗑️ Limpar Logs</button>
+            <button class="button danger" onclick="clearAllStorage()">⚠️ Limpar Todo Storage</button>
+        </div>
+    </div>
+
+    <div class="container">
+        <h2>📋 Logs Capturados</h2>
+        <div class="logs-container" id="logsContainer">
+            Clique em "Analisar Logs Atuais" para ver os logs...
+        </div>
+    </div>
+
+    <div class="container">
+        <h2>🎯 Logs Identificados como Ruído</h2>
+        <div class="logs-container" id="noiseContainer">
+            Logs desnecessários aparecerão aqui...
+        </div>
+    </div>
+
+    <script>
+        let currentLogs = [];
+        let noiseLogs = [];
+
+        // Padrões que identificam logs desnecessários da extensão
+        const noisePatterns = [
+            /\[BugSpotter\]/,
+            /\[AIService\]/,
+            /\[PerformanceMonitor\]/,
+            /\[DEBUG\]/,
+            /\[CLEANUP\]/,
+            /\[INFO\]/,
+            /🔧|🚀|✅|❌|🌟|⚠️|🔍|📦|💾|🎯|➕|🔄/,
+            /Storage carregado|Configurações|Prioridades|Debugger/,
+            /captureScreenshot|captureLogs|captureDOM/,
+            /Modo de desenvolvimento/,
+            /Jira response|Testing Jira/
+        ];
+
+        function isNoisyLog(logMessage) {
+            return noisePatterns.some(pattern => pattern.test(logMessage));
+        }
+
+        async function analyzeCurrentLogs() {
+            try {
+                // Tentar obter logs do BugSpotter
+                let logs = [];
+                
+                if (window.bugSpotterLogs) {
+                    logs = window.bugSpotterLogs;
+                } else if (window.bugSpotterContent && window.bugSpotterContent.consoleLogs) {
+                    logs = window.bugSpotterContent.consoleLogs;
+                } else {
+                    // Tentar localStorage
+                    const savedLogs = localStorage.getItem('bugSpotter_logs');
+                    if (savedLogs) {
+                        const parsed = JSON.parse(savedLogs);
+                        logs = parsed.logs || [];
+                    }
+                }
+
+                currentLogs = logs;
+                displayLogs(logs);
+                analyzeNoise(logs);
+                updateStats(logs);
+                
+            } catch (error) {
+                document.getElementById('logsContainer').textContent = 
+                    'Erro ao analisar logs: ' + error.message;
+            }
+        }
+
+        function displayLogs(logs) {
+            const container = document.getElementById('logsContainer');
+            if (!logs || logs.length === 0) {
+                container.textContent = 'Nenhum log encontrado.';
+                return;
+            }
+
+            container.innerHTML = '';
+            logs.slice(-50).forEach((log, index) => {
+                const div = document.createElement('div');
+                div.className = `log-entry log-${log.level || 'info'}`;
+                
+                const timestamp = new Date(log.timestamp).toLocaleTimeString();
+                const message = log.message || JSON.stringify(log);
+                
+                div.textContent = `[${timestamp}] [${log.level?.toUpperCase() || 'LOG'}] ${message}`;
+                
+                if (isNoisyLog(message)) {
+                    div.style.backgroundColor = '#fff3cd';
+                    div.style.border = '1px solid #ffeaa7';
+                    div.title = 'Log identificado como ruído desnecessário';
+                }
+                
+                container.appendChild(div);
+            });
+        }
+
+        function analyzeNoise(logs) {
+            noiseLogs = logs.filter(log => {
+                const message = log.message || JSON.stringify(log);
+                return isNoisyLog(message);
+            });
+
+            const container = document.getElementById('noiseContainer');
+            if (noiseLogs.length === 0) {
+                container.textContent = 'Nenhum log de ruído identificado! 🎉';
+                return;
+            }
+
+            container.innerHTML = '';
+            noiseLogs.slice(-30).forEach(log => {
+                const div = document.createElement('div');
+                div.className = 'log-entry log-warn';
+                
+                const timestamp = new Date(log.timestamp).toLocaleTimeString();
+                const message = log.message || JSON.stringify(log);
+                
+                div.textContent = `[${timestamp}] ${message}`;
+                container.appendChild(div);
+            });
+        }
+
+        function updateStats(logs) {
+            const debugLogs = logs.filter(log => {
+                const message = log.message || JSON.stringify(log);
+                return message.includes('[DEBUG]') || log.level === 'debug';
+            });
+
+            const extensionLogs = logs.filter(log => {
+                const message = log.message || JSON.stringify(log);
+                return message.includes('[BugSpotter]') || message.includes('[AIService]') || message.includes('[PerformanceMonitor]');
+            });
+
+            document.getElementById('totalLogs').textContent = logs.length;
+            document.getElementById('debugLogs').textContent = debugLogs.length;
+            document.getElementById('extensionLogs').textContent = extensionLogs.length;
+            document.getElementById('noiseLogs').textContent = noiseLogs.length;
+        }
+
+        function generateTestLogs() {
+            // Gerar alguns logs de teste para verificar se são capturados
+            console.warn('⚠️ Teste: Warning que deveria ser capturado');
+            console.error('❌ Teste: Erro que deveria ser capturado');
+            
+            // Simular requisição com erro
+            fetch('/api/teste-404')
+                .catch(error => console.error('Erro de rede esperado:', error));
+            
+            setTimeout(() => {
+                analyzeCurrentLogs();
+            }, 1000);
+        }
+
+        function filterNoiseLogs() {
+            if (noiseLogs.length === 0) {
+                alert('Nenhum log de ruído encontrado!');
+                return;
+            }
+            displayLogs(noiseLogs);
+        }
+
+        function clearLogs() {
+            if (window.bugSpotterContent) {
+                window.bugSpotterContent.consoleLogs = [];
+            }
+            localStorage.removeItem('bugSpotter_logs');
+            
+            document.getElementById('logsContainer').textContent = 'Logs limpos.';
+            document.getElementById('noiseContainer').textContent = 'Logs de ruído limpos.';
+            updateStats([]);
+        }
+
+        function clearAllStorage() {
+            if (confirm('Tem certeza que deseja limpar todo o storage? Esta ação não pode ser desfeita.')) {
+                localStorage.clear();
+                sessionStorage.clear();
+                
+                if (window.bugSpotterContent) {
+                    window.bugSpotterContent.consoleLogs = [];
+                }
+                
+                alert('Todo o storage foi limpo!');
+                analyzeCurrentLogs();
+            }
+        }
+
+        // Analisar logs automaticamente ao carregar a página
+        window.addEventListener('load', () => {
+            setTimeout(analyzeCurrentLogs, 1000);
+        });
+    </script>
+</body>
+</html>

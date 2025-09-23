@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Debug Badge Counter - BugSpotter</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .debug-section {
+            margin: 20px 0;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            background: #f9f9f9;
+        }
+        .debug-section h3 {
+            margin-top: 0;
+            color: #333;
+        }
+        .button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        .button:hover {
+            background: #0056b3;
+        }
+        .button.danger {
+            background: #dc3545;
+        }
+        .button.danger:hover {
+            background: #c82333;
+        }
+        .log {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+            font-family: monospace;
+            white-space: pre-wrap;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        .success { color: #28a745; }
+        .error { color: #dc3545; }
+        .warning { color: #ffc107; }
+        .info { color: #17a2b8; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🐛 Debug Badge Counter - BugSpotter</h1>
+        <p>Esta página ajuda a debugar problemas com o contador do badge da extensão.</p>
+        
+        <div class="alert" style="background: #fff3cd; border: 1px solid #ffeaa7; padding: 10px; margin: 10px 0; border-radius: 5px;">
+            <strong>⚠️ Importante:</strong> Este arquivo deve ser usado como popup ou content script da extensão.
+            <br>Se as Chrome APIs não estiverem disponíveis, abra o popup da extensão e cole o código no console do DevTools.
+        </div>
+        
+        <div class="debug-section">
+            <h3>📊 Status Atual do Badge</h3>
+            <button class="button" onclick="checkBadgeStatus()">🔍 Verificar Status do Badge</button>
+            <button class="button" onclick="checkStorageValues()">💾 Verificar Storage</button>
+            <div id="badge-status" class="log"></div>
+        </div>
+        
+        <div class="debug-section">
+            <h3>🔧 Ações de Correção</h3>
+            <button class="button" onclick="resetBadgeCounter()">🔄 Resetar Contador</button>
+            <button class="button" onclick="simulatePopupOpen()">📱 Simular Abertura do Popup</button>
+            <button class="button danger" onclick="clearAllStorage()">🗑️ Limpar Todo Storage</button>
+            <div id="actions-log" class="log"></div>
+        </div>
+        
+        <div class="debug-section">
+            <h3>📋 Relatórios AI</h3>
+            <button class="button" onclick="listAIReports()">📄 Listar Relatórios AI</button>
+            <button class="button" onclick="countAIReports()">🔢 Contar Relatórios</button>
+            <div id="reports-log" class="log"></div>
+        </div>
+        
+        <div class="debug-section">
+            <h3>🧪 Testes</h3>
+            <button class="button" onclick="testBadgeUpdate()">🧪 Testar Atualização do Badge</button>
+            <button class="button" onclick="testDeduplication()">🔍 Testar Deduplicação</button>
+            <div id="tests-log" class="log"></div>
+        </div>
+    </div>
+
+    <script>
+        function log(elementId, message, type = 'info') {
+            const element = document.getElementById(elementId);
+            const timestamp = new Date().toLocaleTimeString();
+            const className = type;
+            element.innerHTML += `<span class="${className}">[${timestamp}] ${message}</span>\n`;
+            element.scrollTop = element.scrollHeight;
+        }
+        
+        async function checkBadgeStatus() {
+            log('badge-status', '🔍 Verificando status do badge...', 'info');
+            
+            try {
+                if (typeof chrome === 'undefined' || !chrome.storage) {
+                    log('badge-status', '❌ Chrome APIs não disponíveis. Este arquivo deve ser usado como popup ou content script da extensão.', 'error');
+                    log('badge-status', '💡 Solução: Copie este código para o console do popup da extensão ou use como content script.', 'info');
+                    return;
+                }
+                
+                // Verificar contador no storage
+                const result = await chrome.storage.local.get(['unreadAIReports']);
+                const count = result.unreadAIReports || 0;
+                log('badge-status', `📊 Contador no storage: ${count}`, count > 0 ? 'warning' : 'success');
+                
+                // Tentar obter badge atual (se possível)
+                try {
+                    const badgeText = await chrome.action.getBadgeText({});
+                    log('badge-status', `🏷️ Badge atual: "${badgeText}"`, badgeText ? 'warning' : 'success');
+                } catch (error) {
+                    log('badge-status', `⚠️ Não foi possível obter badge atual (normal em content script): ${error.message}`, 'warning');
+                }
+                
+            } catch (error) {
+                log('badge-status', `❌ Erro ao verificar status: ${error.message}`, 'error');
+            }
+        }
+        
+        async function checkStorageValues() {
+            log('badge-status', '💾 Verificando todos os valores do storage...', 'info');
+            
+            try {
+                if (typeof chrome === 'undefined' || !chrome.storage) {
+                    log('badge-status', '❌ Chrome APIs não disponíveis.', 'error');
+                    return;
+                }
+                
+                const allData = await chrome.storage.local.get(null);
+                const keys = Object.keys(allData);
+                
+                log('badge-status', `📊 Total de chaves no storage: ${keys.length}`, 'info');
+                
+                // Verificar chaves relacionadas ao badge
+                const badgeKeys = keys.filter(key => 
+                    key.includes('unread') || 
+                    key.includes('badge') || 
+                    key.includes('ai-reports')
+                );
+                
+                if (badgeKeys.length > 0) {
+                    log('badge-status', '🔍 Chaves relacionadas ao badge:', 'info');
+                    for (const key of badgeKeys) {
+                        const value = allData[key];
+                        const valueStr = typeof value === 'object' ? 
+                            `[${Array.isArray(value) ? value.length : Object.keys(value).length} items]` : 
+                            String(value);
+                        log('badge-status', `  • ${key}: ${valueStr}`, 'info');
+                    }
+                } else {
+                    log('badge-status', '✅ Nenhuma chave relacionada ao badge encontrada', 'success');
+                }
+                
+            } catch (error) {
+                log('badge-status', `❌ Erro ao verificar storage: ${error.message}`, 'error');
+            }
+        }
+        
+        async function resetBadgeCounter() {
+            log('actions-log', '🔄 Resetando contador do badge...', 'info');
+            
+            try {
+                if (typeof chrome === 'undefined' || !chrome.storage) {
+                    log('actions-log', '❌ Chrome APIs não disponíveis.', 'error');
+                    log('actions-log', '💡 Para usar esta função, abra o popup da extensão e cole este código no console:', 'info');
+                    log('actions-log', 'chrome.storage.local.set({ unreadAIReports: 0 });', 'info');
+                    return;
+                }
+                
+                // Resetar contador
+                await chrome.storage.local.set({ unreadAIReports: 0 });
+                log('actions-log', '✅ Contador resetado para 0', 'success');
+                
+                // Limpar badge
+                try {
+                    await chrome.action.setBadgeText({ text: '' });
+                    log('actions-log', '✅ Badge limpo', 'success');
+                } catch (error) {
+                    log('actions-log', `⚠️ Não foi possível limpar badge (normal em content script): ${error.message}`, 'warning');
+                }
+                
+            } catch (error) {
+                log('actions-log', `❌ Erro ao resetar: ${error.message}`, 'error');
+            }
+        }
+        
+        async function simulatePopupOpen() {
+            log('actions-log', '📱 Simulando abertura do popup...', 'info');
+            
+            try {
+                if (typeof chrome === 'undefined' || !chrome.runtime) {
+                    log('actions-log', '❌ Chrome APIs não disponíveis.', 'error');
+                    return;
+                }
+                
+                const response = await chrome.runtime.sendMessage({ type: 'POPUP_OPENED' });
+                log('actions-log', `✅ Mensagem enviada. Resposta: ${JSON.stringify(response)}`, 'success');
+                
+            } catch (error) {
+                log('actions-log', `❌ Erro ao simular popup: ${error.message}`, 'error');
+            }
+        }
+        
+        async function clearAllStorage() {
+            if (!confirm('⚠️ Isso irá limpar TODOS os dados da extensão. Continuar?')) {
+                return;
+            }
+            
+            log('actions-log', '🗑️ Limpando todo o storage...', 'warning');
+            
+            try {
+                if (typeof chrome === 'undefined' || !chrome.storage) {
+                    log('actions-log', '❌ Chrome APIs não disponíveis.', 'error');
+                    return;
+                }
+                
+                await chrome.storage.local.clear();
+                log('actions-log', '✅ Storage limpo completamente', 'success');
+                
+                // Limpar badge
+                try {
+                    await chrome.action.setBadgeText({ text: '' });
+                    log('actions-log', '✅ Badge limpo', 'success');
+                } catch (error) {
+                    log('actions-log', `⚠️ Não foi possível limpar badge: ${error.message}`, 'warning');
+                }
+                
+            } catch (error) {
+                log('actions-log', `❌ Erro ao limpar storage: ${error.message}`, 'error');
+            }
+        }
+        
+        async function listAIReports() {
+            log('reports-log', '📄 Listando relatórios AI...', 'info');
+            
+            try {
+                if (typeof chrome === 'undefined' || !chrome.storage) {
+                    log('reports-log', '❌ Chrome APIs não disponíveis.', 'error');
+                    return;
+                }
+                
+                const allData = await chrome.storage.local.get(null);
+                const aiReportKeys = Object.keys(allData).filter(key => key.startsWith('ai-reports-'));
+                
+                if (aiReportKeys.length === 0) {
+                    log('reports-log', '✅ Nenhum relatório AI encontrado', 'success');
+                    return;
+                }
+                
+                log('reports-log', `📊 Encontradas ${aiReportKeys.length} chaves de relatórios AI:`, 'info');
+                
+                let totalReports = 0;
+                for (const key of aiReportKeys) {
+                    const reports = allData[key] || [];
+                    totalReports += reports.length;
+                    log('reports-log', `  • ${key}: ${reports.length} relatórios`, 'info');
+                    
+                    // Mostrar últimos 2 relatórios de cada chave
+                    if (reports.length > 0) {
+                        const recent = reports.slice(-2);
+                        recent.forEach((report, index) => {
+                            const timestamp = new Date(report.timestamp).toLocaleString();
+                            log('reports-log', `    - [${index + 1}] ${report.error?.url || 'URL desconhecida'} (${report.error?.status || 'Status desconhecido'}) - ${timestamp}`, 'info');
+                        });
+                    }
+                }
+                
+                log('reports-log', `📊 Total de relatórios: ${totalReports}`, totalReports > 0 ? 'warning' : 'success');
+                
+            } catch (error) {
+                log('reports-log', `❌ Erro ao listar relatórios: ${error.message}`, 'error');
+            }
+        }
+        
+        async function countAIReports() {
+            log('reports-log', '🔢 Contando relatórios AI...', 'info');
+            
+            try {
+                if (typeof chrome === 'undefined' || !chrome.storage) {
+                    log('reports-log', '❌ Chrome APIs não disponíveis.', 'error');
+                    return;
+                }
+                
+                // Simular a lógica do background script
+                const allData = await chrome.storage.local.get(null);
+                const aiReportKeys = Object.keys(allData).filter(key => key.startsWith('ai-reports-'));
+                
+                let totalReports = 0;
+                let totalUnique = 0;
+                const urlCounts = {};
+                
+                for (const key of aiReportKeys) {
+                    const reports = allData[key] || [];
+                    totalReports += reports.length;
+                    
+                    reports.forEach(report => {
+                        const url = report.error?.url || 'unknown';
+                        urlCounts[url] = (urlCounts[url] || 0) + 1;
+                        if (urlCounts[url] === 1) totalUnique++;
+                    });
+                }
+                
+                log('reports-log', `📊 Estatísticas:`, 'info');
+                log('reports-log', `  • Total de relatórios: ${totalReports}`, 'info');
+                log('reports-log', `  • URLs únicas: ${totalUnique}`, 'info');
+                log('reports-log', `  • Chaves de storage: ${aiReportKeys.length}`, 'info');
+                
+                if (Object.keys(urlCounts).length > 0) {
+                    log('reports-log', `🔍 Contagem por URL:`, 'info');
+                    Object.entries(urlCounts).forEach(([url, count]) => {
+                        log('reports-log', `  • ${url}: ${count} relatório(s)`, count > 1 ? 'warning' : 'info');
+                    });
+                }
+                
+            } catch (error) {
+                log('reports-log', `❌ Erro ao contar relatórios: ${error.message}`, 'error');
+            }
+        }
+        
+        async function testBadgeUpdate() {
+            log('tests-log', '🧪 Testando atualização do badge...', 'info');
+            
+            try {
+                if (typeof chrome === 'undefined' || !chrome.runtime) {
+                    log('tests-log', '❌ Chrome APIs não disponíveis.', 'error');
+                    return;
+                }
+                
+                // Enviar mensagem para o background script atualizar o badge
+                const response = await chrome.runtime.sendMessage({ 
+                    type: 'UPDATE_BADGE' 
+                });
+                
+                log('tests-log', `✅ Mensagem enviada. Resposta: ${JSON.stringify(response)}`, 'success');
+                
+            } catch (error) {
+                log('tests-log', `❌ Erro no teste: ${error.message}`, 'error');
+            }
+        }
+        
+        async function testDeduplication() {
+            log('tests-log', '🔍 Testando sistema de deduplicação...', 'info');
+            
+            try {
+                if (typeof chrome === 'undefined' || !chrome.storage) {
+                    log('tests-log', '❌ Chrome APIs não disponíveis.', 'error');
+                    return;
+                }
+                
+                // Verificar se há erros processados no cache
+                const allData = await chrome.storage.local.get(null);
+                const processedKeys = Object.keys(allData).filter(key => 
+                    key.includes('processed') || key.includes('deduplicated')
+                );
+                
+                if (processedKeys.length > 0) {
+                    log('tests-log', `🔍 Chaves de deduplicação encontradas:`, 'info');
+                    processedKeys.forEach(key => {
+                        const value = allData[key];
+                        log('tests-log', `  • ${key}: ${JSON.stringify(value)}`, 'info');
+                    });
+                } else {
+                    log('tests-log', '⚠️ Nenhuma chave de deduplicação encontrada no storage', 'warning');
+                    log('tests-log', '💡 A deduplicação pode estar usando cache em memória', 'info');
+                }
+                
+            } catch (error) {
+                log('tests-log', `❌ Erro no teste de deduplicação: ${error.message}`, 'error');
+            }
+        }
+        
+        // Auto-executar verificação inicial
+        window.addEventListener('load', () => {
+            setTimeout(() => {
+                checkBadgeStatus();
+                checkStorageValues();
+            }, 1000);
+        });
+    </script>
+</body>
+</html>

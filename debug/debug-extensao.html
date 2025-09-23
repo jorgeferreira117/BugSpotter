@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Debug BugSpotter Extension</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .debug-panel {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 10px 0;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .status {
+            padding: 10px;
+            border-radius: 4px;
+            margin: 5px 0;
+            font-weight: bold;
+        }
+        .success { background: #d4edda; color: #155724; }
+        .error { background: #f8d7da; color: #721c24; }
+        .warning { background: #fff3cd; color: #856404; }
+        .info { background: #d1ecf1; color: #0c5460; }
+        .btn {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        .btn:hover { background: #0056b3; }
+        pre {
+            background: #f8f9fa;
+            padding: 10px;
+            border-radius: 4px;
+            overflow-x: auto;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <div class="debug-panel">
+        <h1>🔍 Debug BugSpotter Extension</h1>
+        <p><strong>URL:</strong> <span id="url"></span></p>
+        <p><strong>Timestamp:</strong> <span id="timestamp"></span></p>
+        
+        <button class="btn" onclick="runDebug()">🚀 Executar Debug</button>
+        <button class="btn" onclick="clearResults()">🧹 Limpar</button>
+        <button class="btn" onclick="forceReload()">🔄 Recarregar</button>
+    </div>
+
+    <div id="results"></div>
+
+    <div class="debug-panel">
+        <h3>📋 Console Logs</h3>
+        <div id="console-logs"></div>
+    </div>
+
+    <script>
+        let debugResults = [];
+        let consoleLogs = [];
+
+        // Interceptar console logs
+        const originalLog = console.log;
+        const originalError = console.error;
+        const originalWarn = console.warn;
+
+        function addConsoleLog(type, args) {
+            const message = args.map(arg => 
+                typeof arg === 'object' ? JSON.stringify(arg, null, 2) : String(arg)
+            ).join(' ');
+            
+            consoleLogs.push({
+                type,
+                message,
+                timestamp: new Date().toLocaleTimeString()
+            });
+            
+            updateConsoleLogs();
+        }
+
+        console.log = function(...args) {
+            addConsoleLog('log', args);
+            originalLog.apply(console, args);
+        };
+
+        console.error = function(...args) {
+            addConsoleLog('error', args);
+            originalError.apply(console, args);
+        };
+
+        console.warn = function(...args) {
+            addConsoleLog('warn', args);
+            originalWarn.apply(console, args);
+        };
+
+        function updateConsoleLogs() {
+            const container = document.getElementById('console-logs');
+            const colors = {
+                log: '#333',
+                error: '#dc3545',
+                warn: '#ffc107'
+            };
+            
+            container.innerHTML = consoleLogs.slice(-20).map(log => 
+                `<div style="color: ${colors[log.type]}; margin: 2px 0; font-family: monospace; font-size: 12px;">
+                    <span style="color: #666;">[${log.timestamp}]</span> 
+                    <strong>${log.type.toUpperCase()}:</strong> ${log.message}
+                </div>`
+            ).join('');
+        }
+
+        function addResult(title, status, details) {
+            debugResults.push({ title, status, details, timestamp: new Date() });
+            updateResults();
+        }
+
+        function updateResults() {
+            const container = document.getElementById('results');
+            
+            container.innerHTML = debugResults.map(result => {
+                const statusClass = result.status === 'success' ? 'success' : 
+                                  result.status === 'error' ? 'error' : 
+                                  result.status === 'warning' ? 'warning' : 'info';
+                
+                return `
+                    <div class="debug-panel">
+                        <div class="status ${statusClass}">
+                            ${result.title}
+                        </div>
+                        ${result.details ? `<pre>${JSON.stringify(result.details, null, 2)}</pre>` : ''}
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function runDebug() {
+            debugResults = [];
+            console.log('🚀 Iniciando debug da extensão BugSpotter...');
+            
+            // Teste 1: Chrome APIs
+            setTimeout(() => {
+                const chromeAvailable = typeof chrome !== 'undefined';
+                const runtimeAvailable = chromeAvailable && typeof chrome.runtime !== 'undefined';
+                const extensionId = runtimeAvailable ? chrome.runtime.id : null;
+                
+                addResult(
+                    `Chrome APIs: ${chromeAvailable ? '✅' : '❌'}`,
+                    chromeAvailable ? 'success' : 'error',
+                    {
+                        chrome: chromeAvailable,
+                        runtime: runtimeAvailable,
+                        extensionId: extensionId,
+                        storage: chromeAvailable && typeof chrome.storage !== 'undefined',
+                        tabs: chromeAvailable && typeof chrome.tabs !== 'undefined'
+                    }
+                );
+            }, 100);
+
+            // Teste 2: StorageManager
+            setTimeout(() => {
+                const storageManagerClass = typeof window.StorageManager !== 'undefined';
+                const storageManagerInstance = typeof window.storageManager !== 'undefined' && window.storageManager !== null;
+                
+                addResult(
+                    `StorageManager: ${storageManagerClass ? '✅' : '❌'} Classe | ${storageManagerInstance ? '✅' : '❌'} Instância`,
+                    storageManagerClass ? (storageManagerInstance ? 'success' : 'warning') : 'error',
+                    {
+                        class: storageManagerClass,
+                        instance: storageManagerInstance,
+                        instanceType: typeof window.storageManager
+                    }
+                );
+            }, 200);
+
+            // Teste 3: BugSpotterContent
+            setTimeout(() => {
+                const bugSpotterClass = typeof window.BugSpotterContent !== 'undefined';
+                const bugSpotterInstance = typeof window.bugSpotterContent !== 'undefined' && window.bugSpotterContent !== null;
+                
+                addResult(
+                    `BugSpotterContent: ${bugSpotterClass ? '✅' : '❌'} Classe | ${bugSpotterInstance ? '✅' : '❌'} Instância`,
+                    bugSpotterClass ? (bugSpotterInstance ? 'success' : 'warning') : 'error',
+                    {
+                        class: bugSpotterClass,
+                        instance: bugSpotterInstance,
+                        instanceType: typeof window.bugSpotterContent,
+                        initialized: window.bugSpotterContentInitialized
+                    }
+                );
+            }, 300);
+
+            // Teste 4: Comunicação com Background
+            setTimeout(() => {
+                if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
+                    chrome.runtime.sendMessage({ action: 'ping', source: 'debug' }, (response) => {
+                        if (chrome.runtime.lastError) {
+                            addResult(
+                                'Comunicação Background: ❌',
+                                'error',
+                                {
+                                    error: chrome.runtime.lastError.message,
+                                    lastError: chrome.runtime.lastError
+                                }
+                            );
+                        } else {
+                            addResult(
+                                'Comunicação Background: ✅',
+                                'success',
+                                {
+                                    response: response,
+                                    communicationWorking: true
+                                }
+                            );
+                        }
+                    });
+                } else {
+                    addResult(
+                        'Comunicação Background: ❌',
+                        'error',
+                        {
+                            reason: 'chrome.runtime.sendMessage não disponível'
+                        }
+                    );
+                }
+            }, 400);
+
+            // Teste 5: Inspecionar Window Global
+            setTimeout(() => {
+                const windowProps = {};
+                const relevantProps = [
+                    'storageManager', 'bugSpotterContent', 'StorageManager', 
+                    'BugSpotterContent', 'bugSpotterContentInitialized'
+                ];
+                
+                relevantProps.forEach(prop => {
+                    windowProps[prop] = {
+                        type: typeof window[prop],
+                        value: window[prop] === null ? 'null' : 
+                               window[prop] === undefined ? 'undefined' : 
+                               typeof window[prop] === 'function' ? '[Function]' :
+                               typeof window[prop] === 'object' ? '[Object]' :
+                               window[prop]
+                    };
+                });
+                
+                addResult(
+                    'Window Global Properties',
+                    'info',
+                    windowProps
+                );
+            }, 500);
+
+            // Teste 6: Verificar Scripts Carregados
+            setTimeout(() => {
+                const scripts = Array.from(document.querySelectorAll('script')).map(script => ({
+                    src: script.src,
+                    type: script.type,
+                    async: script.async,
+                    defer: script.defer
+                }));
+                
+                addResult(
+                    'Scripts Carregados na Página',
+                    'info',
+                    {
+                        count: scripts.length,
+                        scripts: scripts.filter(s => s.src) // Apenas scripts externos
+                    }
+                );
+            }, 600);
+
+            console.log('✅ Debug concluído');
+        }
+
+        function clearResults() {
+            debugResults = [];
+            consoleLogs = [];
+            updateResults();
+            updateConsoleLogs();
+            console.log('🧹 Resultados limpos');
+        }
+
+        function forceReload() {
+            console.log('🔄 Recarregando página...');
+            setTimeout(() => window.location.reload(), 1000);
+        }
+
+        // Inicialização
+        window.addEventListener('load', () => {
+            document.getElementById('url').textContent = window.location.href;
+            document.getElementById('timestamp').textContent = new Date().toLocaleString();
+            
+            console.log('📄 Página de debug carregada');
+            console.log('⏳ Aguardando 2 segundos para executar debug automático...');
+            
+            setTimeout(() => {
+                runDebug();
+            }, 2000);
+        });
+
+        // Capturar erros
+        window.addEventListener('error', (event) => {
+            console.error('Erro JavaScript:', event.message, 'em', event.filename, 'linha', event.lineno);
+        });
+
+        window.addEventListener('unhandledrejection', (event) => {
+            console.error('Promise rejeitada:', event.reason);
+        });
+    </script>
+</body>
+</html>

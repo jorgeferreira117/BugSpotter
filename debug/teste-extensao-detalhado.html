@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Teste Detalhado da Extensão BugSpotter</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: #333;
+            min-height: 100vh;
+        }
+        .container {
+            background: white;
+            border-radius: 15px;
+            padding: 30px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        }
+        .status-card {
+            padding: 20px;
+            border-radius: 10px;
+            margin: 15px 0;
+            border-left: 5px solid;
+        }
+        .success { background: #d4edda; border-color: #28a745; }
+        .error { background: #f8d7da; border-color: #dc3545; }
+        .warning { background: #fff3cd; border-color: #ffc107; }
+        .info { background: #d1ecf1; border-color: #17a2b8; }
+        .test-section {
+            margin: 20px 0;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+        }
+        .btn {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 6px;
+            cursor: pointer;
+            margin: 5px;
+            font-size: 16px;
+        }
+        .btn:hover { background: #0056b3; }
+        .log-container {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 6px;
+            padding: 15px;
+            max-height: 400px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+        }
+        .test-result {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            margin: 2px;
+            font-weight: bold;
+        }
+        .pass { background: #28a745; color: white; }
+        .fail { background: #dc3545; color: white; }
+        .pending { background: #6c757d; color: white; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔍 Teste Detalhado da Extensão BugSpotter</h1>
+        
+        <div class="status-card info">
+            <h3>📋 Informações do Contexto</h3>
+            <p><strong>URL:</strong> <span id="current-url"></span></p>
+            <p><strong>User Agent:</strong> <span id="user-agent"></span></p>
+            <p><strong>Timestamp:</strong> <span id="timestamp"></span></p>
+        </div>
+
+        <div style="text-align: center; margin: 20px 0;">
+            <button class="btn" onclick="executarTodosOsTestes()">🚀 Executar Todos os Testes</button>
+            <button class="btn" onclick="limparResultados()">🧹 Limpar Resultados</button>
+            <button class="btn" onclick="forcarRecarregamento()">🔄 Forçar Recarregamento</button>
+        </div>
+
+        <div id="resultados-testes"></div>
+
+        <div class="test-section">
+            <h3>📊 Testes Individuais</h3>
+            <button class="btn" onclick="testarChromeAPIs()">Chrome APIs</button>
+            <button class="btn" onclick="testarExtensaoID()">Extension ID</button>
+            <button class="btn" onclick="testarContentScripts()">Content Scripts</button>
+            <button class="btn" onclick="testarStorageManager()">Storage Manager</button>
+            <button class="btn" onclick="testarBugSpotterContent()">BugSpotter Content</button>
+            <button class="btn" onclick="testarComunicacao()">Comunicação</button>
+        </div>
+
+        <div>
+            <h3>📋 Log Detalhado</h3>
+            <div id="log-detalhado" class="log-container">
+                Aguardando testes...
+            </div>
+        </div>
+
+        <div class="test-section">
+            <h3>🔧 Ações de Diagnóstico</h3>
+            <button class="btn" onclick="inspecionarWindow()">Inspecionar Window</button>
+            <button class="btn" onclick="inspecionarChrome()">Inspecionar Chrome</button>
+            <button class="btn" onclick="testarInjeccaoManual()">Testar Injeção Manual</button>
+            <button class="btn" onclick="verificarConsoleErrors()">Verificar Erros Console</button>
+        </div>
+    </div>
+
+    <script>
+        const logs = [];
+        let testResults = {};
+
+        function log(level, message, details = null) {
+            const timestamp = new Date().toLocaleTimeString();
+            const logEntry = { level, message, details, timestamp };
+            logs.push(logEntry);
+            
+            const container = document.getElementById('log-detalhado');
+            const colors = {
+                'info': '#17a2b8',
+                'success': '#28a745',
+                'error': '#dc3545',
+                'warning': '#ffc107',
+                'debug': '#6c757d'
+            };
+            
+            const color = colors[level] || '#333';
+            const detailsStr = details ? `\n   Detalhes: ${JSON.stringify(details, null, 2)}` : '';
+            
+            container.innerHTML += `<div style="color: ${color}; margin: 3px 0;">
+                <span style="color: #666;">[${timestamp}]</span> 
+                <strong>${level.toUpperCase()}:</strong> ${message}${detailsStr}
+            </div>`;
+            
+            container.scrollTop = container.scrollHeight;
+        }
+
+        function updateTestResult(testName, passed, details = null) {
+            testResults[testName] = { passed, details, timestamp: new Date() };
+            renderTestResults();
+        }
+
+        function renderTestResults() {
+            const container = document.getElementById('resultados-testes');
+            const totalTests = Object.keys(testResults).length;
+            const passedTests = Object.values(testResults).filter(r => r.passed).length;
+            
+            let html = `<div class="status-card ${passedTests === totalTests ? 'success' : 'warning'}">`;
+            html += `<h3>📊 Resultados dos Testes (${passedTests}/${totalTests})</h3>`;
+            
+            Object.entries(testResults).forEach(([testName, result]) => {
+                const className = result.passed ? 'pass' : 'fail';
+                const icon = result.passed ? '✅' : '❌';
+                html += `<span class="test-result ${className}">${icon} ${testName}</span>`;
+            });
+            
+            html += '</div>';
+            container.innerHTML = html;
+        }
+
+        function executarTodosOsTestes() {
+            log('info', '🚀 Iniciando bateria completa de testes...');
+            testResults = {};
+            
+            // Executar testes em sequência com delays
+            setTimeout(() => testarChromeAPIs(), 100);
+            setTimeout(() => testarExtensaoID(), 300);
+            setTimeout(() => testarContentScripts(), 500);
+            setTimeout(() => testarStorageManager(), 700);
+            setTimeout(() => testarBugSpotterContent(), 900);
+            setTimeout(() => testarComunicacao(), 1100);
+            
+            setTimeout(() => {
+                log('success', '✅ Bateria de testes concluída');
+                gerarRelatorioFinal();
+            }, 1500);
+        }
+
+        function testarChromeAPIs() {
+            log('info', 'Testando Chrome APIs...');
+            
+            const chromeAvailable = typeof chrome !== 'undefined';
+            const runtimeAvailable = chromeAvailable && typeof chrome.runtime !== 'undefined';
+            const storageAvailable = chromeAvailable && typeof chrome.storage !== 'undefined';
+            const tabsAvailable = chromeAvailable && typeof chrome.tabs !== 'undefined';
+            
+            const details = {
+                chrome: chromeAvailable,
+                runtime: runtimeAvailable,
+                storage: storageAvailable,
+                tabs: tabsAvailable
+            };
+            
+            const allPassed = Object.values(details).every(v => v);
+            updateTestResult('Chrome APIs', allPassed, details);
+            
+            if (allPassed) {
+                log('success', 'Chrome APIs disponíveis', details);
+            } else {
+                log('error', 'Algumas Chrome APIs não estão disponíveis', details);
+            }
+        }
+
+        function testarExtensaoID() {
+            log('info', 'Testando Extension ID...');
+            
+            try {
+                if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.id) {
+                    const extensionId = chrome.runtime.id;
+                    log('success', `Extension ID detectado: ${extensionId}`);
+                    updateTestResult('Extension ID', true, { id: extensionId });
+                } else {
+                    log('error', 'Extension ID não disponível');
+                    updateTestResult('Extension ID', false, { reason: 'chrome.runtime.id não disponível' });
+                }
+            } catch (error) {
+                log('error', 'Erro ao acessar Extension ID', { error: error.message });
+                updateTestResult('Extension ID', false, { error: error.message });
+            }
+        }
+
+        function testarContentScripts() {
+            log('info', 'Testando Content Scripts...');
+            
+            const storageManagerClass = typeof window.StorageManager !== 'undefined';
+            const bugSpotterContentClass = typeof window.BugSpotterContent !== 'undefined';
+            const storageManagerInstance = typeof window.storageManager !== 'undefined' && window.storageManager !== null;
+            const bugSpotterContentInstance = typeof window.bugSpotterContent !== 'undefined' && window.bugSpotterContent !== null;
+            
+            const details = {
+                StorageManagerClass: storageManagerClass,
+                BugSpotterContentClass: bugSpotterContentClass,
+                storageManagerInstance: storageManagerInstance,
+                bugSpotterContentInstance: bugSpotterContentInstance
+            };
+            
+            const classesLoaded = storageManagerClass && bugSpotterContentClass;
+            updateTestResult('Content Scripts', classesLoaded, details);
+            
+            if (classesLoaded) {
+                log('success', 'Classes dos content scripts carregadas', details);
+            } else {
+                log('error', 'Classes dos content scripts não carregadas', details);
+            }
+        }
+
+        function testarStorageManager() {
+            log('info', 'Testando Storage Manager...');
+            
+            try {
+                if (typeof window.StorageManager !== 'undefined') {
+                    if (typeof window.storageManager !== 'undefined' && window.storageManager !== null) {
+                        log('success', 'StorageManager instância disponível');
+                        updateTestResult('Storage Manager', true, { hasInstance: true });
+                    } else {
+                        log('warning', 'StorageManager classe disponível, mas instância não criada');
+                        updateTestResult('Storage Manager', false, { hasClass: true, hasInstance: false });
+                    }
+                } else {
+                    log('error', 'StorageManager classe não disponível');
+                    updateTestResult('Storage Manager', false, { hasClass: false });
+                }
+            } catch (error) {
+                log('error', 'Erro ao testar StorageManager', { error: error.message });
+                updateTestResult('Storage Manager', false, { error: error.message });
+            }
+        }
+
+        function testarBugSpotterContent() {
+            log('info', 'Testando BugSpotter Content...');
+            
+            try {
+                if (typeof window.BugSpotterContent !== 'undefined') {
+                    if (typeof window.bugSpotterContent !== 'undefined' && window.bugSpotterContent !== null) {
+                        log('success', 'BugSpotterContent instância disponível');
+                        updateTestResult('BugSpotter Content', true, { hasInstance: true });
+                    } else {
+                        log('warning', 'BugSpotterContent classe disponível, mas instância não criada');
+                        updateTestResult('BugSpotter Content', false, { hasClass: true, hasInstance: false });
+                    }
+                } else {
+                    log('error', 'BugSpotterContent classe não disponível');
+                    updateTestResult('BugSpotter Content', false, { hasClass: false });
+                }
+            } catch (error) {
+                log('error', 'Erro ao testar BugSpotterContent', { error: error.message });
+                updateTestResult('BugSpotter Content', false, { error: error.message });
+            }
+        }
+
+        function testarComunicacao() {
+            log('info', 'Testando comunicação com background...');
+            
+            try {
+                if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
+                    chrome.runtime.sendMessage({ action: 'ping' }, (response) => {
+                        if (chrome.runtime.lastError) {
+                            log('error', 'Erro na comunicação com background', { error: chrome.runtime.lastError.message });
+                            updateTestResult('Comunicação', false, { error: chrome.runtime.lastError.message });
+                        } else {
+                            log('success', 'Comunicação com background funcionando', { response });
+                            updateTestResult('Comunicação', true, { response });
+                        }
+                    });
+                } else {
+                    log('error', 'chrome.runtime.sendMessage não disponível');
+                    updateTestResult('Comunicação', false, { reason: 'sendMessage não disponível' });
+                }
+            } catch (error) {
+                log('error', 'Erro ao testar comunicação', { error: error.message });
+                updateTestResult('Comunicação', false, { error: error.message });
+            }
+        }
+
+        function inspecionarWindow() {
+            log('debug', 'Inspecionando objeto window...');
+            
+            const windowProps = {
+                storageManager: typeof window.storageManager,
+                bugSpotterContent: typeof window.bugSpotterContent,
+                StorageManager: typeof window.StorageManager,
+                BugSpotterContent: typeof window.BugSpotterContent,
+                bugSpotterContentInitialized: window.bugSpotterContentInitialized
+            };
+            
+            log('debug', 'Propriedades do window', windowProps);
+        }
+
+        function inspecionarChrome() {
+            log('debug', 'Inspecionando objeto chrome...');
+            
+            if (typeof chrome !== 'undefined') {
+                const chromeProps = {
+                    runtime: typeof chrome.runtime,
+                    storage: typeof chrome.storage,
+                    tabs: typeof chrome.tabs,
+                    extensionId: chrome.runtime ? chrome.runtime.id : 'N/A'
+                };
+                
+                log('debug', 'Propriedades do chrome', chromeProps);
+            } else {
+                log('debug', 'Objeto chrome não disponível');
+            }
+        }
+
+        function testarInjeccaoManual() {
+            log('info', 'Tentando injeção manual dos scripts...');
+            
+            // Tentar carregar StorageManager manualmente
+            if (typeof window.StorageManager === 'undefined') {
+                log('warning', 'StorageManager não encontrado, tentando carregar...');
+                // Aqui poderíamos tentar carregar o script manualmente
+            }
+            
+            // Tentar inicializar instâncias manualmente
+            if (typeof window.StorageManager !== 'undefined' && typeof window.storageManager === 'undefined') {
+                try {
+                    window.storageManager = new window.StorageManager();
+                    log('success', 'StorageManager instância criada manualmente');
+                } catch (error) {
+                    log('error', 'Erro ao criar StorageManager manualmente', { error: error.message });
+                }
+            }
+        }
+
+        function verificarConsoleErrors() {
+            log('info', 'Verificando erros do console...');
+            
+            // Interceptar console.error temporariamente
+            const originalError = console.error;
+            const errors = [];
+            
+            console.error = function(...args) {
+                errors.push(args.join(' '));
+                originalError.apply(console, args);
+            };
+            
+            setTimeout(() => {
+                console.error = originalError;
+                if (errors.length > 0) {
+                    log('warning', `${errors.length} erros detectados no console`, { errors });
+                } else {
+                    log('success', 'Nenhum erro detectado no console');
+                }
+            }, 2000);
+        }
+
+        function gerarRelatorioFinal() {
+            log('info', 'Gerando relatório final...');
+            
+            const totalTests = Object.keys(testResults).length;
+            const passedTests = Object.values(testResults).filter(r => r.passed).length;
+            const failedTests = totalTests - passedTests;
+            
+            const relatorio = {
+                timestamp: new Date().toISOString(),
+                totalTests,
+                passedTests,
+                failedTests,
+                successRate: ((passedTests / totalTests) * 100).toFixed(1) + '%',
+                results: testResults
+            };
+            
+            log('info', 'Relatório final gerado', relatorio);
+            
+            // Salvar no localStorage para análise posterior
+            try {
+                localStorage.setItem('bugspotter-test-report', JSON.stringify(relatorio));
+                log('success', 'Relatório salvo no localStorage');
+            } catch (error) {
+                log('warning', 'Não foi possível salvar relatório', { error: error.message });
+            }
+        }
+
+        function limparResultados() {
+            logs.length = 0;
+            testResults = {};
+            document.getElementById('log-detalhado').innerHTML = 'Logs limpos...';
+            document.getElementById('resultados-testes').innerHTML = '';
+            log('info', 'Resultados limpos');
+        }
+
+        function forcarRecarregamento() {
+            log('info', 'Forçando recarregamento da página...');
+            setTimeout(() => {
+                window.location.reload();
+            }, 1000);
+        }
+
+        // Inicialização
+        window.addEventListener('load', () => {
+            document.getElementById('current-url').textContent = window.location.href;
+            document.getElementById('user-agent').textContent = navigator.userAgent;
+            document.getElementById('timestamp').textContent = new Date().toLocaleString();
+            
+            log('info', '🔍 Página de teste carregada');
+            log('info', 'Aguardando 3 segundos para extensão carregar...');
+            
+            setTimeout(() => {
+                log('info', 'Executando teste automático...');
+                executarTodosOsTestes();
+            }, 3000);
+        });
+
+        // Interceptar erros globais
+        window.addEventListener('error', (event) => {
+            log('error', 'Erro JavaScript detectado', {
+                message: event.message,
+                filename: event.filename,
+                lineno: event.lineno,
+                colno: event.colno
+            });
+        });
+
+        // Interceptar promises rejeitadas
+        window.addEventListener('unhandledrejection', (event) => {
+            log('error', 'Promise rejeitada detectada', {
+                reason: event.reason
+            });
+        });
+    </script>
+</body>
+</html>

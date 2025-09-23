@@ -156,7 +156,7 @@ class ErrorHandler {
     if (typeof chrome !== 'undefined' && chrome.notifications) {
       chrome.notifications.create({
         type: 'basic',
-        iconUrl: 'icon48.png',
+        iconUrl: chrome.runtime.getURL('icon48.png'),
         title: 'BugSpotter - Erro Crítico',
         message: `Ocorreu um erro crítico: ${errorInfo.message.substring(0, 100)}...`
       });

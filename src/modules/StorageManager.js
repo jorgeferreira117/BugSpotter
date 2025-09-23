@@ -42,12 +42,18 @@ class StorageManager {
         localStorage.setItem(key, JSON.stringify(item));
       } else {
         // Fallback para contexto de service worker
-        console.warn('localStorage não disponível, usando chrome.storage.local como fallback');
+        // localStorage não disponível - silenciado
         await chrome.storage.local.set({ [key]: item });
       }
 
       return true;
     } catch (error) {
+      // Verificar se é erro de contexto invalidado
+      if (this.isExtensionContextInvalidated(error)) {
+        console.warn('⚠️ Contexto da extensão invalidado - operação de armazenamento cancelada');
+        return false;
+      }
+      
       console.error('Erro ao armazenar dados:', error);
       return false;
     }
@@ -65,10 +71,22 @@ class StorageManager {
         item = result[key];
       } else if (typeof localStorage !== 'undefined') {
         const stored = localStorage.getItem(key);
-        item = stored ? JSON.parse(stored) : null;
+        if (stored && stored !== 'undefined' && stored !== 'null') {
+          try {
+            item = this.safeJsonParse(stored, key);
+          } catch (parseError) {
+            console.warn(`Erro ao parsear JSON para chave ${key}:: ${parseError.message}`);
+            console.warn(`Dados corrompidos (primeiros 100 chars): ${stored.substring(0, 100)}`);
+            // Remover item corrompido
+            localStorage.removeItem(key);
+            item = null;
+          }
+        } else {
+          item = null;
+        }
       } else {
         // Fallback para contexto de service worker
-        console.warn('localStorage não disponível, usando chrome.storage.local como fallback');
+        // localStorage não disponível - silenciado
         const result = await chrome.storage.local.get([key]);
         item = result[key];
       }
@@ -87,6 +105,12 @@ class StorageManager {
       const data = item.compressed ? this.decompress(item.data) : item.data;
       return data;
     } catch (error) {
+      // Verificar se é erro de contexto invalidado
+      if (this.isExtensionContextInvalidated(error)) {
+        console.warn('⚠️ Contexto da extensão invalidado - operação de recuperação cancelada');
+        return null;
+      }
+      
       console.error('Erro ao recuperar dados:', error);
       return null;
     }
@@ -103,11 +127,17 @@ class StorageManager {
         localStorage.removeItem(key);
       } else {
         // Fallback para contexto de service worker
-        console.warn('localStorage não disponível, usando chrome.storage.local como fallback');
+        // localStorage não disponível - silenciado
         await chrome.storage.local.remove([key]);
       }
       return true;
     } catch (error) {
+      // Verificar se é erro de contexto invalidado
+      if (this.isExtensionContextInvalidated(error)) {
+        console.warn('⚠️ Contexto da extensão invalidado - operação de remoção cancelada');
+        return false;
+      }
+      
       console.error('Erro ao remover dados:', error);
       return false;
     }
@@ -125,11 +155,18 @@ class StorageManager {
         return Object.keys(localStorage);
       } else {
         // Fallback para contexto de service worker
-        console.warn('localStorage não disponível, usando chrome.storage.local como fallback');
+        // localStorage não disponível - silenciado
         const result = await chrome.storage.local.get(null);
         return Object.keys(result);
       }
     } catch (error) {
+      // Verificar se é erro de contexto invalidado
+      if (this.isExtensionContextInvalidated(error)) {
+        console.warn('⚠️ Contexto da extensão invalidado - operação de listagem cancelada');
+        // Retornar array vazio para evitar quebrar o fluxo
+        return [];
+      }
+      
       console.error('Erro ao listar chaves:', error);
       return [];
     }
@@ -172,6 +209,12 @@ class StorageManager {
         usagePercentage: (totalSize / this.maxStorageSize) * 100
       };
     } catch (error) {
+      // Verificar se é erro de contexto invalidado
+      if (this.isExtensionContextInvalidated(error)) {
+        console.warn('⚠️ Contexto da extensão invalidado - cálculo de uso cancelado');
+        return { totalSize: 0, itemCount: 0, usagePercentage: 0 };
+      }
+      
       console.error('Erro ao calcular uso do armazenamento:', error);
       return { totalSize: 0, itemCount: 0, usagePercentage: 0 };
     }
@@ -184,16 +227,41 @@ class StorageManager {
     try {
       const keys = await this.listKeys(storage);
       let cleanedCount = 0;
+      let errorCount = 0;
 
       for (const key of keys) {
-        const item = await this.retrieve(key, storage);
-        if (item === null) { // Item foi removido por estar expirado
-          cleanedCount++;
+        try {
+          const item = await this.retrieve(key, storage);
+          if (item === null) { // Item foi removido por estar expirado ou corrompido
+            cleanedCount++;
+          }
+        } catch (itemError) {
+          // Erro ao processar item específico - continuar com os outros
+          console.warn(`Erro ao processar item ${key} durante limpeza:`, itemError.message);
+          errorCount++;
+          
+          // Tentar remover item problemático diretamente
+          try {
+            await this.remove(key, storage);
+            cleanedCount++;
+          } catch (removeError) {
+            console.error(`Falha ao remover item corrompido ${key}:`, removeError.message);
+          }
         }
+      }
+
+      if (errorCount > 0) {
+        console.warn(`Limpeza concluída com ${errorCount} erros. ${cleanedCount} itens removidos.`);
       }
 
       return cleanedCount;
     } catch (error) {
+      // Verificar se é erro de contexto invalidado
+      if (this.isExtensionContextInvalidated(error)) {
+        console.warn('⚠️ Contexto da extensão invalidado - limpeza de itens expirados cancelada');
+        return 0;
+      }
+      
       console.error('Erro na limpeza de itens expirados:', error);
       return 0;
     }
@@ -215,22 +283,43 @@ class StorageManager {
 
       // Coletar todos os itens com timestamps
       for (const key of keys) {
-        let item;
-        if (storage === 'chrome' && typeof chrome !== 'undefined' && chrome.storage) {
-          const result = await chrome.storage.local.get([key]);
-          item = result[key];
-        } else if (typeof localStorage !== 'undefined') {
-          const stored = localStorage.getItem(key);
-          item = stored ? JSON.parse(stored) : null;
-        } else {
-          // Fallback para contexto de service worker
-          console.warn('localStorage não disponível, usando chrome.storage.local como fallback');
-          const result = await chrome.storage.local.get([key]);
-          item = result[key];
-        }
+        try {
+          let item;
+          if (storage === 'chrome' && typeof chrome !== 'undefined' && chrome.storage) {
+            const result = await chrome.storage.local.get([key]);
+            item = result[key];
+          } else if (typeof localStorage !== 'undefined') {
+            const stored = localStorage.getItem(key);
+            if (stored && stored !== 'undefined' && stored !== 'null') {
+               try {
+                 item = this.safeJsonParse(stored, key);
+               } catch (parseError) {
+                 console.warn(`Item corrompido encontrado durante cleanup: ${key}`);
+                 // Remover item corrompido
+                 localStorage.removeItem(key);
+                 item = null;
+               }
+            } else {
+              item = null;
+            }
+          } else {
+            // Fallback para contexto de service worker
+            // localStorage não disponível - silenciado
+            const result = await chrome.storage.local.get([key]);
+            item = result[key];
+          }
 
-        if (item && item.timestamp) {
-          items.push({ key, timestamp: item.timestamp, size: item.size || 0 });
+          if (item && item.timestamp) {
+            items.push({ key, timestamp: item.timestamp, size: item.size || 0 });
+          }
+        } catch (itemError) {
+          console.warn(`Erro ao processar item ${key} durante coleta:`, itemError.message);
+          // Tentar remover item problemático
+          try {
+            await this.remove(key, storage);
+          } catch (removeError) {
+            console.error(`Falha ao remover item corrompido ${key}:`, removeError.message);
+          }
         }
       }
 
@@ -253,6 +342,12 @@ class StorageManager {
 
       return removedCount;
     } catch (error) {
+      // Verificar se é erro de contexto invalidado
+      if (this.isExtensionContextInvalidated(error)) {
+        console.warn('⚠️ Contexto da extensão invalidado - limpeza de itens antigos cancelada');
+        return 0;
+      }
+      
       console.error('Erro na limpeza de itens antigos:', error);
       return 0;
     }
@@ -278,9 +373,15 @@ class StorageManager {
       results.local.expired = await this.cleanupExpiredItems('local');
       results.local.oldest = await this.cleanupOldestItems('local');
 
-      console.log('Manutenção do armazenamento concluída:', results);
+      // Manutenção do armazenamento concluída - silenciado
       return results;
     } catch (error) {
+      // Verificar se é erro de contexto invalidado
+      if (this.isExtensionContextInvalidated(error)) {
+        console.warn('⚠️ Contexto da extensão invalidado - manutenção do armazenamento cancelada');
+        return null;
+      }
+      
       console.error('Erro na manutenção do armazenamento:', error);
       return null;
     }
@@ -292,11 +393,22 @@ class StorageManager {
   compress(data) {
     try {
       const jsonString = JSON.stringify(data);
-      // Implementação simples de compressão (pode ser melhorada)
-      return btoa(jsonString);
+      
+      // Verificar se a string é muito grande para compressão
+      if (jsonString.length > 1000000) { // 1MB
+        // Dados muito grandes para compressão - silenciado
+        return jsonString;
+      }
+      
+      // Codificar para UTF-8 antes de usar btoa para evitar DOMException
+      const utf8Bytes = new TextEncoder().encode(jsonString);
+      const binaryString = Array.from(utf8Bytes, byte => String.fromCharCode(byte)).join('');
+      return btoa(binaryString);
     } catch (error) {
-      console.error('Erro na compressão:', error);
-      return data;
+      // Silenciar erro para evitar spam no console
+      // console.error('Erro na compressão:', error);
+      // Retornar dados originais em caso de erro
+      return JSON.stringify(data);
     }
   }
 
@@ -304,12 +416,45 @@ class StorageManager {
    * Descomprime dados
    */
   decompress(compressedData) {
+    // Verificar se os dados são válidos para base64
+    if (!compressedData || typeof compressedData !== 'string') {
+      console.warn('Dados inválidos para descompressão:', compressedData);
+      return compressedData;
+    }
+
+    // Verificar se é uma string base64 válida
+    const base64Regex = /^[A-Za-z0-9+/]*={0,2}$/;
+    if (!base64Regex.test(compressedData)) {
+      console.warn('Dados não estão em formato base64 válido, retornando como estão:', compressedData);
+      // Se não é base64, pode ser JSON não comprimido
+      try {
+        return JSON.parse(compressedData);
+      } catch (parseError) {
+        return compressedData;
+      }
+    }
+
     try {
-      const jsonString = atob(compressedData);
+      const binaryString = atob(compressedData);
+      // Decodificar de UTF-8
+      const utf8Bytes = new Uint8Array(Array.from(binaryString, char => char.charCodeAt(0)));
+      const jsonString = new TextDecoder().decode(utf8Bytes);
       return JSON.parse(jsonString);
     } catch (error) {
-      console.error('Erro na descompressão:', error);
-      return compressedData;
+      // Fallback para método antigo (compatibilidade)
+      try {
+        const jsonString = atob(compressedData);
+        return JSON.parse(jsonString);
+      } catch (fallbackError) {
+        console.error('Erro na descompressão (ambos os métodos falharam):', error, fallbackError);
+        // Tentar retornar como JSON não comprimido
+        try {
+          return JSON.parse(compressedData);
+        } catch (finalError) {
+          console.warn('Retornando dados originais sem processamento');
+          return compressedData;
+        }
+      }
     }
   }
 
@@ -331,6 +476,38 @@ class StorageManager {
     } catch (error) {
       return 0;
     }
+  }
+
+  /**
+   * Parsing seguro de JSON com validação
+   */
+  safeJsonParse(jsonString, key = 'unknown') {
+    if (!jsonString || typeof jsonString !== 'string' || jsonString.trim() === '') {
+      throw new Error('Dados inválidos: não é uma string válida');
+    }
+    
+    const trimmed = jsonString.trim();
+    
+    // Verificar se começa com caracteres válidos de JSON
+    if (!trimmed.startsWith('{') && !trimmed.startsWith('[') && !trimmed.startsWith('"')) {
+      // Pode ser um valor primitivo ou dados corrompidos
+      if (!/^(true|false|null|\d+(\.\d+)?|".*")$/.test(trimmed)) {
+        throw new Error(`Dados malformados detectados: ${trimmed.substring(0, 50)}...`);
+      }
+    }
+    
+    try {
+      return JSON.parse(jsonString);
+    } catch (parseError) {
+      throw new Error(`Erro de parsing JSON para chave ${key}: ${parseError.message}`);
+    }
+  }
+
+  /**
+   * Verifica se o erro é de contexto de extensão invalidado
+   */
+  isExtensionContextInvalidated(error) {
+    return error && error.message && error.message.includes('Extension context invalidated');
   }
 
   /**
@@ -359,6 +536,59 @@ class StorageManager {
         itemCount: chromeUsage.itemCount + localUsage.itemCount
       }
     };
+  }
+
+  /**
+   * Detecta e reporta dados corrompidos no storage
+   */
+  async detectCorruptedData(storage = 'chrome') {
+    const report = {
+      totalKeys: 0,
+      corruptedKeys: [],
+      validKeys: 0,
+      errors: []
+    };
+
+    try {
+      const keys = await this.listKeys(storage);
+      report.totalKeys = keys.length;
+
+      for (const key of keys) {
+        try {
+          if (storage === 'chrome' && typeof chrome !== 'undefined' && chrome.storage) {
+            const result = await chrome.storage.local.get([key]);
+            const item = result[key];
+            if (item) {
+              report.validKeys++;
+            }
+          } else if (typeof localStorage !== 'undefined') {
+            const stored = localStorage.getItem(key);
+            if (stored && stored !== 'undefined' && stored !== 'null') {
+              try {
+                this.safeJsonParse(stored, key);
+                report.validKeys++;
+              } catch (parseError) {
+                report.corruptedKeys.push({
+                  key,
+                  error: parseError.message,
+                  preview: stored.substring(0, 100)
+                });
+              }
+            }
+          }
+        } catch (error) {
+          report.errors.push({
+            key,
+            error: error.message
+          });
+        }
+      }
+
+      return report;
+    } catch (error) {
+      console.error('Erro ao detectar dados corrompidos:', error);
+      return null;
+    }
   }
 
   /**
@@ -408,10 +638,9 @@ class StorageManager {
   }
 }
 
-// Instância global do gerenciador de armazenamento
-const storageManager = new StorageManager();
-
-// Exportar para uso em outros módulos
+// Exportar apenas a classe, sem instanciar automaticamente
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = StorageManager;
+} else if (typeof window !== 'undefined') {
+  window.StorageManager = StorageManager;
 }

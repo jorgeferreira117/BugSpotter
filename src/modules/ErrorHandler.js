@@ -20,7 +20,18 @@ class ErrorHandler {
       url: 'background'
     };
 
-    console.error(`[${severity.toUpperCase()}] ${context}:`, error);
+    // Não logar erros esperados que são tratados adequadamente
+    const isExpectedError = (
+      (error.message && error.message.includes('No tab with given id')) ||
+      (error.message && error.message.includes('No tab with id:')) ||
+      (error.message && error.message.includes('is not valid JSON') && context.includes('retrieve')) ||
+      (context === 'cleanupOldLogs' && error.message && error.message.includes('No tab with id'))
+    );
+    
+    if (!isExpectedError) {
+      console.error(`[${severity.toUpperCase()}] ${context}:`, error);
+    }
+    
     this.addToErrorQueue(errorInfo);
 
     if (severity === 'critical') {
@@ -127,7 +138,7 @@ class ErrorHandler {
     if (typeof chrome !== 'undefined' && chrome.notifications) {
       chrome.notifications.create({
         type: 'basic',
-        iconUrl: 'icon48.png',
+        iconUrl: chrome.runtime.getURL('icon48.png'),
         title: 'BugSpotter - Erro Crítico',
         message: `Erro em ${errorInfo.context}: ${errorInfo.message}`
       });

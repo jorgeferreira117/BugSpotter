@@ -30,7 +30,7 @@ class PerformanceMonitor {
       metadata
     });
 
-    console.debug(`[PerformanceMonitor] Iniciando operação: ${operationType} (${operationId})`);
+    // Iniciando operação - silenciado
     return operationId;
   }
 
@@ -43,7 +43,7 @@ class PerformanceMonitor {
     
     const operation = this.activeOperations.get(operationId);
     if (!operation) {
-      console.warn(`[PerformanceMonitor] Operação não encontrada: ${operationId}`);
+      // Operação não encontrada - silenciado
       return null;
     }
 
@@ -69,11 +69,11 @@ class PerformanceMonitor {
     // Verificar se excedeu threshold
     const threshold = this.thresholds[operation.type];
     if (threshold && duration > threshold) {
-      console.warn(`[PerformanceMonitor] Operação ${operation.type} excedeu threshold: ${duration}ms > ${threshold}ms`);
+      // Operação excedeu threshold - silenciado
       this.handleSlowOperation(metric);
     }
 
-    console.debug(`[PerformanceMonitor] Operação finalizada: ${operation.type} (${duration.toFixed(2)}ms)`);
+    // Operação finalizada - silenciado
     return metric;
   }
 
@@ -171,12 +171,7 @@ class PerformanceMonitor {
    */
   handleSlowOperation(metric) {
     // Registrar no console para debug
-    console.warn('[PerformanceMonitor] Operação lenta detectada:', {
-      type: metric.type,
-      duration: `${metric.duration.toFixed(2)}ms`,
-      threshold: `${this.thresholds[metric.type]}ms`,
-      metadata: metric.metadata
-    });
+    // Operação lenta detectada - silenciado
 
     // Aqui poderia enviar para analytics ou sistema de monitoramento
     // this.sendToAnalytics(metric);
@@ -265,7 +260,7 @@ class PerformanceMonitor {
   // Métodos de debug para desenvolvedores
   enableDebugMode() {
     this.debugMode = true;
-    console.log('[PerformanceMonitor] Modo debug ativado. Use window.bugSpotterDebug para acessar métricas.');
+    // Modo debug ativado - silenciado
     
     // Expor métodos de debug no window para desenvolvedores
     if (typeof window !== 'undefined') {
@@ -277,23 +272,10 @@ class PerformanceMonitor {
         getRecentMetrics: (type, limit) => this.getRecentMetrics(type, limit),
         clearMetrics: () => {
           this.metrics = [];
-          console.log('[PerformanceMonitor] Métricas limpas.');
+          // Métricas limpas - silenciado
         },
         help: () => {
-          console.log(`
-🐛 BugSpotter Debug Console
-
-Comandos disponíveis:
-- getStats(type): Estatísticas de um tipo específico
-- getAllStats(): Todas as estatísticas
-- getReport(): Relatório completo
-- getSlowOps(type): Operações lentas
-- getRecentMetrics(type, limit): Métricas recentes
-- clearMetrics(): Limpar todas as métricas
-- help(): Mostrar esta ajuda
-
-Exemplo: bugSpotterDebug.getStats('screenshot')
-`);
+              // Performance debug help - silenciado
         }
       };
     }
@@ -303,7 +285,7 @@ Exemplo: bugSpotterDebug.getStats('screenshot')
     this.debugMode = false;
     if (typeof window !== 'undefined' && window.bugSpotterDebug) {
       delete window.bugSpotterDebug;
-      console.log('[PerformanceMonitor] Modo debug desativado.');
+      // Modo debug desativado - silenciado
     }
   }
 }

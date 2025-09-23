@@ -121,6 +121,84 @@
         </form>
       </section>
 
+      <!-- AI Integration Section -->
+      <section class="settings-section ai-section">
+        <div class="section-header">
+          <h2><span class="material-icons">smart_toy</span>AI Integration</h2>
+          <p class="section-description">Configure AI-powered automatic bug report generation</p>
+        </div>
+        
+        <form id="aiForm">
+          <div class="form-group">
+            <label for="aiEnabled" class="checkbox-label">
+              <input type="checkbox" id="aiEnabled">
+              <span class="checkmark"></span>
+              Enable AI-powered bug reports
+            </label>
+            <small class="help-text">Automatically generate detailed bug reports when HTTP errors are detected</small>
+          </div>
+          
+          <div class="ai-config" id="aiConfig">
+            <div class="form-group">
+              <label for="aiProvider">AI Provider:</label>
+              <select id="aiProvider">
+                <option value="gemini">Google Gemini (Free)</option>
+                <option value="openai">OpenAI GPT-4</option>
+                <option value="claude">Anthropic Claude</option>
+              </select>
+              <small class="help-text">Google Gemini offers 15 free requests per minute</small>
+            </div>
+            
+            <div class="form-group">
+              <label for="aiApiKey">API Key:</label>
+              <input type="password" id="aiApiKey" placeholder="Sua API key...">
+              <small class="help-text">
+                <span id="apiKeyHelp">
+                  Get your free API key at: <a href="https://makersuite.google.com/app/apikey" target="_blank">Google AI Studio</a>
+                </span>
+              </small>
+            </div>
+            
+            <div class="form-group">
+              <label for="aiAutoNotify" class="checkbox-label">
+                <input type="checkbox" id="aiAutoNotify" checked>
+                <span class="checkmark"></span>
+                Show notifications for detected errors
+              </label>
+              <small class="help-text">Display browser notifications when HTTP errors are automatically analyzed</small>
+            </div>
+            
+            <div class="form-group">
+              <label for="aiMinStatus">Minimum HTTP status to analyze:</label>
+              <select id="aiMinStatus">
+                <option value="400">400+ (Client & Server Errors)</option>
+                <option value="500">500+ (Server Errors Only)</option>
+              </select>
+            </div>
+            
+            <div class="ai-status" id="aiStatus">
+              <div class="status-indicator">
+                <span class="material-icons status-icon">circle</span>
+                <span class="status-text">Not configured</span>
+              </div>
+              <div class="rate-limit-info">
+                <small>Rate limit: <span id="rateLimitCount">0</span>/15 requests per minute</small>
+              </div>
+            </div>
+            
+            <button type="button" id="testAiConnection" class="btn btn-secondary">
+              <span class="material-icons">psychology</span>
+              Test AI Connection
+            </button>
+          </div>
+          
+          <button type="submit" class="btn btn-primary btn-save-config">
+            <span class="material-icons">save</span>
+            Save AI Settings
+          </button>
+        </form>
+      </section>
+
       <!-- Capture Section -->
       <section class="settings-section capture-section">
         <div class="section-header">
@@ -185,6 +263,65 @@
           <div class="form-group">
             <label for="maxLocalBugs">Maximum bugs stored locally:</label>
             <input type="number" id="maxLocalBugs" value="100" min="10" max="1000">
+          </div>
+        </form>
+      </section>
+
+      <!-- Notifications Section -->
+      <section class="settings-section notifications-section">
+        <div class="section-header">
+          <h2><span class="material-icons">notifications</span>Notifications</h2>
+        </div>
+        
+        <form id="notificationsForm">
+          <div class="form-group">
+            <label for="notificationsEnabled" class="checkbox-label">
+              <input type="checkbox" id="notificationsEnabled" checked>
+              <span class="checkmark"></span>
+              Enable notifications
+            </label>
+          </div>
+          
+          <div class="notifications-config" id="notificationsConfig">
+            <div class="form-group">
+              <label for="aiReportsNotifications" class="checkbox-label">
+                <input type="checkbox" id="aiReportsNotifications" checked>
+                <span class="checkmark"></span>
+                AI analysis reports
+              </label>
+            </div>
+            
+            <div class="form-group">
+              <label for="httpErrorsNotifications" class="checkbox-label">
+                <input type="checkbox" id="httpErrorsNotifications" checked>
+                <span class="checkmark"></span>
+                HTTP errors
+              </label>
+            </div>
+            
+            <div class="form-group">
+              <label for="criticalOnlyNotifications" class="checkbox-label">
+                <input type="checkbox" id="criticalOnlyNotifications">
+                <span class="checkmark"></span>
+                Only critical AI reports
+              </label>
+            </div>
+            
+            <div class="form-group">
+              <label for="errorThreshold">HTTP error threshold:</label>
+              <select id="errorThreshold">
+                <option value="400">400+ (Client & Server errors)</option>
+                <option value="500">500+ (Server errors only)</option>
+              </select>
+            </div>
+            
+            <div class="form-group">
+              <label for="notificationSound" class="checkbox-label">
+                <input type="checkbox" id="notificationSound" checked>
+                <span class="checkmark"></span>
+                Enable notification sound
+              </label>
+            </div>
           </div>
         </form>
       </section>

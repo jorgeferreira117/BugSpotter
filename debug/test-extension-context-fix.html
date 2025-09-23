@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Teste - Correção Extension Context Invalidated</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+        }
+        
+        .container {
+            background: white;
+            border-radius: 15px;
+            padding: 30px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        }
+        
+        h1 {
+            color: #333;
+            text-align: center;
+            margin-bottom: 30px;
+            font-size: 2.2em;
+        }
+        
+        .test-section {
+            margin: 25px 0;
+            padding: 20px;
+            border: 2px solid #e0e0e0;
+            border-radius: 10px;
+            background: #f9f9f9;
+        }
+        
+        .test-section h3 {
+            color: #444;
+            margin-top: 0;
+            font-size: 1.3em;
+        }
+        
+        .button-group {
+            display: flex;
+            gap: 15px;
+            flex-wrap: wrap;
+            margin: 20px 0;
+        }
+        
+        button {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            min-width: 140px;
+        }
+        
+        .btn-primary {
+            background: linear-gradient(45deg, #667eea, #764ba2);
+            color: white;
+        }
+        
+        .btn-warning {
+            background: linear-gradient(45deg, #f093fb, #f5576c);
+            color: white;
+        }
+        
+        .btn-success {
+            background: linear-gradient(45deg, #4facfe, #00f2fe);
+            color: white;
+        }
+        
+        .btn-danger {
+            background: linear-gradient(45deg, #fa709a, #fee140);
+            color: white;
+        }
+        
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+        }
+        
+        #results {
+            margin-top: 30px;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 10px;
+            border-left: 5px solid #007bff;
+            max-height: 500px;
+            overflow-y: auto;
+        }
+        
+        .result-item {
+            margin: 8px 0;
+            padding: 10px;
+            border-radius: 5px;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            line-height: 1.4;
+        }
+        
+        .result-success {
+            background: #d4edda;
+            color: #155724;
+            border-left: 4px solid #28a745;
+        }
+        
+        .result-error {
+            background: #f8d7da;
+            color: #721c24;
+            border-left: 4px solid #dc3545;
+        }
+        
+        .result-warning {
+            background: #fff3cd;
+            color: #856404;
+            border-left: 4px solid #ffc107;
+        }
+        
+        .result-info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border-left: 4px solid #17a2b8;
+        }
+        
+        .timestamp {
+            font-size: 11px;
+            opacity: 0.7;
+            float: right;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔧 Teste - Extension Context Invalidated</h1>
+        
+        <div class="test-section">
+            <h3>📋 Testes de Contexto de Extensão</h3>
+            <p>Este teste verifica se o StorageManager lida corretamente com erros de "Extension context invalidated".</p>
+            
+            <div class="button-group">
+                <button class="btn-primary" onclick="testNormalOperation()">✅ Operação Normal</button>
+                <button class="btn-warning" onclick="simulateContextError()">⚠️ Simular Erro de Contexto</button>
+                <button class="btn-success" onclick="testErrorHandling()">🛡️ Testar Tratamento</button>
+                <button class="btn-danger" onclick="clearResults()">🗑️ Limpar Resultados</button>
+            </div>
+        </div>
+        
+        <div id="results"></div>
+    </div>
+
+    <script src="../src/modules/StorageManager.js"></script>
+    <script>
+        let storageManager;
+        let testCounter = 0;
+
+        // Inicializar StorageManager
+        try {
+            storageManager = new StorageManager();
+            addResult('✅ StorageManager inicializado com sucesso', 'success');
+        } catch (error) {
+            addResult(`❌ Erro ao inicializar StorageManager: ${error.message}`, 'error');
+        }
+
+        function addResult(message, type = 'info') {
+            const results = document.getElementById('results');
+            const timestamp = new Date().toLocaleTimeString();
+            
+            const resultDiv = document.createElement('div');
+            resultDiv.className = `result-item result-${type}`;
+            resultDiv.innerHTML = `
+                ${message}
+                <span class="timestamp">${timestamp}</span>
+            `;
+            
+            results.appendChild(resultDiv);
+            results.scrollTop = results.scrollHeight;
+        }
+
+        function clearResults() {
+            document.getElementById('results').innerHTML = '';
+            addResult('🗑️ Resultados limpos', 'info');
+        }
+
+        async function testNormalOperation() {
+            addResult('🔄 Iniciando teste de operação normal...', 'info');
+            
+            try {
+                // Testar armazenamento
+                const testKey = `test_normal_${++testCounter}`;
+                const testData = { message: 'Teste normal', timestamp: Date.now() };
+                
+                const stored = await storageManager.store(testKey, testData, { storage: 'localStorage' });
+                if (stored) {
+                    addResult(`✅ Dados armazenados: ${testKey}`, 'success');
+                } else {
+                    addResult(`❌ Falha ao armazenar dados: ${testKey}`, 'error');
+                }
+                
+                // Testar recuperação
+                const retrieved = await storageManager.retrieve(testKey, 'localStorage');
+                if (retrieved && retrieved.message === testData.message) {
+                    addResult(`✅ Dados recuperados corretamente: ${retrieved.message}`, 'success');
+                } else {
+                    addResult(`❌ Falha ao recuperar dados ou dados incorretos`, 'error');
+                }
+                
+                // Testar listagem
+                const keys = await storageManager.listKeys('localStorage');
+                addResult(`📋 Chaves encontradas: ${keys.length}`, 'info');
+                
+                // Testar remoção
+                const removed = await storageManager.remove(testKey, 'localStorage');
+                if (removed) {
+                    addResult(`✅ Dados removidos: ${testKey}`, 'success');
+                } else {
+                    addResult(`❌ Falha ao remover dados: ${testKey}`, 'error');
+                }
+                
+            } catch (error) {
+                addResult(`❌ Erro durante operação normal: ${error.message}`, 'error');
+            }
+        }
+
+        async function simulateContextError() {
+            addResult('⚠️ Simulando erro de contexto invalidado...', 'warning');
+            
+            // Simular chrome.storage indisponível
+            const originalChrome = window.chrome;
+            
+            // Criar mock que simula erro de contexto
+            window.chrome = {
+                storage: {
+                    local: {
+                        get: () => Promise.reject(new Error('Extension context invalidated.')),
+                        set: () => Promise.reject(new Error('Extension context invalidated.')),
+                        remove: () => Promise.reject(new Error('Extension context invalidated.'))
+                    }
+                }
+            };
+            
+            try {
+                // Testar com contexto invalidado
+                const testKey = `test_context_error_${++testCounter}`;
+                
+                // Tentar armazenar (deve falhar graciosamente)
+                const stored = await storageManager.store(testKey, { test: 'data' });
+                if (!stored) {
+                    addResult('✅ Armazenamento falhou graciosamente com contexto invalidado', 'success');
+                } else {
+                    addResult('❌ Armazenamento deveria ter falhado', 'error');
+                }
+                
+                // Tentar recuperar (deve retornar null graciosamente)
+                const retrieved = await storageManager.retrieve(testKey);
+                if (retrieved === null) {
+                    addResult('✅ Recuperação retornou null graciosamente com contexto invalidado', 'success');
+                } else {
+                    addResult('❌ Recuperação deveria ter retornado null', 'error');
+                }
+                
+                // Tentar listar (deve retornar array vazio graciosamente)
+                const keys = await storageManager.listKeys();
+                if (Array.isArray(keys) && keys.length === 0) {
+                    addResult('✅ Listagem retornou array vazio graciosamente com contexto invalidado', 'success');
+                } else {
+                    addResult('❌ Listagem deveria ter retornado array vazio', 'error');
+                }
+                
+            } catch (error) {
+                addResult(`❌ Erro não tratado durante simulação: ${error.message}`, 'error');
+            } finally {
+                // Restaurar chrome original
+                window.chrome = originalChrome;
+                addResult('🔄 Contexto chrome restaurado', 'info');
+            }
+        }
+
+        async function testErrorHandling() {
+            addResult('🛡️ Testando tratamento de erros...', 'info');
+            
+            try {
+                // Testar método utilitário
+                const contextError = new Error('Extension context invalidated.');
+                const normalError = new Error('Erro normal');
+                
+                const isContextError1 = storageManager.isExtensionContextInvalidated(contextError);
+                const isContextError2 = storageManager.isExtensionContextInvalidated(normalError);
+                
+                if (isContextError1 && !isContextError2) {
+                    addResult('✅ Método isExtensionContextInvalidated funciona corretamente', 'success');
+                } else {
+                    addResult('❌ Método isExtensionContextInvalidated não funciona corretamente', 'error');
+                }
+                
+                // Testar com diferentes tipos de erro
+                const testCases = [
+                    { error: new Error('Extension context invalidated.'), expected: true },
+                    { error: new Error('Some other error'), expected: false },
+                    { error: null, expected: false },
+                    { error: undefined, expected: false },
+                    { error: { message: 'Extension context invalidated.' }, expected: true }
+                ];
+                
+                let passedTests = 0;
+                testCases.forEach((testCase, index) => {
+                    const result = storageManager.isExtensionContextInvalidated(testCase.error);
+                    if (result === testCase.expected) {
+                        passedTests++;
+                        addResult(`✅ Teste ${index + 1}: Passou (${result})`, 'success');
+                    } else {
+                        addResult(`❌ Teste ${index + 1}: Falhou (esperado: ${testCase.expected}, obtido: ${result})`, 'error');
+                    }
+                });
+                
+                addResult(`📊 Resultado: ${passedTests}/${testCases.length} testes passaram`, passedTests === testCases.length ? 'success' : 'warning');
+                
+                // Teste 4: Métodos de limpeza com contexto invalidado
+                addResult('\n=== Teste 4: Métodos de Limpeza com Contexto Invalidado ===', 'info');
+                
+                // Simular erro de contexto invalidado nos métodos de limpeza
+                const originalChrome = window.chrome;
+                window.chrome = {
+                  storage: {
+                    local: {
+                      get: () => { throw new Error('Extension context invalidated.'); },
+                      getBytesInUse: () => { throw new Error('Extension context invalidated.'); }
+                    }
+                  }
+                };
+                
+                try {
+                  addResult('Testando cleanupExpiredItems com contexto invalidado...', 'info');
+                  const result1 = await storageManager.cleanupExpiredItems('chrome');
+                  addResult(`cleanupExpiredItems retornou: ${result1}`, 'success');
+                  
+                  addResult('Testando cleanupOldestItems com contexto invalidado...', 'info');
+                  const result2 = await storageManager.cleanupOldestItems('chrome');
+                  addResult(`cleanupOldestItems retornou: ${result2}`, 'success');
+                  
+                  addResult('Testando performMaintenance com contexto invalidado...', 'info');
+                  const result3 = await storageManager.performMaintenance();
+                  addResult(`performMaintenance retornou: ${result3}`, 'success');
+                } catch (error) {
+                  addResult(`Erro inesperado: ${error.message}`, 'error');
+                } finally {
+                  // Restaurar chrome original
+                  window.chrome = originalChrome;
+                }
+                
+            } catch (error) {
+                addResult(`❌ Erro durante teste de tratamento: ${error.message}`, 'error');
+            }
+        }
+
+        // Executar teste inicial
+        window.addEventListener('load', () => {
+            addResult('🚀 Página carregada - Pronto para testes', 'info');
+        });
+    </script>
+</body>
+</html>

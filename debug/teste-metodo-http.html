@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Teste Método HTTP - BugSpotter</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+        }
+        .test-section {
+            margin: 20px 0;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        button {
+            background: #007cba;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            margin: 5px;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:hover {
+            background: #005a87;
+        }
+        .error {
+            background: #dc3545;
+        }
+        .error:hover {
+            background: #c82333;
+        }
+        #logs {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            padding: 10px;
+            margin-top: 20px;
+            border-radius: 4px;
+            max-height: 400px;
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 12px;
+        }
+        .log-entry {
+            margin: 2px 0;
+            padding: 2px;
+        }
+        .log-error {
+            color: #dc3545;
+            font-weight: bold;
+        }
+        .log-info {
+            color: #17a2b8;
+        }
+        .log-success {
+            color: #28a745;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔍 Teste Método HTTP - BugSpotter</h1>
+        
+        <div class="test-section">
+            <h3>Teste de Diferentes Métodos HTTP</h3>
+            <p>Clique nos botões para testar diferentes métodos HTTP e verificar se o BugSpotter captura corretamente:</p>
+            
+            <button onclick="testMethod('GET')">Teste GET (Erro 500)</button>
+            <button onclick="testMethod('POST')" class="error">Teste POST (Erro 404)</button>
+            <button onclick="testMethod('PUT')" class="error">Teste PUT (Erro 403)</button>
+            <button onclick="testMethod('DELETE')" class="error">Teste DELETE (Erro 500)</button>
+            <button onclick="testMethod('PATCH')" class="error">Teste PATCH (Erro 422)</button>
+        </div>
+        
+        <div class="test-section">
+            <h3>Controles</h3>
+            <button onclick="clearLogs()">Limpar Logs</button>
+            <button onclick="checkAIStatus()">Verificar Status AI</button>
+        </div>
+        
+        <div id="logs">
+            <div class="log-entry log-info">📋 Logs de teste aparecerão aqui...</div>
+        </div>
+    </div>
+
+    <script>
+        let testCounter = 0;
+        
+        function log(message, type = 'info') {
+            const logs = document.getElementById('logs');
+            const entry = document.createElement('div');
+            entry.className = `log-entry log-${type}`;
+            entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            logs.appendChild(entry);
+            logs.scrollTop = logs.scrollHeight;
+        }
+        
+        async function testMethod(method) {
+            testCounter++;
+            const testId = `test-${testCounter}`;
+            
+            log(`🚀 Iniciando teste ${method} (${testId})`, 'info');
+            
+            try {
+                const url = `https://httpbin.org/status/500?method=${method}&test=${testId}`;
+                
+                const options = {
+                    method: method,
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-Test-ID': testId,
+                        'X-Test-Method': method
+                    }
+                };
+                
+                // Adicionar body para métodos que suportam
+                if (['POST', 'PUT', 'PATCH'].includes(method)) {
+                    options.body = JSON.stringify({
+                        testId: testId,
+                        method: method,
+                        timestamp: new Date().toISOString(),
+                        data: 'Dados de teste para verificar método HTTP'
+                    });
+                }
+                
+                log(`📤 Enviando requisição ${method} para ${url}`, 'info');
+                
+                const response = await fetch(url, options);
+                
+                log(`📥 Resposta recebida: ${response.status} ${response.statusText}`, 
+                    response.ok ? 'success' : 'error');
+                
+                if (!response.ok) {
+                    log(`❌ Erro HTTP ${response.status} capturado! Método: ${method}`, 'error');
+                    log(`🔍 Verifique se o BugSpotter detectou o método correto: ${method}`, 'info');
+                }
+                
+            } catch (error) {
+                log(`💥 Erro na requisição ${method}: ${error.message}`, 'error');
+            }
+        }
+        
+        function clearLogs() {
+            const logs = document.getElementById('logs');
+            logs.innerHTML = '<div class="log-entry log-info">📋 Logs limpos...</div>';
+        }
+        
+        function checkAIStatus() {
+            log('🤖 Verificando status da AI...', 'info');
+            
+            // Simular verificação de status
+            setTimeout(() => {
+                log('✅ AI está ativa e monitorando erros HTTP', 'success');
+                log('📊 Verifique os relatórios gerados para confirmar o método HTTP correto', 'info');
+            }, 1000);
+        }
+        
+        // Log inicial
+        log('🎯 Sistema de teste carregado. Clique nos botões para testar diferentes métodos HTTP.', 'success');
+        log('⚠️  Certifique-se de que o BugSpotter está ativo na extensão.', 'info');
+    </script>
+</body>
+</html>

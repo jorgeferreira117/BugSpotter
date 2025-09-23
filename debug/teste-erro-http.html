@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Teste de Erro HTTP com Resposta JSON</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .test-section {
+            margin: 20px 0;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        button {
+            background: #007cba;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover {
+            background: #005a87;
+        }
+        .result {
+            margin-top: 10px;
+            padding: 10px;
+            background: #f5f5f5;
+            border-radius: 4px;
+        }
+        .error {
+            background: #ffe6e6;
+            border-left: 4px solid #ff0000;
+        }
+    </style>
+</head>
+<body>
+    <h1>🧪 Teste de Captura de Erro HTTP</h1>
+    <p>Este teste simula erros HTTP com respostas JSON para validar se a extensão BugSpotter está capturando corretamente o corpo das respostas de erro.</p>
+
+    <div class="test-section">
+        <h3>Teste 1: Fetch API - Erro 404 com JSON</h3>
+        <button onclick="testFetch404()">Testar Fetch 404</button>
+        <div id="fetch-result" class="result"></div>
+    </div>
+
+    <div class="test-section">
+        <h3>Teste 2: XMLHttpRequest - Erro 404 com JSON</h3>
+        <button onclick="testXHR404()">Testar XHR 404</button>
+        <div id="xhr-result" class="result"></div>
+    </div>
+
+    <div class="test-section">
+        <h3>Teste 3: Fetch API - Erro 500 com JSON</h3>
+        <button onclick="testFetch500()">Testar Fetch 500</button>
+        <div id="fetch500-result" class="result"></div>
+    </div>
+
+    <div class="test-section">
+        <h3>Instruções:</h3>
+        <ol>
+            <li>Abra as DevTools (F12)</li>
+            <li>Vá para a aba Console</li>
+            <li>Clique nos botões de teste acima</li>
+            <li>Verifique se os logs mostram o corpo da resposta JSON</li>
+            <li>Abra a extensão BugSpotter para ver se os erros foram capturados com o corpo da resposta</li>
+        </ol>
+    </div>
+
+    <script>
+        // Simular servidor que retorna JSON de erro
+        const mockServer = {
+            '/api/user-preferences': {
+                status: 404,
+                response: { success: false, message: "Preferences not found" }
+            },
+            '/api/server-error': {
+                status: 500,
+                response: { success: false, message: "Internal server error", code: "ERR_DATABASE_CONNECTION" }
+            }
+        };
+
+        // Interceptar fetch para simular respostas de erro
+        const originalFetch = window.fetch;
+        window.fetch = async function(url, options) {
+            // Se for uma URL de teste, simular resposta de erro
+            if (url.includes('/api/')) {
+                const mockData = mockServer[new URL(url, window.location.origin).pathname];
+                if (mockData) {
+                    const response = new Response(
+                        JSON.stringify(mockData.response),
+                        {
+                            status: mockData.status,
+                            statusText: mockData.status === 404 ? 'Not Found' : 'Internal Server Error',
+                            headers: {
+                                'Content-Type': 'application/json'
+                            }
+                        }
+                    );
+                    return response;
+                }
+            }
+            return originalFetch.apply(this, arguments);
+        };
+
+        async function testFetch404() {
+            const resultDiv = document.getElementById('fetch-result');
+            resultDiv.innerHTML = 'Testando...';
+            
+            try {
+                const response = await fetch('https://pp.daloop.app/api/user-preferences');
+                const data = await response.json();
+                
+                if (!response.ok) {
+                    resultDiv.innerHTML = `<div class="error">❌ Erro ${response.status}: ${JSON.stringify(data)}</div>`;
+                } else {
+                    resultDiv.innerHTML = `✅ Sucesso: ${JSON.stringify(data)}`;
+                }
+            } catch (error) {
+                resultDiv.innerHTML = `<div class="error">❌ Erro de rede: ${error.message}</div>`;
+            }
+        }
+
+        function testXHR404() {
+            const resultDiv = document.getElementById('xhr-result');
+            resultDiv.innerHTML = 'Testando...';
+            
+            const xhr = new XMLHttpRequest();
+            xhr.open('GET', 'https://pp.daloop.app/api/user-preferences');
+            xhr.setRequestHeader('Content-Type', 'application/json');
+            
+            xhr.onload = function() {
+                if (xhr.status >= 400) {
+                    resultDiv.innerHTML = `<div class="error">❌ Erro ${xhr.status}: ${xhr.responseText}</div>`;
+                } else {
+                    resultDiv.innerHTML = `✅ Sucesso: ${xhr.responseText}`;
+                }
+            };
+            
+            xhr.onerror = function() {
+                resultDiv.innerHTML = `<div class="error">❌ Erro de rede</div>`;
+            };
+            
+            xhr.send();
+        }
+
+        async function testFetch500() {
+            const resultDiv = document.getElementById('fetch500-result');
+            resultDiv.innerHTML = 'Testando...';
+            
+            try {
+                const response = await fetch('https://pp.daloop.app/api/server-error');
+                const data = await response.json();
+                
+                if (!response.ok) {
+                    resultDiv.innerHTML = `<div class="error">❌ Erro ${response.status}: ${JSON.stringify(data)}</div>`;
+                } else {
+                    resultDiv.innerHTML = `✅ Sucesso: ${JSON.stringify(data)}`;
+                }
+            } catch (error) {
+                resultDiv.innerHTML = `<div class="error">❌ Erro de rede: ${error.message}</div>`;
+            }
+        }
+
+        // Log inicial
+        console.log('🧪 Página de teste carregada. Use os botões para testar a captura de erros HTTP.');
+    </script>
+</body>
+</html>

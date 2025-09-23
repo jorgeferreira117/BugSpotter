@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Limpar e Recarregar - BugSpotter</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+        }
+        .step {
+            background: #e3f2fd;
+            padding: 20px;
+            border-radius: 8px;
+            margin: 15px 0;
+            border-left: 4px solid #2196f3;
+        }
+        .step h3 {
+            margin-top: 0;
+            color: #1976d2;
+        }
+        .button {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 15px 30px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            margin: 10px;
+            display: inline-block;
+            text-decoration: none;
+        }
+        .button:hover {
+            background: #45a049;
+        }
+        .danger {
+            background: #f44336;
+        }
+        .danger:hover {
+            background: #da190b;
+        }
+        .warning {
+            background: #ff9800;
+        }
+        .warning:hover {
+            background: #f57c00;
+        }
+        .results {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 5px;
+            background: #f9f9f9;
+            border: 1px solid #ddd;
+            max-height: 400px;
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 12px;
+        }
+        .log-entry {
+            margin: 5px 0;
+            padding: 5px;
+            border-left: 3px solid #ccc;
+        }
+        .log-success { border-left-color: #4caf50; background: #e8f5e8; }
+        .log-warning { border-left-color: #ff9800; background: #fff3e0; }
+        .log-error { border-left-color: #f44336; background: #ffebee; }
+        .log-info { border-left-color: #2196f3; background: #e3f2fd; }
+        .code {
+            background: #f5f5f5;
+            padding: 10px;
+            border-radius: 4px;
+            font-family: monospace;
+            margin: 10px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔧 Limpar e Recarregar - BugSpotter</h1>
+        
+        <div class="step">
+            <h3>📋 Problema Identificado</h3>
+            <p>Os logs mostram mensagens antigas e erros de compressão que deveriam ter sido corrigidos. Isso indica:</p>
+            <ul>
+                <li>Logs antigos ainda salvos no localStorage</li>
+                <li>Possível cache da extensão com versão antiga</li>
+                <li>Necessidade de limpeza completa e recarregamento</li>
+            </ul>
+        </div>
+
+        <div class="step">
+            <h3>🧹 Passo 1: Limpeza Completa</h3>
+            <p>Clique no botão abaixo para limpar todos os dados salvos:</p>
+            <button class="button danger" onclick="limpezaCompleta()">🗑️ Limpeza Completa</button>
+        </div>
+
+        <div class="step">
+            <h3>🔄 Passo 2: Recarregar Extensão</h3>
+            <p>Após a limpeza, siga estes passos:</p>
+            <ol>
+                <li>Abra <code>chrome://extensions/</code></li>
+                <li>Encontre a extensão BugSpotter</li>
+                <li>Clique no botão "Recarregar" (🔄)</li>
+                <li>Ou desative e reative a extensão</li>
+            </ol>
+            <a href="chrome://extensions/" class="button warning" target="_blank">🔗 Abrir chrome://extensions/</a>
+        </div>
+
+        <div class="step">
+            <h3>✅ Passo 3: Verificação</h3>
+            <p>Após recarregar a extensão:</p>
+            <button class="button" onclick="verificarCorrecoes()">🔍 Verificar Correções</button>
+            <button class="button" onclick="testarNovaCaptura()">🧪 Testar Nova Captura</button>
+        </div>
+
+        <div id="results" class="results" style="display: none;"></div>
+    </div>
+
+    <script>
+        function addResult(message, type = 'info') {
+            const results = document.getElementById('results');
+            results.style.display = 'block';
+            
+            const entry = document.createElement('div');
+            entry.className = `log-entry log-${type}`;
+            entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            results.appendChild(entry);
+            results.scrollTop = results.scrollHeight;
+        }
+
+        function limpezaCompleta() {
+            if (!confirm('ATENÇÃO: Isso vai remover TODOS os dados salvos do BugSpotter. Continuar?')) {
+                return;
+            }
+            
+            addResult('Iniciando limpeza completa...', 'info');
+            
+            let itensRemovidos = 0;
+            
+            // 1. Limpar localStorage
+            addResult('Limpando localStorage...', 'info');
+            const chavesParaRemover = [];
+            for (let i = 0; i < localStorage.length; i++) {
+                const key = localStorage.key(i);
+                if (key && (key.includes('bugSpotter') || key.includes('bugspotter') || key.includes('BugSpotter'))) {
+                    chavesParaRemover.push(key);
+                }
+            }
+            
+            chavesParaRemover.forEach(key => {
+                localStorage.removeItem(key);
+                addResult(`Removida chave localStorage: ${key}`, 'success');
+                itensRemovidos++;
+            });
+            
+            // 2. Limpar sessionStorage
+            addResult('Limpando sessionStorage...', 'info');
+            const sessionKeys = [];
+            for (let i = 0; i < sessionStorage.length; i++) {
+                const key = sessionStorage.key(i);
+                if (key && (key.includes('bugSpotter') || key.includes('bugspotter') || key.includes('BugSpotter'))) {
+                    sessionKeys.push(key);
+                }
+            }
+            
+            sessionKeys.forEach(key => {
+                sessionStorage.removeItem(key);
+                addResult(`Removida chave sessionStorage: ${key}`, 'success');
+                itensRemovidos++;
+            });
+            
+            // 3. Limpar variáveis globais
+            addResult('Limpando variáveis globais...', 'info');
+            const globalsToClean = ['bugSpotterLogs', 'capturedLogs', 'storageManager', 'bugSpotterContent'];
+            globalsToClean.forEach(varName => {
+                if (window[varName]) {
+                    delete window[varName];
+                    addResult(`Removida variável global: ${varName}`, 'success');
+                    itensRemovidos++;
+                }
+            });
+            
+            // 4. Forçar garbage collection (se disponível)
+            if (window.gc) {
+                window.gc();
+                addResult('Garbage collection executado', 'success');
+            }
+            
+            addResult(`✅ Limpeza completa finalizada! ${itensRemovidos} itens removidos.`, 'success');
+            addResult('⚠️ IMPORTANTE: Agora recarregue a extensão em chrome://extensions/', 'warning');
+        }
+
+        function verificarCorrecoes() {
+            addResult('Verificando se as correções foram aplicadas...', 'info');
+            
+            // Verificar se não há logs antigos
+            const savedLogs = localStorage.getItem('bugSpotter_logs');
+            if (!savedLogs) {
+                addResult('✅ Nenhum log antigo encontrado no localStorage', 'success');
+            } else {
+                try {
+                    const logData = JSON.parse(savedLogs);
+                    if (logData.logs && logData.logs.length > 0) {
+                        const oneHourAgo = Date.now() - (60 * 60 * 1000);
+                        const logsAntigos = logData.logs.filter(log => {
+                            const logTime = new Date(log.timestamp).getTime();
+                            return logTime < oneHourAgo;
+                        });
+                        
+                        if (logsAntigos.length > 0) {
+                            addResult(`❌ Ainda existem ${logsAntigos.length} logs antigos`, 'error');
+                        } else {
+                            addResult(`✅ Todos os ${logData.logs.length} logs são recentes`, 'success');
+                        }
+                    }
+                } catch (error) {
+                    addResult(`Erro ao verificar logs: ${error.message}`, 'error');
+                }
+            }
+            
+            // Verificar se a extensão está carregada
+            setTimeout(() => {
+                if (window.bugSpotterLogs) {
+                    addResult('✅ Extensão BugSpotter detectada e ativa', 'success');
+                } else {
+                    addResult('❌ Extensão BugSpotter não detectada. Verifique se foi recarregada.', 'error');
+                }
+            }, 1000);
+        }
+
+        function testarNovaCaptura() {
+            addResult('Testando nova captura de logs...', 'info');
+            
+            // Gerar alguns logs de teste
+            console.log('🧪 Log de teste 1 - ' + new Date().toISOString());
+            console.warn('⚠️ Warning de teste - ' + new Date().toISOString());
+            console.error('❌ Erro de teste - ' + new Date().toISOString());
+            
+            addResult('Logs de teste gerados. Verifique o console do navegador.', 'info');
+            
+            // Verificar se os logs foram capturados
+            setTimeout(() => {
+                const savedLogs = localStorage.getItem('bugSpotter_logs');
+                if (savedLogs) {
+                    try {
+                        const logData = JSON.parse(savedLogs);
+                        const logsRecentes = logData.logs ? logData.logs.filter(log => {
+                            return log.message.includes('teste') || log.message.includes('🧪');
+                        }) : [];
+                        
+                        if (logsRecentes.length > 0) {
+                            addResult(`✅ Captura funcionando! ${logsRecentes.length} logs de teste capturados.`, 'success');
+                        } else {
+                            addResult('❌ Logs de teste não foram capturados. Extensão pode não estar funcionando.', 'error');
+                        }
+                    } catch (error) {
+                        addResult(`Erro ao verificar captura: ${error.message}`, 'error');
+                    }
+                } else {
+                    addResult('❌ Nenhum log foi salvo. Extensão pode não estar ativa.', 'error');
+                }
+            }, 2000);
+        }
+
+        // Verificação inicial
+        window.addEventListener('load', () => {
+            addResult('Página carregada. Pronto para limpeza e verificação.', 'info');
+            
+            // Verificar estado atual
+            const savedLogs = localStorage.getItem('bugSpotter_logs');
+            if (savedLogs) {
+                try {
+                    const logData = JSON.parse(savedLogs);
+                    const totalLogs = logData.logs ? logData.logs.length : 0;
+                    addResult(`Estado atual: ${totalLogs} logs salvos no localStorage`, 'info');
+                } catch (error) {
+                    addResult('Estado atual: Dados corrompidos no localStorage', 'warning');
+                }
+            } else {
+                addResult('Estado atual: Nenhum log salvo no localStorage', 'info');
+            }
+        });
+    </script>
+</body>
+</html>

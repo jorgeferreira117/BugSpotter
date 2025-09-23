@@ -1,20 +1,28 @@
 // Verificar se já foi inicializado para evitar duplicação
 if (typeof window.bugSpotterContentInitialized === 'undefined') {
   window.bugSpotterContentInitialized = true;
+  
+  // Removido log de debug para reduzir ruído
 
   // Carregar módulo de storage se disponível
   if (typeof StorageManager !== 'undefined') {
     window.storageManager = new StorageManager();
+    // StorageManager inicializado silenciosamente
+  } else {
+    // StorageManager não disponível - mantendo silencioso
   }
 
   class BugSpotterContent {
     constructor() {
+      // Inicializando BugSpotterContent silenciosamente
       this.consoleLogs = [];
       this.maxLogs = 500; // Aumentar para 500 logs
       this.saveInterval = null;
       this.errorHandler = null;
       this.rejectionHandler = null;
       this.beforeUnloadHandler = null;
+      this.logsRecovered = false; // Flag para evitar recuperação múltipla
+      this.lastSaveTime = 0; // Controle de salvamento
       this.init();
     }
 
@@ -26,9 +34,9 @@ if (typeof window.bugSpotterContentInitialized === 'undefined') {
     }
 
     interceptConsoleLogs() {
-      // Interceptar métodos do console
+      // Interceptar apenas console.warn e console.error (não console.log)
       const originalMethods = {};
-      const consoleMethods = ['log', 'error', 'warn', 'info', 'debug'];
+      const consoleMethods = ['error', 'warn'];
       
       consoleMethods.forEach(method => {
         originalMethods[method] = console[method];
@@ -50,8 +58,160 @@ if (typeof window.bugSpotterContentInitialized === 'undefined') {
     }
 
     injectPageScript() {
-      // Injetar script na página se necessário
-      // Por enquanto, apenas definir window.bugSpotterLogs
+      // Interceptar fetch API - apenas erros HTTP (400+) e suas respostas
+      const originalFetch = window.fetch;
+      window.fetch = async (...args) => {
+        try {
+          const response = await originalFetch.apply(window, args);
+          const url = args[0];
+          
+          // Extrair método HTTP dos argumentos do fetch
+          let method = 'GET'; // Padrão
+          if (args[1] && args[1].method) {
+            method = args[1].method.toUpperCase();
+          }
+          
+          // Log apenas erros HTTP (status 400+) e não requisições internas da extensão
+          if (!url.includes('chrome-extension://') && response.status >= 400) {
+            // Capturar corpo da resposta para erros HTTP
+            let responseBody = null;
+            let responseText = null;
+            try {
+              // Clonar a resposta para poder ler o corpo sem afetar o uso original
+              const responseClone = response.clone();
+              responseText = await responseClone.text();
+              
+              // Tentar parsear como JSON se possível
+              try {
+                responseBody = JSON.parse(responseText);
+              } catch (e) {
+                // Se não for JSON válido, manter como texto
+                responseBody = responseText;
+              }
+            } catch (e) {
+              console.warn('Não foi possível capturar corpo da resposta:', e);
+            }
+            
+            const errorMessage = responseBody 
+              ? `[HTTP ERROR] ${response.status} ${response.statusText} - ${method} ${url} | Response: ${JSON.stringify(responseBody)}`
+              : `[HTTP ERROR] ${response.status} ${response.statusText} - ${method} ${url}`;
+            
+            this.addLog('error', [errorMessage]);
+            
+            // Enviar para background script
+            chrome.runtime.sendMessage({
+              type: 'HTTP_ERROR',
+              data: {
+                status: response.status,
+                statusText: response.statusText,
+                url: url,
+                method: method,
+                timestamp: new Date().toISOString(),
+                userAgent: navigator.userAgent,
+                referrer: document.referrer,
+                responseBody: responseBody,
+                responseText: responseText
+              }
+            });
+          }
+          return response;
+        } catch (error) {
+          const url = args[0];
+          let method = 'GET'; // Padrão
+          if (args[1] && args[1].method) {
+            method = args[1].method.toUpperCase();
+          }
+          
+          this.addLog('error', [`[NETWORK ERROR] - ${method} ${url}: ${error.message}`]);
+          chrome.runtime.sendMessage({
+            type: 'NETWORK_ERROR',
+            data: {
+              error: error.message,
+              url: url,
+              method: method,
+              timestamp: new Date().toISOString(),
+              userAgent: navigator.userAgent,
+              referrer: document.referrer
+            }
+          });
+          throw error;
+        }
+      };
+
+      // Interceptar XMLHttpRequest
+      const originalXHROpen = XMLHttpRequest.prototype.open;
+      const originalXHRSend = XMLHttpRequest.prototype.send;
+      
+      XMLHttpRequest.prototype.open = function(method, url, ...args) {
+        this._bugSpotterUrl = url;
+        this._bugSpotterMethod = method;
+        return originalXHROpen.apply(this, [method, url, ...args]);
+      };
+      
+      XMLHttpRequest.prototype.send = function(...args) {
+        this.addEventListener('loadend', () => {
+          // Log apenas erros HTTP (status 400+) e não requisições internas da extensão
+          if (!this._bugSpotterUrl.includes('chrome-extension://') && this.status >= 400) {
+            // Capturar corpo da resposta para erros HTTP
+            let responseBody = null;
+            let responseText = this.responseText;
+            
+            try {
+              // Tentar parsear como JSON se possível
+              if (responseText) {
+                try {
+                  responseBody = JSON.parse(responseText);
+                } catch (e) {
+                  // Se não for JSON válido, manter como texto
+                  responseBody = responseText;
+                }
+              }
+            } catch (e) {
+              console.warn('Não foi possível capturar corpo da resposta XMLHttpRequest:', e);
+            }
+            
+            const errorMessage = responseBody 
+              ? `[HTTP ERROR] ${this.status} ${this.statusText} - ${this._bugSpotterMethod} ${this._bugSpotterUrl} | Response: ${JSON.stringify(responseBody)}`
+              : `[HTTP ERROR] ${this.status} ${this.statusText} - ${this._bugSpotterMethod} ${this._bugSpotterUrl}`;
+            
+            window.bugSpotterContent.addLog('error', [errorMessage]);
+            
+            chrome.runtime.sendMessage({
+              type: 'HTTP_ERROR',
+              data: {
+                status: this.status,
+                statusText: this.statusText,
+                method: this._bugSpotterMethod,
+                url: this._bugSpotterUrl,
+                timestamp: new Date().toISOString(),
+                userAgent: navigator.userAgent,
+                referrer: document.referrer,
+                responseBody: responseBody,
+                responseText: responseText
+              }
+            });
+          }
+        });
+        
+        this.addEventListener('error', () => {
+          window.bugSpotterContent.addLog('error', [`[NETWORK ERROR] - ${this._bugSpotterMethod} ${this._bugSpotterUrl}`]);
+          chrome.runtime.sendMessage({
+            type: 'NETWORK_ERROR',
+            data: {
+              error: 'Network request failed',
+              method: this._bugSpotterMethod,
+              url: this._bugSpotterUrl,
+              timestamp: new Date().toISOString(),
+              userAgent: navigator.userAgent,
+              referrer: document.referrer
+            }
+          });
+        });
+        
+        return originalXHRSend.apply(this, args);
+      };
+
+      // Definir window.bugSpotterLogs para compatibilidade
       window.bugSpotterLogs = this.consoleLogs;
     }
   
@@ -69,6 +229,8 @@ if (typeof window.bugSpotterContentInitialized === 'undefined') {
       // Interceptar promises rejeitadas com referência armazenada
       this.rejectionHandler = (event) => {
         this.addLog('error', [`Unhandled Promise Rejection: ${event.reason}`]);
+        // Prevenir que o erro apareça no console
+        event.preventDefault();
       };
       window.addEventListener('unhandledrejection', this.rejectionHandler);
       
@@ -122,8 +284,13 @@ if (typeof window.bugSpotterContentInitialized === 'undefined') {
       this.saveLogsToStorage();
     }
     
-    // 🆕 NOVA: Capturar logs que já existem
+    // 🆕 NOVA: Capturar logs que já existem (apenas uma vez por sessão)
     async captureExistingLogs() {
+      // Evitar recuperação múltipla na mesma sessão
+      if (this.logsRecovered) {
+        return;
+      }
+      
       try {
         // Tentar recuperar logs salvos anteriormente
         let savedLogsData;
@@ -134,36 +301,87 @@ if (typeof window.bugSpotterContentInitialized === 'undefined') {
           const savedLogs = localStorage.getItem('bugSpotter_logs');
           savedLogsData = savedLogs ? JSON.parse(savedLogs) : null;
         }
-        if (savedLogsData && savedLogsData.logs && Array.isArray(savedLogsData.logs)) {
-          this.consoleLogs = [...savedLogsData.logs];
-          console.log(`Recuperados ${savedLogsData.logs.length} logs salvos`);
+        
+        // Verificar se os dados recuperados são válidos
+        if (savedLogsData && typeof savedLogsData === 'object') {
+          if (savedLogsData.logs && Array.isArray(savedLogsData.logs)) {
+            // Filtrar logs antigos (mais de 1 hora)
+            const oneHourAgo = Date.now() - (60 * 60 * 1000);
+            const recentLogs = savedLogsData.logs.filter(log => {
+              const logTime = new Date(log.timestamp).getTime();
+              return logTime > oneHourAgo;
+            });
+            
+            if (recentLogs.length > 0) {
+              this.consoleLogs = [...recentLogs];
+              // Logs recuperados silenciosamente
+            } else {
+              // Iniciando com logs vazios
+            }
+          } else {
+            // Dados inválidos detectados, limpando storage
+            await this.clearCorruptedData();
+          }
+        } else if (savedLogsData && typeof savedLogsData === 'string') {
+          // Dados podem estar corrompidos, tentar limpar
+          // Dados corrompidos detectados, limpando storage
+          await this.clearCorruptedData();
         }
+        
+        this.logsRecovered = true;
       } catch (e) {
-        console.warn('[BugSpotter] Erro ao recuperar logs anteriores:', e);
+        // Erro ao recuperar logs anteriores - silenciado
+        // Em caso de erro, limpar dados corrompidos
+        await this.clearCorruptedData();
+        this.logsRecovered = true;
       }
     }
     
-    // 🆕 NOVA: Salvar logs no localStorage
+    // Função para limpar dados corrompidos
+    async clearCorruptedData() {
+      try {
+        if (window.storageManager) {
+          await window.storageManager.remove('bugSpotter_logs', 'local');
+          // Dados corrompidos removidos do storage
+        } else {
+          localStorage.removeItem('bugSpotter_logs');
+          // Dados corrompidos removidos do localStorage
+        }
+      } catch (e) {
+        // Erro ao limpar dados corrompidos - silenciado
+      }
+    }
+    
+    // 🆕 NOVA: Salvar logs no localStorage (com controle de frequência)
     async saveLogsToStorage() {
       try {
+        // Evitar salvamentos muito frequentes (mínimo 5 segundos entre salvamentos)
+        const now = Date.now();
+        if (now - this.lastSaveTime < 5000) {
+          return;
+        }
+        
         const logsToSave = this.consoleLogs.slice(-100); // Salvar apenas os últimos 100
         const logData = {
           logs: logsToSave,
-          timestamp: Date.now()
+          timestamp: now
         };
 
         // Usar StorageManager se disponível, senão usar localStorage
         if (window.storageManager) {
           await window.storageManager.store('bugSpotter_logs', logData, {
-            compress: true,
-            ttl: 24 * 60 * 60 * 1000, // 24 horas
+            compress: false, // Desabilitar compressão para evitar erros
+            ttl: 2 * 60 * 60 * 1000, // 2 horas (reduzido)
             storage: 'local'
           });
         } else {
           localStorage.setItem('bugSpotter_logs', JSON.stringify(logData));
         }
+        
+        this.lastSaveTime = now;
       } catch (error) {
-        console.error('Erro ao salvar logs:', error);
+        // Silenciar erros de salvamento para evitar spam no console
+        // console.error('Erro ao salvar logs:', error);
       }
     }
 
@@ -185,11 +403,14 @@ if (typeof window.bugSpotterContentInitialized === 'undefined') {
         this.consoleLogs.shift();
       }
 
+      // Ordenar logs por timestamp para manter ordem cronológica
+      this.consoleLogs.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+
       // Disponibiliza para o background script
       window.bugSpotterLogs = this.consoleLogs;
       
-      // Salvar periodicamente
-      if (this.consoleLogs.length % 10 === 0) {
+      // Salvar menos frequentemente (a cada 25 logs ou erros importantes)
+      if (level === 'error' || this.consoleLogs.length % 25 === 0) {
         this.saveLogsToStorage();
       }
     }
@@ -197,7 +418,11 @@ if (typeof window.bugSpotterContentInitialized === 'undefined') {
 
   // Inicializar apenas se não existir
   if (typeof window.bugSpotterContent === 'undefined') {
+    // Criando instância global silenciosamente
     window.bugSpotterContent = new BugSpotterContent();
+    window.BugSpotterContent = BugSpotterContent; // Expor classe também
+  } else {
+    // Instância já existe, pulando criação
   }
 
   // Listener para mensagens do background

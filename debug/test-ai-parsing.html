@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Teste AI Parsing - BugSpotter</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .test-button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 10px;
+            font-size: 16px;
+        }
+        .test-button:hover {
+            background: #0056b3;
+        }
+        .result {
+            margin: 20px 0;
+            padding: 15px;
+            border-radius: 5px;
+            border: 1px solid #ddd;
+        }
+        .success {
+            background: #d4edda;
+            border-color: #c3e6cb;
+            color: #155724;
+        }
+        .error {
+            background: #f8d7da;
+            border-color: #f5c6cb;
+            color: #721c24;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🧪 Teste de Parsing AI - BugSpotter</h1>
+        <p>Este teste verifica se a correção do parsing JSON está funcionando corretamente.</p>
+        
+        <div style="text-align: center; margin: 30px 0;">
+            <button class="test-button" onclick="testMarkdownParsing()">Testar Parsing com Markdown</button>
+            <button class="test-button" onclick="testCleanJsonParsing()">Testar Parsing JSON Limpo</button>
+            <button class="test-button" onclick="testInvalidJsonParsing()">Testar JSON Inválido</button>
+        </div>
+        
+        <div id="results"></div>
+    </div>
+
+    <script src="src/modules/AIService.js"></script>
+    <script>
+        // Mock do chrome.storage para teste
+        if (!window.chrome) {
+            window.chrome = {
+                storage: {
+                    sync: {
+                        get: (keys, callback) => {
+                            callback({
+                                aiApiKey: 'test-key',
+                                aiEnabled: true,
+                                aiProvider: 'gemini'
+                            });
+                        }
+                    }
+                }
+            };
+        }
+
+        const aiService = new AIService();
+        
+        function showResult(title, success, message, details = null) {
+            const resultsDiv = document.getElementById('results');
+            const resultDiv = document.createElement('div');
+            resultDiv.className = `result ${success ? 'success' : 'error'}`;
+            
+            let html = `<h3>${title}</h3><p>${message}</p>`;
+            if (details) {
+                html += `<pre style="background: #f8f9fa; padding: 10px; border-radius: 3px; overflow-x: auto;">${JSON.stringify(details, null, 2)}</pre>`;
+            }
+            
+            resultDiv.innerHTML = html;
+            resultsDiv.appendChild(resultDiv);
+        }
+        
+        function testMarkdownParsing() {
+            console.log('🧪 Testando parsing com markdown...');
+            
+            const markdownResponse = `\`\`\`json
+            {
+                "title": "Erro HTTP 500 - Internal Server Error",
+                "description": "Ocorreu um erro interno no servidor durante uma requisição GET",
+                "priority": "high",
+                "category": "Server Error",
+                "statusCode": 500
+            }
+            \`\`\``;
+            
+            try {
+                const result = aiService.parseAIResponse(markdownResponse);
+                showResult('✅ Teste Markdown', true, 'Parsing com markdown funcionou!', result);
+            } catch (error) {
+                showResult('❌ Teste Markdown', false, `Erro no parsing: ${error.message}`);
+            }
+        }
+        
+        function testCleanJsonParsing() {
+            console.log('🧪 Testando parsing JSON limpo...');
+            
+            const cleanJson = `{
+                "title": "Erro HTTP 404 - Not Found",
+                "description": "Recurso não encontrado no servidor",
+                "priority": "medium",
+                "category": "Client Error",
+                "statusCode": 404
+            }`;
+            
+            try {
+                const result = aiService.parseAIResponse(cleanJson);
+                showResult('✅ Teste JSON Limpo', true, 'Parsing JSON limpo funcionou!', result);
+            } catch (error) {
+                showResult('❌ Teste JSON Limpo', false, `Erro no parsing: ${error.message}`);
+            }
+        }
+        
+        function testInvalidJsonParsing() {
+            console.log('🧪 Testando parsing JSON inválido...');
+            
+            const invalidJson = `Aqui está o relatório: \`\`\`json { "title": "Erro", "statusCode": undefined, "description": "Teste" } \`\`\` fim`;
+            
+            try {
+                const result = aiService.parseAIResponse(invalidJson);
+                showResult('✅ Teste JSON Inválido', true, 'Fallback funcionou para JSON inválido!', result);
+            } catch (error) {
+                showResult('❌ Teste JSON Inválido', false, `Erro inesperado: ${error.message}`);
+            }
+        }
+    </script>
+</body>
+</html>

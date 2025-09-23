@@ -26,6 +26,21 @@ class BugSpotterSettings {
         encryptData: true,
         autoDelete: false,
         maxLocalBugs: 100
+      },
+      ai: {
+        enabled: false,
+        provider: 'gemini',
+        apiKey: '',
+        autoNotify: true,
+        minStatus: 400
+      },
+      notifications: {
+        enabled: true,
+        aiReports: true,
+        httpErrors: true,
+        criticalOnly: false,
+        errorThreshold: 400,
+        sound: true
       }
     };
     
@@ -82,6 +97,16 @@ class BugSpotterSettings {
     // Security settings - salvar automaticamente quando houver mudanças
     document.getElementById('securityForm').addEventListener('change', () => this.saveSecuritySettings());
   
+    // AI settings
+    document.getElementById('aiForm').addEventListener('submit', (e) => this.saveAISettings(e));
+    document.getElementById('aiEnabled').addEventListener('change', () => this.toggleAIConfig());
+    document.getElementById('testAiConnection').addEventListener('click', () => this.testAIConnection());
+    document.getElementById('aiProvider').addEventListener('change', () => this.updateAPIKeyHelp());
+    
+    // Notifications settings
+    document.getElementById('notificationsForm').addEventListener('change', () => this.saveNotificationSettings());
+    document.getElementById('notificationsEnabled').addEventListener('change', () => this.toggleNotificationsConfig());
+    
     // Data management
     document.getElementById('exportData').addEventListener('click', () => this.exportData());
     document.getElementById('importData').addEventListener('click', () => this.importData());
@@ -104,17 +129,42 @@ class BugSpotterSettings {
 
   async loadSettings() {
     try {
-      const result = await chrome.storage.local.get(['settings']);
-      console.log('🔍 Carregando configurações do storage:', result.settings?.jira?.priorities);
-      
-      if (result.settings) {
-        // CORREÇÃO: Fazer merge dos padrões primeiro, depois sobrescrever com as configurações salvas
-        this.settings = this.deepMerge(this.defaultSettings, result.settings);
-        console.log('✅ Configurações carregadas:', this.settings.jira.priorities);
+      // Verificar se estamos no contexto da extensão
+      if (typeof chrome !== 'undefined' && chrome.storage) {
+        // Carregar configurações do storage local e sync
+        const [localResult, syncResult] = await Promise.all([
+          chrome.storage.local.get(['settings']),
+          chrome.storage.sync.get(['aiEnabled', 'aiProvider', 'aiApiKey', 'aiAutoNotify', 'aiMinStatus'])
+        ]);
+        
+        // Carregando configurações do storage - silenciado
+        
+        if (localResult.settings) {
+          // CORREÇÃO: Fazer merge dos padrões primeiro, depois sobrescrever com as configurações salvas
+          this.settings = this.deepMerge(this.defaultSettings, localResult.settings);
+          // Configurações carregadas - silenciado
+        } else {
+          this.settings = { ...this.defaultSettings };
+          // Usando configurações padrão - silenciado
+        }
+        
+        // Carregar configurações de AI do sync storage
+        if (syncResult.aiEnabled !== undefined) {
+          this.settings.ai = {
+            ...this.settings.ai,
+            enabled: syncResult.aiEnabled,
+            provider: syncResult.aiProvider || 'gemini',
+            apiKey: syncResult.aiApiKey || '',
+            autoNotify: syncResult.aiAutoNotify || false,
+            minStatus: syncResult.aiMinStatus || 400
+          };
+        }
       } else {
+        // Modo de desenvolvimento - usar configurações padrão
+        // Modo de desenvolvimento - silenciado
         this.settings = { ...this.defaultSettings };
-        console.log('📝 Usando configurações padrão');
       }
+      
     } catch (error) {
       console.error('Erro ao carregar configurações:', error);
       this.settings = { ...this.defaultSettings };
@@ -145,7 +195,27 @@ class BugSpotterSettings {
     document.getElementById('autoDelete').checked = this.settings.security.autoDelete;
     document.getElementById('maxLocalBugs').value = this.settings.security.maxLocalBugs;
 
+    // AI settings
+    document.getElementById('aiEnabled').checked = this.settings.ai.enabled;
+    document.getElementById('aiProvider').value = this.settings.ai.provider;
+    document.getElementById('aiApiKey').value = this.settings.ai.apiKey;
+    document.getElementById('aiAutoNotify').checked = this.settings.ai.autoNotify;
+    document.getElementById('aiMinStatus').value = this.settings.ai.minStatus;
+
+    // Notifications settings
+    document.getElementById('notificationsEnabled').checked = this.settings.notifications.enabled;
+    document.getElementById('aiReportsNotifications').checked = this.settings.notifications.aiReports;
+    document.getElementById('httpErrorsNotifications').checked = this.settings.notifications.httpErrors;
+    document.getElementById('criticalOnlyNotifications').checked = this.settings.notifications.criticalOnly;
+    document.getElementById('errorThreshold').value = this.settings.notifications.errorThreshold;
+    document.getElementById('notificationSound').checked = this.settings.notifications.sound;
+
+    // Update config visibility
     this.toggleJiraConfig();
+    this.toggleAIConfig();
+    this.toggleNotificationsConfig();
+    this.updateAPIKeyHelp();
+    this.updateAIStatus();
   }
 
   toggleJiraConfig() {
@@ -370,7 +440,11 @@ class BugSpotterSettings {
 
   async saveSettings() {
     try {
-      await chrome.storage.local.set({ settings: this.settings });
+      if (typeof chrome !== 'undefined' && chrome.storage) {
+        await chrome.storage.local.set({ settings: this.settings });
+      } else {
+        // Modo de desenvolvimento - silenciado
+      }
     } catch (error) {
       console.error('Erro ao salvar configurações:', error);
       throw error; // Re-throw para ser capturado pelos métodos específicos
@@ -566,7 +640,7 @@ class BugSpotterSettings {
     statusElement.style.opacity = '1';
     
     // Log para debug
-    console.log(`Status: ${message} (${type})`);
+    // Status message - silenciado
     
     setTimeout(() => {
       statusElement.style.opacity = '0';
@@ -682,29 +756,29 @@ class BugSpotterSettings {
   async savePrioritySettings(showMessage = false) {
     try {
       const priorities = {};
-      console.log('🔍 Iniciando salvamento de prioridades...');
+      // Iniciando salvamento de prioridades - silenciado
       
       document.querySelectorAll('.priority-item').forEach(item => {
         const key = item.getAttribute('data-priority');
         const input = item.querySelector('input');
         if (input && input.value.trim()) {
           priorities[key] = input.value.trim();
-          console.log(`✅ Prioridade ${key}: ${input.value.trim()}`);
+          // Prioridade coletada - silenciado
         }
       });
       
-      console.log('📦 Prioridades coletadas:', priorities);
-      console.log('⚙️ Settings antes:', JSON.stringify(this.settings.jira.priorities));
+      // Prioridades coletadas - silenciado
+      // Settings antes - silenciado
       
       this.settings.jira.priorities = priorities;
-      console.log('⚙️ Settings depois:', JSON.stringify(this.settings.jira.priorities));
+      // Settings depois - silenciado
       
       await this.saveSettings();
-      console.log('💾 Configurações salvas no storage');
+      // Configurações salvas no storage - silenciado
       
       // Verificar se foi salvo corretamente
       const verification = await chrome.storage.local.get(['settings']);
-      console.log('🔍 Verificação do storage:', verification.settings?.jira?.priorities);
+      // Verificação do storage - silenciado
       
       // Mostrar mensagem apenas se solicitado
       if (showMessage) {
@@ -771,7 +845,7 @@ class BugSpotterSettings {
       // Atualizar interface
       await this.loadPriorityUI();
       
-      console.log('✅ Prioridades atualizadas do Jira:', jiraPriorities);
+      // Prioridades atualizadas do Jira - silenciado
     } catch (error) {
       console.error('Erro ao atualizar prioridades do Jira:', error);
       this.showStatus(`❌ Error updating priorities: ${error.message}`, 'error');
@@ -850,6 +924,293 @@ class BugSpotterSettings {
     const jiraProjectKey = document.getElementById('jiraProjectKey')?.value?.trim();
     
     return jiraUrl && jiraEmail && jiraApiToken && jiraProjectKey;
+  }
+
+  // ===== AI METHODS =====
+  
+  toggleAIConfig() {
+    const enabled = document.getElementById('aiEnabled').checked;
+    const config = document.getElementById('aiConfig');
+    
+    if (enabled) {
+      config.classList.remove('disabled');
+    } else {
+      config.classList.add('disabled');
+    }
+    
+    this.updateAIStatus();
+  }
+  
+  updateAPIKeyHelp() {
+    const provider = document.getElementById('aiProvider').value;
+    const helpElement = document.getElementById('apiKeyHelp');
+    
+    const helpTexts = {
+      gemini: 'Get your free API key at: <a href="https://makersuite.google.com/app/apikey" target="_blank">Google AI Studio</a>',
+      openai: 'Get your API key at: <a href="https://platform.openai.com/api-keys" target="_blank">OpenAI Platform</a>',
+      claude: 'Get your API key at: <a href="https://console.anthropic.com/" target="_blank">Anthropic Console</a>'
+    };
+    
+    helpElement.innerHTML = helpTexts[provider] || helpTexts.gemini;
+  }
+  
+  updateAIStatus() {
+    const enabled = document.getElementById('aiEnabled').checked;
+    const apiKey = document.getElementById('aiApiKey').value;
+    const statusIcon = document.querySelector('.status-icon');
+    const statusText = document.querySelector('.status-text');
+    
+    // Reset classes
+    statusIcon.classList.remove('connected', 'error', 'warning');
+    
+    if (!enabled) {
+      statusIcon.classList.add('error');
+      statusText.textContent = 'Disabled';
+    } else if (!apiKey) {
+      statusIcon.classList.add('warning');
+      statusText.textContent = 'API Key required';
+    } else {
+      statusIcon.classList.add('connected');
+      statusText.textContent = 'Configured';
+    }
+  }
+  
+  async saveAISettings(event) {
+    event.preventDefault();
+    
+    try {
+      // Collect AI settings
+      const aiSettings = {
+        enabled: document.getElementById('aiEnabled').checked,
+        provider: document.getElementById('aiProvider').value,
+        apiKey: document.getElementById('aiApiKey').value,
+        autoNotify: document.getElementById('aiAutoNotify').checked,
+        minStatus: parseInt(document.getElementById('aiMinStatus').value)
+      };
+      
+      // Update settings object
+      this.settings.ai = { ...this.settings.ai, ...aiSettings };
+      
+      // Save only if we're in extension context
+      if (typeof chrome !== 'undefined' && chrome.storage) {
+        // Save to both storages for consistency
+        await Promise.all([
+          // Save to sync storage (for cross-device sync)
+          new Promise((resolve) => {
+            chrome.storage.sync.set({ 
+              aiEnabled: aiSettings.enabled,
+              aiProvider: aiSettings.provider,
+              aiApiKey: aiSettings.apiKey,
+              aiAutoNotify: aiSettings.autoNotify,
+              aiMinStatus: aiSettings.minStatus
+            }, resolve);
+          }),
+          // Save to local storage (for consistency with other settings)
+          this.saveSettings()
+        ]);
+        
+        // Notify background script about AI settings change
+        if (chrome.runtime && chrome.runtime.sendMessage) {
+          chrome.runtime.sendMessage({
+            type: 'AI_SETTINGS_UPDATED',
+            settings: aiSettings
+          });
+        }
+      } else {
+        // Modo de desenvolvimento - silenciado
+      }
+      
+      // Update UI
+      this.updateAIStatus();
+      
+      this.showStatus('Configurações de AI salvas com sucesso!', 'success');
+      
+    } catch (error) {
+      console.error('Erro ao salvar configurações de AI:', error);
+      this.showStatus('Erro ao salvar configurações de AI: ' + error.message, 'error');
+    }
+  }
+  
+  async testAIConnection() {
+    const button = document.getElementById('testAiConnection');
+    const originalText = button.innerHTML;
+    
+    try {
+      // Update button state
+      button.classList.add('testing');
+      button.innerHTML = '<span class="material-icons">hourglass_empty</span>Testing...';
+      button.disabled = true;
+      
+      // Get current settings
+      const provider = document.getElementById('aiProvider').value;
+      const apiKey = document.getElementById('aiApiKey').value;
+      
+      if (!apiKey) {
+        throw new Error('API Key is required');
+      }
+      
+      // Create temporary AIService instance for testing
+      const testData = {
+        url: 'https://example.com/api/test',
+        method: 'GET',
+        status: 404,
+        statusText: 'Not Found',
+        timestamp: new Date().toISOString(),
+        headers: { 'content-type': 'application/json' },
+        responseBody: 'Test error for AI connection',
+        userAgent: navigator.userAgent
+      };
+      
+      // Test connection by sending a simple request
+      const response = await this.testGeminiConnection(apiKey, testData);
+      
+      this.showStatus('AI connection successful! Generated test report.', 'success');
+      
+      // Update status
+      const statusIcon = document.querySelector('.status-icon');
+      const statusText = document.querySelector('.status-text');
+      statusIcon.classList.remove('error', 'warning');
+      statusIcon.classList.add('connected');
+      statusText.textContent = 'Connected';
+      
+    } catch (error) {
+      console.error('AI connection test failed:', error);
+      this.showStatus('AI connection failed: ' + error.message, 'error');
+      
+      // Update status
+      const statusIcon = document.querySelector('.status-icon');
+      const statusText = document.querySelector('.status-text');
+      statusIcon.classList.remove('connected', 'warning');
+      statusIcon.classList.add('error');
+      statusText.textContent = 'Connection failed';
+      
+    } finally {
+      // Reset button state
+      button.classList.remove('testing');
+      button.innerHTML = originalText;
+      button.disabled = false;
+    }
+  }
+  
+  async testGeminiConnection(apiKey, testData, retryCount = 0) {
+    const maxRetries = 3;
+    const baseDelay = 2000; // 2 seconds
+    
+    const url = `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+    
+    const prompt = `Test connection. Respond with valid JSON: {"status": "ok", "message": "Connection successful"}`;
+    
+    const requestBody = {
+      contents: [{
+        parts: [{ text: prompt }]
+      }],
+      generationConfig: {
+        temperature: 0.1,
+        maxOutputTokens: 100
+      }
+    };
+    
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(requestBody)
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        
+        // For 503 and 429 errors, try to retry
+        if ((response.status === 503 || response.status === 429) && retryCount < maxRetries) {
+          const delay = baseDelay * Math.pow(2, retryCount); // Exponential backoff
+          // Retrying connection - silenciado
+          
+          // Update UI to show retry status
+          this.showStatus(`Service overloaded. Retrying in ${delay/1000} seconds... (${retryCount + 1}/${maxRetries})`, 'warning');
+          
+          await new Promise(resolve => setTimeout(resolve, delay));
+          return this.testGeminiConnection(apiKey, testData, retryCount + 1);
+        }
+        
+        let errorMessage;
+        switch (response.status) {
+          case 400:
+            errorMessage = 'Invalid API request. Please check your API key and try again.';
+            break;
+          case 401:
+            errorMessage = 'Invalid API key. Please check your Google AI API key.';
+            break;
+          case 403:
+            errorMessage = 'API access forbidden. Please verify your API key permissions.';
+            break;
+          case 429:
+            errorMessage = retryCount >= maxRetries ? 
+              'Rate limit exceeded. Please wait longer before trying again.' :
+              'Rate limit exceeded. Please wait a moment and try again.';
+            break;
+          case 503:
+            errorMessage = retryCount >= maxRetries ? 
+              'AI service is overloaded. Please try again later.' :
+              'AI service is temporarily overloaded. Please try again in a few moments.';
+            break;
+          default:
+            errorMessage = errorData.error?.message || `API Error: ${response.status} - ${response.statusText}`;
+        }
+        
+        throw new Error(errorMessage);
+      }
+      
+      const data = await response.json();
+      
+      if (!data.candidates || !data.candidates[0] || !data.candidates[0].content) {
+        throw new Error('Invalid response from AI service');
+      }
+      
+      return data.candidates[0].content.parts[0].text;
+      
+    } catch (error) {
+      // If it's a network error and we haven't exceeded retries, try again
+      if (error.name === 'TypeError' && retryCount < maxRetries) {
+        const delay = baseDelay * Math.pow(2, retryCount);
+        // Network error retrying - silenciado
+        
+        this.showStatus(`Network error. Retrying in ${delay/1000} seconds... (${retryCount + 1}/${maxRetries})`, 'warning');
+        
+        await new Promise(resolve => setTimeout(resolve, delay));
+        return this.testGeminiConnection(apiKey, testData, retryCount + 1);
+      }
+      
+      throw error;
+    }
+  }
+
+  toggleNotificationsConfig() {
+    const enabled = document.getElementById('notificationsEnabled').checked;
+    const configDiv = document.querySelector('.notifications-config');
+    if (configDiv) {
+      configDiv.style.display = enabled ? 'block' : 'none';
+    }
+  }
+
+  async saveNotificationSettings() {
+    try {
+      this.settings.notifications = {
+        enabled: document.getElementById('notificationsEnabled').checked,
+        aiReports: document.getElementById('aiReportsNotifications').checked,
+        httpErrors: document.getElementById('httpErrorsNotifications').checked,
+        criticalOnly: document.getElementById('criticalOnlyNotifications').checked,
+        errorThreshold: parseInt(document.getElementById('errorThreshold').value) || 400,
+        sound: document.getElementById('notificationSound').checked
+      };
+
+      await this.saveSettings();
+      this.showStatus('Configurações de notificação salvas com sucesso!', 'success');
+    } catch (error) {
+      console.error('Erro ao salvar configurações de notificação:', error);
+      this.showStatus('Erro ao salvar configurações de notificação', 'error');
+    }
   }
 }
 

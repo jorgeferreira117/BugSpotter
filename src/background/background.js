@@ -2,6 +2,7 @@
 importScripts('../modules/SecurityManager.js');
 importScripts('../modules/ErrorHandler.js');
 importScripts('../modules/StorageManager.js');
+importScripts('../modules/AIService.js');
 importScripts('../utils/RateLimiter.js');
 importScripts('../utils/PerformanceMonitor.js');
 
@@ -18,10 +19,30 @@ class BugSpotterBackground {
     // Definir limite de logs por aba
     this.maxLogsPerTab = 200; // Reduzido de 1000 para 200
     
+    // 🆕 Sistema de deduplicação de logs
+    this.recentLogs = new Map(); // Armazena logs recentes por tabId
+    this.logDeduplicationWindow = 5000; // 5 segundos para considerar duplicata
+    
+    // 🆕 Sistema de badge para relatórios AI não lidos
+    this.unreadAIReports = 0;
+    this.badgeUpdateTimeout = null;
+    
+    // 🆕 Sistema de deduplicação de erros para IA (específico para pp.daloop.app)
+    this.processedAIErrors = new Map(); // Cache em memória para performance
+    this.aiErrorTTL = 24 * 60 * 60 * 1000; // 24 horas
+    this.processedErrorsStorageKey = 'processedAIErrors'; // Chave para persistência
+    
+    // ✅ Sistema de rastreamento de aba atual
+    this.currentTabId = null;
+    
     // Inicializar módulos de forma compatível com Manifest V3
     this.initializeModules();
     this.cleanupInterval = null;
-    this.init();
+    
+    // 🆕 Inicializar de forma assíncrona para carregar dados do storage
+    this.init().catch(error => {
+      console.error('[Background] Erro na inicialização:', error);
+    });
   }
 
   initializeModules() {
@@ -29,13 +50,34 @@ class BugSpotterBackground {
     this.securityManager = new SecurityManager();
     this.errorHandler = new ErrorHandler();
     this.storageManager = new StorageManager();
+    this.aiService = new AIService();
     this.performanceMonitor = new PerformanceMonitor();
+    
+    // Flag para controlar se AIService está pronto
+    this.aiServiceReady = false;
+    
+    // Inicializar AIService de forma assíncrona
+    this.aiService.initialize()
+      .then(() => {
+        this.aiServiceReady = true;
+      })
+      .catch(error => {
+        console.error('[Background] Erro ao inicializar AIService:', error);
+        this.aiServiceReady = false;
+      });
   }
 
-  init() {
+  async init() {
     this.setupEventListeners();
     this.setupContextMenus();
     this.setupDebuggerListeners();
+    
+    // 🆕 Carregar erros processados do storage
+    await this.loadProcessedErrorsFromStorage();
+    
+    // 🆕 Inicializar badge com estado correto
+    await this.updateBadge();
+    console.log('[Background] Badge inicializado na inicialização');
     
     // Cleanup quando a extensão é descarregada
     chrome.runtime.onSuspend.addListener(() => {
@@ -79,6 +121,14 @@ class BugSpotterBackground {
       this.cleanupTabData(tabId);
     });
     
+    // ✅ Limpar currentTabId quando aba atual é fechada
+    chrome.tabs.onRemoved.addListener((removedTabId) => {
+      if (removedTabId === this.currentTabId) {
+        console.log(`[Background] Aba atual ${removedTabId} foi fechada, limpando ID`);
+        this.currentTabId = null;
+      }
+    });
+    
     // Limpar logs antigos periodicamente com referência armazenada
     this.cleanupInterval = setInterval(() => {
       this.cleanupOldLogs();
@@ -87,14 +137,14 @@ class BugSpotterBackground {
   }
   
   cleanupTabData(tabId) {
-    console.log(`[CLEANUP] Iniciando limpeza de dados para tab ${tabId}`);
+    // Iniciando limpeza de dados - silenciado
     
     // Verificar se há dados para limpar
     const hasDebuggerSession = this.debuggerSessions.has(tabId);
     const hasPersistentLogs = this.persistentLogs.has(tabId);
     
     if (hasDebuggerSession || hasPersistentLogs) {
-      console.log(`[CLEANUP] Tab ${tabId} - Debugger: ${hasDebuggerSession}, Logs: ${hasPersistentLogs}`);
+      // Status da tab - silenciado
     }
     
     // Cleanup completo dos dados da aba
@@ -107,18 +157,18 @@ class BugSpotterBackground {
     try {
       if (chrome.debugger && hasDebuggerSession) {
         chrome.debugger.detach({ tabId });
-        console.log(`[CLEANUP] Debugger desanexado para tab ${tabId}`);
+        // Debugger desanexado - silenciado
       }
     } catch (error) {
       // Tratamento específico para erro de tab inexistente
       if (error.message && error.message.includes('No tab with given id')) {
-        console.log(`[CLEANUP] Tab ${tabId} já foi fechada, debugger já desanexado`);
+        // Tab já foi fechada - silenciado
       } else {
-        console.log(`[CLEANUP] Erro ao desanexar debugger da tab ${tabId}:`, error.message);
+        // Erro ao desanexar debugger - silenciado
       }
     }
     
-    console.log(`[CLEANUP] Limpeza concluída para tab ${tabId}`);
+    // Limpeza concluída - silenciado
   }
 
   // Função auxiliar para verificar se uma aba existe
@@ -141,7 +191,7 @@ class BugSpotterBackground {
       
       // Se o uso estiver alto (>80%), fazer limpeza agressiva
       if (report.usage > 0.8) {
-        console.log('Alto uso de storage detectado, iniciando limpeza agressiva');
+        // Alto uso de storage detectado - silenciado
         
         // Limpar dados antigos mais agressivamente
         const aggressiveCutoff = Date.now() - (3 * 24 * 60 * 60 * 1000); // 3 dias
@@ -158,7 +208,7 @@ class BugSpotterBackground {
       
       // Log do status do storage
       if (report.usage > 0.5) {
-        console.log(`Storage usage: ${(report.usage * 100).toFixed(1)}%`);
+        // Storage usage - silenciado
       }
     } catch (error) {
       this.errorHandler.handleError(error, 'optimizeStorage');
@@ -184,6 +234,10 @@ class BugSpotterBackground {
     // Limpar todos os Maps
     this.debuggerSessions.clear();
     this.persistentLogs.clear();
+    this.recentLogs.clear();
+    
+    // 🆕 Limpar cache de erros processados pela IA
+    this.processedAIErrors.clear();
     
     // Fazer limpeza final do storage
     if (this.storageManager) {
@@ -219,7 +273,7 @@ class BugSpotterBackground {
         const persistentData = this.persistentLogs.get(tabId);
         const logCount = persistentData?.logs?.length || 0;
         this.persistentLogs.delete(tabId);
-        console.log(`[CLEANUP] Removidos logs persistentes de tab fechada ${tabId} (${logCount} logs)`);
+        // Removidos logs persistentes - silenciado
       }
       
       // Limpeza adicional de dados em memória
@@ -259,8 +313,8 @@ class BugSpotterBackground {
       // ✅ NOVO: Log de estatísticas de limpeza
       const activeSessionsCount = this.debuggerSessions.size;
       const persistentLogsCount = this.persistentLogs.size;
-      console.log(`[CLEANUP] Estatísticas - Sessões ativas: ${activeSessionsCount}, Logs persistentes: ${persistentLogsCount}`);
-      console.log('[CLEANUP] Limpeza automática:', cleanupStats);
+      // Estatísticas de limpeza - silenciado
+      // Limpeza automática - silenciado
       
     } catch (error) {
       this.errorHandler.handleError(error, 'cleanupOldLogs');
@@ -275,7 +329,7 @@ class BugSpotterBackground {
       });
 
       chrome.debugger.onDetach.addListener((source, reason) => {
-        console.log(`Debugger detached from tab ${source.tabId}: ${reason}`);
+        // Debugger detached - silenciado
         this.debuggerSessions.delete(source.tabId);
       });
     } else {
@@ -307,7 +361,7 @@ class BugSpotterBackground {
           column: params.message.column
         };
         
-        console.log(`[DEBUG] Console.messageAdded capturado:`, consoleEntry);
+        // Console.messageAdded capturado - silenciado
         
         this.addToBuffer(session.logs, consoleEntry);
         this.addToBuffer(persistentData.logs, consoleEntry);
@@ -338,7 +392,7 @@ class BugSpotterBackground {
           apiEntry.level = 'error';
         }
         
-        console.log(`[DEBUG] Runtime.consoleAPICalled capturado:`, apiEntry);
+        // Runtime.consoleAPICalled capturado - silenciado
         
         this.addToBuffer(session.logs, apiEntry);
         this.addToBuffer(persistentData.logs, apiEntry);
@@ -361,7 +415,7 @@ class BugSpotterBackground {
           columnNumber: params.exceptionDetails.columnNumber
         };
         
-        console.log(`[DEBUG] Runtime.exceptionThrown capturado:`, errorEntry);
+        // Runtime.exceptionThrown capturado - silenciado
         
         this.addToBuffer(session.logs, errorEntry);
         this.addToBuffer(persistentData.logs, errorEntry);
@@ -383,7 +437,7 @@ class BugSpotterBackground {
           text: `[NETWORK] ${params.request.method} ${params.request.url}`
         };
         
-        console.log(`[DEBUG] Network.requestWillBeSent capturado:`, requestEntry);
+        // Network.requestWillBeSent capturado - silenciado
         
         this.addToBuffer(session.networkRequests, requestEntry);
         this.addToBuffer(persistentData.networkRequests, requestEntry);
@@ -405,10 +459,23 @@ class BugSpotterBackground {
           mimeType: params.response.mimeType
         };
         
-        console.log(`[DEBUG] Network.responseReceived capturado:`, responseEntry);
+        // Network.responseReceived capturado - silenciado
         
         // 🆕 NOVO: Capturar corpo da resposta para erros HTTP
         if (params.response.status >= 400) {
+          // 🆕 Verificar se é um log duplicado antes de processar
+          const isDuplicate = this.isHttpLogDuplicate(
+            tabId,
+            params.response.url,
+            params.response.status,
+            responseEntry.timestamp
+          );
+          
+          if (isDuplicate) {
+            // Log duplicado detectado - não processar via debugger
+            break;
+          }
+          
           try {
             // Verificar se a API debugger está disponível
             if (!chrome.debugger) {
@@ -449,7 +516,7 @@ class BugSpotterBackground {
                 text: `[HTTP ERROR] ${params.response.status} ${params.response.statusText} - ${params.response.url}\nResponse Body: ${errorWithBody.decodedBody}`
               };
               
-              console.log(`[DEBUG] HTTP Error com corpo capturado:`, detailedErrorLog);
+              // HTTP Error com corpo capturado - silenciado
               
               // Adicionar aos logs de erro
               const session = this.debuggerSessions.get(tabId);
@@ -463,23 +530,40 @@ class BugSpotterBackground {
                 this.addToBuffer(persistentData.errors, detailedErrorLog);
               }
               
+              // Enviar notificação de erro HTTP
+              this.sendErrorNotification(detailedErrorLog, tabId).catch(error => {
+                console.error('[Background] Erro ao enviar notificação:', error);
+              });
+
+              // 🆕 Processar erro com AI se configurado
+              this.processErrorWithAI(detailedErrorLog, tabId).catch(error => {
+                console.error('[Background] Erro ao processar com AI:', error);
+              });
+              
             }).catch((error) => {
+              // ✅ Tratar especificamente o erro 'No tab with given id'
+              if (error.message && error.message.includes('No tab with given id')) {
+                console.log(`[Background] Aba ${tabId} não existe mais, pulando Network.getResponseBody para ${params.requestId}`);
+                return; // Sair silenciosamente quando a aba não existe
+              }
               console.warn(`[DEBUG] Não foi possível obter corpo da resposta para ${params.requestId}:`, error);
               
               // Fallback: adicionar erro sem corpo da resposta
+              // Encontrar a requisição original para obter o método HTTP
+              const originalRequest = session?.networkRequests?.find(req => req.requestId === params.requestId) ||
+                                    persistentData?.networkRequests?.find(req => req.requestId === params.requestId);
+              
               const basicError = {
                 type: 'http-error',
                 level: 'error',
-                text: `[HTTP ERROR] ${params.response.status} ${params.response.statusText} - ${params.response.url}`,
+                text: `[HTTP ERROR] ${originalRequest?.method || 'UNKNOWN'} ${params.response.status} ${params.response.statusText} - ${params.response.url}`,
                 timestamp: responseEntry.timestamp,
                 url: params.response.url,
+                method: originalRequest?.method || 'GET', // Incluir método HTTP
                 status: params.response.status,
                 statusText: params.response.statusText,
                 note: 'Response body could not be retrieved'
               };
-              
-              const session = this.debuggerSessions.get(tabId);
-              const persistentData = this.getPersistentLogs(tabId);
               
               if (session) {
                 this.addToBuffer(session.logs, basicError);
@@ -488,6 +572,16 @@ class BugSpotterBackground {
                 this.addToBuffer(persistentData.logs, basicError);
                 this.addToBuffer(persistentData.errors, basicError);
               }
+              
+              // Enviar notificação de erro HTTP
+              this.sendErrorNotification(basicError, tabId).catch(error => {
+                console.error('[Background] Erro ao enviar notificação:', error);
+              });
+
+              // 🆕 Processar erro com AI se configurado
+              this.processErrorWithAI(basicError, tabId).catch(error => {
+                console.error('[Background] Erro ao processar com AI:', error);
+              });
             });
           } catch (error) {
             console.error(`[DEBUG] Erro ao tentar obter corpo da resposta:`, error);
@@ -557,7 +651,7 @@ class BugSpotterBackground {
           canceled: params.canceled
         };
         
-        console.log(`[DEBUG] Network.loadingFailed capturado:`, failedEntry);
+        // Network.loadingFailed capturado - silenciado
         
         this.addToBuffer(session.networkRequests, failedEntry);
         this.addToBuffer(persistentData.networkRequests, failedEntry);
@@ -582,7 +676,7 @@ class BugSpotterBackground {
           encodedDataLength: params.encodedDataLength
         };
         
-        console.log(`[DEBUG] Network.loadingFinished capturado:`, finishedEntry);
+        // Network.loadingFinished capturado - silenciado
         
         // Atualizar a requisição correspondente com informações de conclusão
         const finishedRequestIndex = session.networkRequests.findIndex(req => req.requestId === params.requestId);
@@ -597,7 +691,7 @@ class BugSpotterBackground {
         break;
   
       default:
-        console.log(`[DEBUG] Evento debugger não tratado: ${method}`, params);
+        // Evento debugger não tratado - silenciado
         break;
     }
   }
@@ -634,17 +728,17 @@ class BugSpotterBackground {
       // Verificar se a aba ainda existe
       const tabStillExists = await this.tabExists(tabId);
       if (!tabStillExists) {
-        console.log(`Aba ${tabId} não existe mais, não é possível anexar debugger`);
+        // Aba não existe mais - silenciado
         return { success: false, message: 'Tab no longer exists' };
       }
 
       // Verificar se já está anexado
       if (this.debuggerSessions.has(tabId)) {
-        console.log(`Debugger já anexado para tab ${tabId}`);
+        // Debugger já anexado - silenciado
         return { success: true, message: 'Debugger already attached' };
       }
   
-      console.log(`Tentando anexar debugger para tab ${tabId}`);
+      // Tentando anexar debugger - silenciado
       
       try {
         await chrome.debugger.attach({tabId}, "1.3");
@@ -659,7 +753,7 @@ class BugSpotterBackground {
       } catch (debuggerError) {
         // Tratamento específico para erro de tab inexistente durante operações do debugger
         if (debuggerError.message && debuggerError.message.includes('No tab with given id')) {
-          console.log(`Aviso: Tab ${tabId} foi fechada durante anexação do debugger`);
+          // Tab foi fechada durante anexação - silenciado
           return { success: false, message: 'Tab was closed during debugger attachment' };
         }
         throw debuggerError;
@@ -684,17 +778,17 @@ class BugSpotterBackground {
               url: log.url,
               source: 'content-script'
             }));
-            console.log(`[DEBUG] Logs existentes capturados do content script: ${existingLogs.length}`);
+            // Logs existentes capturados - silenciado
           }
         } else {
-          console.log('Aviso: Aba não existe mais, pulando captura de logs do content script');
+          // Aba não existe mais - silenciado
         }
       } catch (e) {
         // Tratamento específico para erro de tab inexistente
         if (e.message && e.message.includes('No tab with given id')) {
-          console.log(`Aviso: Tab ${tabId} foi fechada durante a operação, pulando captura de logs do content script`);
+          // Tab foi fechada durante operação - silenciado
         } else {
-          console.log('Aviso: Não foi possível obter logs do content script:', e.message);
+          // Não foi possível obter logs do content script - silenciado
         }
       }
       
@@ -731,16 +825,16 @@ class BugSpotterBackground {
               source: 'browser-console'
             }));
             existingLogs = [...existingLogs, ...formattedBrowserLogs];
-            console.log(`[DEBUG] Logs adicionais do browser: ${formattedBrowserLogs.length}`);
+            // Logs adicionais do browser - silenciado
           }
         }
         }
       } catch (e) {
         // Tratamento específico para erro de tab inexistente
         if (e.message && e.message.includes('No tab with given id')) {
-          console.log(`Aviso: Tab ${tabId} foi fechada durante avaliação do Runtime, pulando captura de logs do browser`);
+          // Tab foi fechada durante avaliação - silenciado
         } else {
-          console.log('Aviso: Não foi possível obter logs do browser console:', e.message);
+          // Não foi possível obter logs do browser console - silenciado
         }
       }
       
@@ -774,7 +868,7 @@ class BugSpotterBackground {
         persistent.errors.unshift(...existingLogs.filter(log => log.level === 'error'));
       }
   
-      console.log(`✅ Debugger anexado com sucesso para tab ${tabId}. Logs existentes: ${existingLogs.length}`);
+      // Debugger anexado com sucesso - silenciado
       return { success: true, message: 'Debugger attached successfully', existingLogs: existingLogs.length };
       
     }, 'Anexar debugger');
@@ -791,12 +885,12 @@ class BugSpotterBackground {
       if (this.debuggerSessions.has(tabId)) {
         await chrome.debugger.detach({tabId});
         this.debuggerSessions.delete(tabId);
-        console.log(`Debugger detached from tab ${tabId}`);
+        // Debugger detached - silenciado
       }
     } catch (error) {
       // Tratamento específico para erro de tab inexistente
       if (error.message && error.message.includes('No tab with given id')) {
-        console.log(`Aviso: Tab ${tabId} já foi fechada, removendo sessão do debugger`);
+        // Tab já foi fechada - silenciado
         this.debuggerSessions.delete(tabId);
       } else {
         this.errorHandler.handleError(error, 'Desanexar debugger');
@@ -850,6 +944,81 @@ class BugSpotterBackground {
 
   async handleMessage(message, sender, sendResponse) {
     try {
+      // Processar mensagens de erro HTTP do content script
+      if (message.type === 'HTTP_ERROR' || message.type === 'NETWORK_ERROR') {
+        const tabId = sender.tab?.id;
+        if (tabId) {
+          // 🆕 Verificar se é um log duplicado antes de processar
+          if (message.type === 'HTTP_ERROR') {
+            const isDuplicate = this.isHttpLogDuplicate(
+              tabId, 
+              message.data.url, 
+              message.data.status, 
+              message.data.timestamp
+            );
+            
+            if (isDuplicate) {
+              // Log duplicado detectado - ignorar
+              return;
+            }
+          }
+          
+          // Adicionar erro aos logs persistentes
+          let errorMessage;
+          if (message.type === 'HTTP_ERROR') {
+            // Incluir corpo da resposta se disponível
+            if (message.data.responseBody) {
+              const responseInfo = typeof message.data.responseBody === 'object' 
+                ? JSON.stringify(message.data.responseBody)
+                : message.data.responseBody;
+              errorMessage = `HTTP ${message.data.status} ${message.data.statusText} - ${message.data.url} | Response: ${responseInfo}`;
+            } else {
+              errorMessage = `HTTP ${message.data.status} ${message.data.statusText} - ${message.data.url}`;
+            }
+          } else {
+            errorMessage = `Network Error: ${message.data.error} - ${message.data.url}`;
+          }
+          
+          const errorLog = {
+            level: 'error',
+            message: errorMessage,
+            timestamp: message.data.timestamp,
+            source: 'network',
+            url: message.data.url,
+            status: message.data.status,
+            method: message.data.method,
+            responseBody: message.data.responseBody,
+            responseText: message.data.responseText
+          };
+          
+          // Adicionar aos logs persistentes
+          if (!this.persistentLogs.has(tabId)) {
+            this.persistentLogs.set(tabId, []);
+          }
+          this.addToBuffer(this.persistentLogs.get(tabId), errorLog);
+          
+          // Processar com AI se habilitado
+          try {
+            await this.processErrorWithAI(errorLog, tabId);
+          } catch (aiError) {
+            // AI processing failed - silenciado
+          }
+          
+          // Enviar notificação se habilitado
+          try {
+            await this.sendErrorNotification(errorLog, tabId);
+          } catch (notifError) {
+            // Notification failed - silenciado
+          }
+        }
+        return;
+      }
+      
+      // Atualizar aba atual se não for um ping
+      if (message.action !== 'ping' && sender.tab?.id) {
+        this.setCurrentTab(sender.tab.id);
+      }
+      
       switch (message.action) {
         case 'CAPTURE_SCREENSHOT':
           try {
@@ -865,7 +1034,7 @@ class BugSpotterBackground {
             const screenshot = await this.captureScreenshot(tabId);
             sendResponse({ success: true, data: screenshot });
           } catch (error) {
-            console.log(`[INFO] Screenshot failed: ${error.message}`);
+            // Screenshot failed - silenciado
             sendResponse({ success: false, error: error.message });
           }
           break;
@@ -884,7 +1053,7 @@ class BugSpotterBackground {
             const logs = await this.getConsoleLogs(tabId);
             sendResponse({ success: true, data: logs });
           } catch (error) {
-            console.log(`[INFO] Get console logs failed: ${error.message}`);
+            // Get console logs failed - silenciado
             sendResponse({ success: false, error: error.message });
           }
           break;
@@ -903,7 +1072,7 @@ class BugSpotterBackground {
             await this.attachDebugger(tabId);
             sendResponse({ success: true });
           } catch (error) {
-            console.log(`[INFO] Attach debugger failed: ${error.message}`);
+            // Attach debugger failed - silenciado
             sendResponse({ success: false, error: error.message });
           }
           break;
@@ -917,7 +1086,7 @@ class BugSpotterBackground {
             // ✅ VALIDAR se a tab ainda existe (opcional para detach)
             const tabExists = await this.tabExists(tabId);
             if (!tabExists) {
-              console.log(`[INFO] Tab ${tabId} no longer exists, cleaning up debugger session`);
+              // Tab no longer exists - silenciado
               this.debuggerSessions.delete(tabId);
               sendResponse({ success: true, message: 'Tab closed, session cleaned up' });
               break;
@@ -925,7 +1094,7 @@ class BugSpotterBackground {
             await this.detachDebugger(tabId);
             sendResponse({ success: true });
           } catch (error) {
-            console.log(`[INFO] Detach debugger failed: ${error.message}`);
+            // Detach debugger failed - silenciado
             sendResponse({ success: false, error: error.message });
           }
           break;
@@ -940,7 +1109,7 @@ class BugSpotterBackground {
             // ✅ VALIDAR se a tab ainda existe (opcional para logs)
             const tabExists = await this.tabExists(tabId);
             if (!tabExists) {
-              console.log(`[INFO] Tab ${tabId} no longer exists, returning persistent logs only`);
+              // Tab no longer exists, returning persistent logs - silenciado
               // Retornar apenas logs persistentes se a tab não existir mais
               const persistentLogs = this.getPersistentLogs(tabId);
               const domainFilter = message.domainFilter || null;
@@ -981,7 +1150,7 @@ class BugSpotterBackground {
             
             sendResponse({ success: true, data: combinedLogs });
           } catch (error) {
-            console.log(`[INFO] Get debugger logs failed: ${error.message}`);
+            // Get debugger logs failed - silenciado
             sendResponse({ success: false, error: error.message });
           }
           break;
@@ -1037,7 +1206,31 @@ class BugSpotterBackground {
           }
           break;
 
+        case 'POPUP_OPENED':
+          try {
+            console.log('[Background] Recebida mensagem POPUP_OPENED - iniciando limpeza do badge');
+            // 🆕 Marcar relatórios AI como lidos quando popup é aberto
+            await this.markAIReportsAsRead();
+            console.log('[Background] Limpeza do badge concluída com sucesso');
+            sendResponse({ success: true });
+          } catch (error) {
+            console.error('[Background] Erro na limpeza do badge:', error);
+            sendResponse({ success: false, error: error.message });
+          }
+          break;
 
+        case 'UPDATE_BADGE':
+          try {
+            console.log('[Background] Recebida mensagem UPDATE_BADGE - atualizando badge');
+            await this.updateBadge();
+            const count = await this.getUnreadAIReportsCount();
+            console.log(`[Background] Badge atualizado com contador: ${count}`);
+            sendResponse({ success: true, count: count });
+          } catch (error) {
+            console.error('[Background] Erro ao atualizar badge:', error);
+            sendResponse({ success: false, error: error.message });
+          }
+          break;
 
         default:
           sendResponse({ success: false, error: 'Unknown message type' });
@@ -1072,7 +1265,7 @@ class BugSpotterBackground {
     } catch (error) {
       // Tratamento específico para erro de tab inexistente
       if (error.message && error.message.includes('No tab with given id')) {
-        console.log(`Aviso: Tab ${tabId} foi fechada durante captura de screenshot, retornando null`);
+        // Tab foi fechada durante captura de screenshot - silenciado
         this.performanceMonitor.endOperation(operationId, true);
         return null;
       }
@@ -1093,7 +1286,7 @@ class BugSpotterBackground {
       // Verificar se a aba ainda existe antes de executar script
       const tabStillExists = await this.tabExists(tabId);
       if (!tabStillExists) {
-        console.log(`Aviso: Tab ${tabId} não existe mais, retornando array vazio`);
+        // Tab não existe mais - silenciado
         this.performanceMonitor.endOperation(operationId, true);
         return [];
       }
@@ -1114,7 +1307,7 @@ class BugSpotterBackground {
     } catch (error) {
       // Tratamento específico para erro de tab inexistente
       if (error.message && error.message.includes('No tab with given id')) {
-        console.log(`Aviso: Tab ${tabId} foi fechada durante execução do script, retornando array vazio`);
+        // Tab foi fechada durante execução do script - silenciado
         this.performanceMonitor.endOperation(operationId, true);
         return [];
       }
@@ -1141,7 +1334,7 @@ class BugSpotterBackground {
       // Notifica o usuário
       chrome.notifications.create({
         type: 'basic',
-        iconUrl: 'icons/icon48.png',
+        iconUrl: chrome.runtime.getURL('icon48.png'),
         title: 'BugSpotter',
         message: 'Bug salvo com sucesso!'
       });
@@ -1233,7 +1426,7 @@ class BugSpotterBackground {
   
   // Novo método para anexar arquivos
   async attachFilesToJiraIssue(issueKey, attachments, settings) {
-    console.log(`Iniciando envio de ${attachments.length} anexo(s) para issue ${issueKey}`);
+    // Iniciando envio de anexos - silenciado
     
     const failedAttachments = [];
     const successfulAttachments = [];
@@ -1252,7 +1445,7 @@ class BugSpotterBackground {
         // Verificar se é base64 (screenshot) ou texto puro (DOM/console)
         if (attachment.data.startsWith('data:')) {
           // É base64 (screenshot)
-          console.log('Processando anexo base64 (screenshot)');
+          // Processando anexo base64 - silenciado
           try {
             const base64Data = attachment.data.split(',')[1];
             const byteCharacters = atob(base64Data);
@@ -1271,17 +1464,17 @@ class BugSpotterBackground {
           }
         } else {
           // É texto puro (DOM/console)
-          console.log('Processando anexo de texto (DOM/console)');
+          // Processando anexo de texto - silenciado
           blob = new Blob([attachment.data], { type: this.getMimeType(attachment.type) });
         }
         
-        console.log(`Blob criado: ${blob.size} bytes, tipo: ${blob.type}`);
+        // Blob criado - silenciado
         
         // Criar FormData para multipart/form-data
         const formData = new FormData();
         formData.append('file', blob, attachment.name);
         
-        console.log(`Enviando anexo para: ${settings.jira.baseUrl}/rest/api/2/issue/${issueKey}/attachments`);
+        // Enviando anexo - silenciado
         
         // Enviar anexo para Jira
         const attachResponse = await fetch(`${settings.jira.baseUrl}/rest/api/2/issue/${issueKey}/attachments`, {
@@ -1294,7 +1487,7 @@ class BugSpotterBackground {
           body: formData
         });
         
-        console.log(`Resposta do anexo ${attachment.name}: ${attachResponse.status} ${attachResponse.statusText}`);
+        // Resposta do anexo - silenciado
         
         if (!attachResponse.ok) {
           const errorText = await attachResponse.text();
@@ -1302,7 +1495,7 @@ class BugSpotterBackground {
           failedAttachments.push({ name: attachment.name, error: `${attachResponse.status}: ${attachResponse.statusText}` });
         } else {
           const responseData = await attachResponse.json();
-          console.log(`Anexo ${attachment.name} enviado com sucesso:`, responseData);
+          // Anexo enviado com sucesso - silenciado
           successfulAttachments.push(attachment.name);
         }
       } catch (attachmentError) {
@@ -1311,7 +1504,7 @@ class BugSpotterBackground {
       }
     }
     
-    console.log(`Finalizado envio de anexos. Sucessos: ${successfulAttachments.length}, Falhas: ${failedAttachments.length}`);
+    // Finalizado envio de anexos - silenciado
     
     // Se houver falhas, logar mas não falhar completamente
     if (failedAttachments.length > 0) {
@@ -1485,7 +1678,7 @@ ${bugData.actualBehavior || 'N/A'}
     try {
       // Validar URL
       const url = new URL(config.baseUrl);
-      console.log('Testing Jira connection to:', `${config.baseUrl}/rest/api/3/project/${config.projectKey}`);
+      // Testing Jira connection - silenciado
       
       // Fazer a requisição HTTP
       const auth = btoa(`${config.email}:${config.apiToken}`);
@@ -1498,8 +1691,8 @@ ${bugData.actualBehavior || 'N/A'}
         }
       });
 
-      console.log('Jira response status:', response.status, response.statusText);
-      console.log('Jira response headers:', Object.fromEntries(response.headers.entries()));
+      // Jira response status - silenciado
+      // Jira response headers - silenciado
 
       if (response.ok) {
         // Verificar se a resposta é JSON válido
@@ -1595,20 +1788,58 @@ ${bugData.actualBehavior || 'N/A'}
     }
   }
 
+  // ✅ Função para definir a aba atual
+  setCurrentTab(tabId) {
+    this.currentTabId = tabId;
+    console.log(`[Background] Aba atual definida: ${tabId}`);
+  }
+
+  // ✅ Função segura para manipular a aba atual
+  async doSomethingWithCurrentTab(action = 'generic') {
+    if (!this.currentTabId) {
+      console.warn(`[Background] Nenhuma aba registrada para ação: ${action}`);
+      return null;
+    }
+
+    try {
+      const tab = await chrome.tabs.get(this.currentTabId);
+      // Se chegou aqui, a aba existe
+      console.log(`[Background] Executando '${action}' na aba:`, tab.id);
+      return tab;
+    } catch (err) {
+      // Aba não existe ou erro na API
+      if (err.message && err.message.includes('No tab with given id')) {
+        console.log(`[Background] Aba atual ${this.currentTabId} não existe mais, limpando ID`);
+        this.currentTabId = null;
+      } else {
+        console.error(`[Background] Erro ao acessar aba atual:`, err.message);
+      }
+      return null;
+    }
+  }
+
   onTabActivated(activeInfo) {
-    // Implementar lógica quando aba é ativada
+    // ✅ Atualizar aba atual quando usuário muda de aba
+    this.setCurrentTab(activeInfo.tabId);
   }
 
   onFirstInstall() {
-    console.log('BugSpotter extension installed successfully!');
+    // BugSpotter extension installed successfully - silenciado
     // Configurações iniciais da extensão
     this.setupContextMenus();
   }
 
   onTabCompleted(tabId, tab) {
+    // ✅ Definir como aba atual se for a aba ativa
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      if (tabs.length > 0 && tabs[0].id === tabId) {
+        this.setCurrentTab(tabId);
+      }
+    });
+    
     // Auto-anexar debugger em todas as páginas web
     if (this.shouldAutoAttach(tab.url)) {
-      console.log(`Auto-anexando debugger para: ${tab.url}`);
+      // Auto-anexando debugger - silenciado
       // 🆕 REDUZIR delay para capturar logs mais cedo
       setTimeout(async () => {
         // ✅ VALIDAR se a tab ainda existe antes de anexar debugger
@@ -1616,7 +1847,7 @@ ${bugData.actualBehavior || 'N/A'}
         if (tabStillExists) {
           this.attachDebugger(tabId);
         } else {
-          console.log(`[INFO] Tab ${tabId} foi fechada antes do auto-attach do debugger`);
+          // Tab foi fechada antes do auto-attach - silenciado
         }
       }, 500); // Reduzido de 1000ms para 500ms
     }
@@ -1665,33 +1896,36 @@ ${bugData.actualBehavior || 'N/A'}
   // 🆕 NOVO: Método para capturar logs anteriores sob demanda
   async captureHistoricalLogs(tabId) {
     try {
-      console.log(`[DEBUG] Capturando logs históricos para tab ${tabId}`);
+      // Capturando logs históricos - silenciado
       
-      // Tentar múltiplas fontes de logs
-      const sources = [
-        // Content script
-        this.getLogsFromContentScript(tabId),
-        // localStorage da página
-        this.getLogsFromPageStorage(tabId),
-        // Console do navegador
-        this.getLogsFromBrowserConsole(tabId)
-      ];
-      
-      const results = await Promise.allSettled(sources);
+      // Usar apenas métodos existentes para evitar erros
       const allLogs = [];
       
-      results.forEach((result, index) => {
-        if (result.status === 'fulfilled' && result.value) {
-          allLogs.push(...result.value);
-          console.log(`[DEBUG] Fonte ${index} retornou ${result.value.length} logs`);
+      // Tentar obter logs do console existente
+      try {
+        const consoleLogs = await this.getConsoleLogs(tabId);
+        if (consoleLogs && consoleLogs.length > 0) {
+          allLogs.push(...consoleLogs);
         }
-      });
+      } catch (e) {
+        // Erro ao obter logs do console - silenciado
+      }
+      
+      // Tentar obter logs do debugger se disponível
+      try {
+        const debuggerLogs = this.getDebuggerLogs(tabId);
+        if (debuggerLogs && debuggerLogs.length > 0) {
+          allLogs.push(...debuggerLogs);
+        }
+      } catch (e) {
+        // Erro ao obter logs do debugger - silenciado
+      }
       
       // Remover duplicatas e ordenar por timestamp
       const uniqueLogs = this.deduplicateLogs(allLogs);
       const sortedLogs = uniqueLogs.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
       
-      console.log(`[DEBUG] Total de logs históricos capturados: ${sortedLogs.length}`);
+      // Total de logs históricos capturados - silenciado
       return sortedLogs;
       
     } catch (error) {
@@ -1704,7 +1938,7 @@ ${bugData.actualBehavior || 'N/A'}
   deduplicateLogs(logs) {
     const seen = new Set();
     return logs.filter(log => {
-      const key = `${log.timestamp}-${log.level}-${log.text}`;
+      const key = `${log.timestamp}-${log.text}`;
       if (seen.has(key)) {
         return false;
       }
@@ -1712,7 +1946,658 @@ ${bugData.actualBehavior || 'N/A'}
       return true;
     });
   }
+
+  // 🆕 Verificar se um log HTTP é duplicado
+  isHttpLogDuplicate(tabId, url, status, timestamp) {
+    if (!this.recentLogs.has(tabId)) {
+      this.recentLogs.set(tabId, []);
+    }
+    
+    const tabLogs = this.recentLogs.get(tabId);
+    const currentTime = new Date(timestamp).getTime();
+    
+    // Limpar logs antigos (fora da janela de deduplicação)
+    const validLogs = tabLogs.filter(log => {
+      const logTime = new Date(log.timestamp).getTime();
+      return (currentTime - logTime) <= this.logDeduplicationWindow;
+    });
+    this.recentLogs.set(tabId, validLogs);
+    
+    // Verificar se já existe um log similar
+    const isDuplicate = validLogs.some(log => 
+      log.url === url && 
+      log.status === status &&
+      Math.abs(currentTime - new Date(log.timestamp).getTime()) <= this.logDeduplicationWindow
+    );
+    
+    if (!isDuplicate) {
+      // Adicionar à lista de logs recentes
+      validLogs.push({ url, status, timestamp });
+      this.recentLogs.set(tabId, validLogs);
+    }
+    
+    return isDuplicate;
+  }
+  
+  /**
+   * Processa erro HTTP com AI para gerar relatório automático
+   * @param {Object} errorLog - Log do erro HTTP
+   * @param {number} tabId - ID da aba onde ocorreu o erro
+   */
+  async processErrorWithAI(errorLog, tabId) {
+    try {
+      // 🆕 PRIMEIRA VALIDAÇÃO: Verificar se a aba ainda existe
+      const tabStillExists = await this.tabExists(tabId);
+      if (!tabStillExists) {
+        console.log(`[Background] Aba ${tabId} não existe mais, cancelando processamento AI`);
+        return;
+      }
+      
+      // Verificar se AI está habilitada
+      const settings = await this.getSettings();
+      if (!settings.ai?.enabled) {
+        return;
+      }
+      
+      // 🆕 Filtrar apenas erros do domínio pp.daloop.app
+      if (!errorLog.url || !errorLog.url.includes('pp.daloop.app')) {
+        return;
+      }
+      
+      // Verificar se o status do erro atende ao mínimo configurado
+      const minStatus = settings.ai.minStatus || 400;
+      if (errorLog.status < minStatus) {
+        return;
+      }
+      
+      // 🆕 Verificar se este erro já foi processado pela IA
+      const errorHash = this.generateErrorHash(errorLog);
+      if (this.isErrorAlreadyProcessed(errorHash)) {
+        console.log(`[Background] Erro já processado pela IA, ignorando: ${errorLog.url} (${errorLog.status})`);
+        return; // ❌ NÃO incrementar contador para erros duplicados
+      }
+      
+      // Verificar se AIService está inicializado e pronto
+      if (!this.aiService || !this.aiServiceReady || !this.aiService.isConfigured()) {
+        console.warn('[Background] AIService não está configurado ou não está pronto');
+        return;
+      }
+      
+      // 🆕 Marcar erro como processado ANTES de enviar para IA
+      this.markErrorAsProcessed(errorHash);
+      
+      // 🆕 Incrementar contador APENAS para novos erros (não deduplicated)
+      await this.incrementUnreadAIReports();
+      
+      console.log(`[Background] Processando erro com IA: ${errorLog.url} (${errorLog.status})`);
+      
+      // 🆕 SEGUNDA VALIDAÇÃO: Verificar novamente se a aba ainda existe antes de coletar contexto
+      const tabStillExistsBeforeContext = await this.tabExists(tabId);
+      if (!tabStillExistsBeforeContext) {
+        console.log(`[Background] Aba ${tabId} foi fechada durante processamento, cancelando coleta de contexto`);
+        // Remover da lista de processados para permitir retry se a aba for reaberta
+        this.processedAIErrors.delete(errorHash);
+        return;
+      }
+      
+      // Coletar contexto adicional
+      const context = await this.collectErrorContext(errorLog, tabId);
+      
+      // Gerar relatório com AI
+      const aiReport = await this.aiService.generateBugReport({
+        error: errorLog,
+        context: context,
+        timestamp: new Date().toISOString()
+      });
+      
+      if (aiReport) {
+        // Armazenar relatório gerado pela AI
+        await this.storeAIReport(aiReport, errorLog, tabId);
+        
+        // Enviar notificação se configurado
+        if (settings.ai.autoNotify) {
+          this.sendAINotification(aiReport, errorLog);
+        }
+        
+        // Relatório AI gerado com sucesso - silenciado
+      }
+      
+    } catch (error) {
+      console.error('[Background] Erro ao processar com AI:', error);
+      // 🆕 Se houve erro no processamento, remover da lista de processados para permitir retry
+      const errorHash = this.generateErrorHash(errorLog);
+      this.processedAIErrors.delete(errorHash);
+    }
+  }
+  
+  /**
+   * 🆕 Gera hash único para um erro baseado em características principais
+   * @param {Object} errorLog - Log do erro
+   * @returns {string} Hash único do erro
+   */
+  generateErrorHash(errorLog) {
+    // Criar hash baseado em URL, status, método e parte do corpo da resposta
+    const hashData = {
+      url: errorLog.url,
+      status: errorLog.status,
+      method: errorLog.method || 'GET',
+      // Incluir apenas primeiros 200 caracteres do corpo da resposta para evitar hashes diferentes por timestamps
+      responseSnippet: (errorLog.responseBody || errorLog.responseText || '').toString().substring(0, 200)
+    };
+    
+    // Criar string para hash
+    const hashString = JSON.stringify(hashData);
+    
+    // Gerar hash simples (não precisa ser criptográfico)
+    let hash = 0;
+    for (let i = 0; i < hashString.length; i++) {
+      const char = hashString.charCodeAt(i);
+      hash = ((hash << 5) - hash) + char;
+      hash = hash & hash; // Converter para 32bit integer
+    }
+    
+    return hash.toString();
+  }
+  
+  /**
+   * 🆕 Verifica se um erro já foi processado pela IA
+   * @param {string} errorHash - Hash do erro
+   * @returns {boolean} True se já foi processado
+   */
+  isErrorAlreadyProcessed(errorHash) {
+    const processedTime = this.processedAIErrors.get(errorHash);
+    if (!processedTime) {
+      return false;
+    }
+    
+    // Verificar se ainda está dentro do TTL
+    const now = Date.now();
+    if (now - processedTime > this.aiErrorTTL) {
+      // TTL expirado, remover da lista
+      this.processedAIErrors.delete(errorHash);
+      return false;
+    }
+    
+    return true;
+  }
+  
+  /**
+   * 🆕 Marca um erro como processado pela IA
+   * @param {string} errorHash - Hash do erro
+   */
+  markErrorAsProcessed(errorHash) {
+    const timestamp = Date.now();
+    this.processedAIErrors.set(errorHash, timestamp);
+    console.log(`[AI] Erro marcado como processado: ${errorHash.substring(0, 8)}... (${this.processedAIErrors.size} total)`);
+    
+    // 🆕 Salvar no storage imediatamente
+    this.saveProcessedErrorsToStorage();
+    
+    // Limpar entradas expiradas periodicamente
+    this.cleanupExpiredAIErrors();
+  }
+  
+  /**
+   * 🆕 Remove erros expirados da lista de processados
+   */
+  cleanupExpiredAIErrors() {
+    const now = Date.now();
+    let removedCount = 0;
+    
+    for (const [hash, timestamp] of this.processedAIErrors.entries()) {
+      if (now - timestamp > this.aiErrorTTL) {
+        this.processedAIErrors.delete(hash);
+        removedCount++;
+      }
+    }
+    
+    if (removedCount > 0) {
+      console.log(`[AI] Removidos ${removedCount} hashes de erros expirados`);
+      // 🆕 Salvar no storage após limpeza
+      this.saveProcessedErrorsToStorage();
+    }
+  }
+
+  /**
+   * 🆕 Carregar erros processados do storage na inicialização
+   */
+  async loadProcessedErrorsFromStorage() {
+    try {
+      const result = await chrome.storage.local.get([this.processedErrorsStorageKey]);
+      const storedErrors = result[this.processedErrorsStorageKey] || {};
+      
+      const now = Date.now();
+      let loadedCount = 0;
+      let expiredCount = 0;
+      
+      // Carregar apenas erros não expirados
+      for (const [hash, timestamp] of Object.entries(storedErrors)) {
+        if (now - timestamp <= this.aiErrorTTL) {
+          this.processedAIErrors.set(hash, timestamp);
+          loadedCount++;
+        } else {
+          expiredCount++;
+        }
+      }
+      
+      console.log(`[AI] Carregados ${loadedCount} hashes de erros do storage (${expiredCount} expirados removidos)`);
+      
+      // Se removemos erros expirados, salvar o estado limpo
+      if (expiredCount > 0) {
+        await this.saveProcessedErrorsToStorage();
+      }
+    } catch (error) {
+      console.error('[AI] Erro ao carregar erros processados do storage:', error);
+    }
+  }
+
+  /**
+   * 🆕 Salvar erros processados no storage
+   */
+  async saveProcessedErrorsToStorage() {
+    try {
+      const errorsObject = Object.fromEntries(this.processedAIErrors);
+      await chrome.storage.local.set({
+        [this.processedErrorsStorageKey]: errorsObject
+      });
+      console.log(`[AI] Salvos ${this.processedAIErrors.size} hashes de erros no storage`);
+    } catch (error) {
+      console.error('[AI] Erro ao salvar erros processados no storage:', error);
+    }
+  }
+  
+  /**
+   * Coleta contexto adicional para o erro
+   * @param {Object} errorLog - Log do erro
+   * @param {number} tabId - ID da aba
+   * @returns {Object} Contexto do erro
+   */
+  async collectErrorContext(errorLog, tabId) {
+    try {
+      const context = {
+        url: errorLog.url,
+        method: errorLog.method,
+        status: errorLog.status,
+        statusText: errorLog.statusText,
+        timestamp: errorLog.timestamp,
+        responseBody: errorLog.responseBody || errorLog.decodedBody,
+        responseText: errorLog.responseText,
+        userAgent: navigator.userAgent
+      };
+      
+      // Tentar obter informações da aba
+      try {
+        // 🆕 Usar função tabExists para validação prévia
+        const tabStillExists = await this.tabExists(tabId);
+        if (tabStillExists) {
+          const tab = await chrome.tabs.get(tabId);
+          context.pageUrl = tab.url;
+          context.pageTitle = tab.title;
+        } else {
+          console.log(`[Background] Aba ${tabId} não existe mais durante coleta de contexto`);
+          context.pageUrl = errorLog.url; // Usar URL do erro como fallback
+          context.pageTitle = 'Tab closed';
+        }
+      } catch (e) {
+        console.warn('[Background] Não foi possível obter informações da aba:', e);
+        // Fallback para informações do erro
+        context.pageUrl = errorLog.url;
+        context.pageTitle = 'Unknown';
+      }
+      
+      // Obter logs recentes relacionados
+      const recentLogs = this.getRecentRelatedLogs(errorLog, tabId);
+      if (recentLogs.length > 0) {
+        context.recentLogs = recentLogs;
+      }
+      
+      return context;
+    } catch (error) {
+      console.error('[Background] Erro ao coletar contexto:', error);
+      return {};
+    }
+  }
+  
+  /**
+   * Obtém logs recentes relacionados ao erro
+   * @param {Object} errorLog - Log do erro principal
+   * @param {number} tabId - ID da aba
+   * @returns {Array} Logs relacionados
+   */
+  getRecentRelatedLogs(errorLog, tabId) {
+    try {
+      const persistentData = this.getPersistentLogs(tabId);
+      if (!persistentData || !persistentData.logs) {
+        return [];
+      }
+      
+      const errorTime = new Date(errorLog.timestamp).getTime();
+      const timeWindow = 30000; // 30 segundos antes do erro
+      
+      return persistentData.logs
+        .filter(log => {
+          const logTime = new Date(log.timestamp).getTime();
+          return logTime >= (errorTime - timeWindow) && logTime <= errorTime;
+        })
+        .slice(-10); // Máximo 10 logs
+    } catch (error) {
+      console.error('[Background] Erro ao obter logs relacionados:', error);
+      return [];
+    }
+  }
+  
+  /**
+   * Armazena relatório gerado pela AI
+   * @param {Object} aiReport - Relatório da AI
+   * @param {Object} errorLog - Log do erro original
+   * @param {number} tabId - ID da aba
+   */
+  async storeAIReport(aiReport, errorLog, tabId) {
+    try {
+      const reportData = {
+        id: `ai-report-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        type: 'ai-generated',
+        title: aiReport.title,
+        description: aiReport.description,
+        severity: aiReport.severity,
+        category: aiReport.category,
+        suggestions: aiReport.suggestions,
+        originalError: {
+          url: errorLog.url,
+          status: errorLog.status,
+          statusText: errorLog.statusText,
+          timestamp: errorLog.timestamp
+        },
+        tabId: tabId,
+        createdAt: new Date().toISOString(),
+        source: 'ai-auto-generated'
+      };
+      
+      // Armazenar no storage
+      const key = `ai-reports-${tabId}`;
+      const existingReports = await chrome.storage.local.get(key);
+      const reports = existingReports[key] || [];
+      
+      reports.push(reportData);
+      
+      // Manter apenas os últimos 50 relatórios por aba
+      if (reports.length > 50) {
+        reports.splice(0, reports.length - 50);
+      }
+      
+      await chrome.storage.local.set({ [key]: reports });
+      
+      // Relatório AI armazenado - silenciado
+    } catch (error) {
+      console.error('[Background] Erro ao armazenar relatório AI:', error);
+    }
+  }
+  
+  /**
+   * Envia notificação sobre relatório AI gerado
+   * @param {Object} aiReport - Relatório da AI
+   * @param {Object} errorLog - Log do erro original
+   */
+  async sendAINotification(aiReport, errorLog) {
+    try {
+      // Verificar configurações de notificação
+      const settings = await this.getSettings();
+      const notificationSettings = settings.notifications || {
+        enabled: true,
+        aiReports: true,
+        criticalOnly: false,
+        sound: true
+      };
+
+      if (!notificationSettings.enabled || !notificationSettings.aiReports) {
+        return;
+      }
+
+      // Filtrar por severidade se configurado
+      if (notificationSettings.criticalOnly && aiReport.severity !== 'critical') {
+        return;
+      }
+
+      const notificationId = `ai-report-${Date.now()}`;
+      const severity = (aiReport.severity || 'unknown').toUpperCase();
+      
+      // Definir ícone baseado na severidade
+      const iconUrl = this.getNotificationIcon(aiReport.severity);
+      
+      chrome.notifications.create(notificationId, {
+        type: 'basic',
+        iconUrl: iconUrl,
+        title: `BugSpotter AI - ${severity}`,
+        message: `${aiReport.title}\n${errorLog.status} ${errorLog.statusText}`,
+        contextMessage: `URL: ${new URL(errorLog.url).hostname}`,
+        priority: aiReport.severity === 'critical' ? 2 : 1,
+        requireInteraction: aiReport.severity === 'critical'
+      });
+      
+      // Armazenar notificação para histórico
+      await this.storeNotification({
+        id: notificationId,
+        type: 'ai-report',
+        severity: aiReport.severity,
+        title: aiReport.title,
+        message: `${errorLog.status} ${errorLog.statusText}`,
+        url: errorLog.url,
+        timestamp: Date.now(),
+        aiReportId: aiReport.id
+      });
+      
+      // Auto-remover notificação (exceto críticas)
+      if (aiReport.severity !== 'critical') {
+        setTimeout(() => {
+          chrome.notifications.clear(notificationId);
+        }, 8000);
+      }
+      
+    } catch (error) {
+      console.error('[Background] Erro ao enviar notificação AI:', error);
+    }
+  }
+
+  getNotificationIcon(severity) {
+    // Usar chrome.runtime.getURL para obter o caminho correto do ícone
+    switch (severity) {
+      case 'critical':
+        return chrome.runtime.getURL('icon48.png');
+      case 'high':
+        return chrome.runtime.getURL('icon48.png');
+      case 'medium':
+        return chrome.runtime.getURL('icon48.png');
+      default:
+        return chrome.runtime.getURL('icon48.png');
+    }
+  }
+
+  async storeNotification(notification) {
+    try {
+      const result = await chrome.storage.local.get(['notifications']);
+      const notifications = result.notifications || [];
+      
+      // Adicionar nova notificação
+      notifications.unshift(notification);
+      
+      // Manter apenas as últimas 50 notificações
+      if (notifications.length > 50) {
+        notifications.splice(50);
+      }
+      
+      await chrome.storage.local.set({ notifications });
+    } catch (error) {
+      console.error('[Background] Erro ao armazenar notificação:', error);
+    }
+  }
+
+  async sendErrorNotification(errorLog, tabId) {
+    try {
+      const settings = await this.getSettings();
+      const notificationSettings = settings.notifications || {
+        enabled: true,
+        httpErrors: true,
+        errorThreshold: 400
+      };
+
+      if (!notificationSettings.enabled || !notificationSettings.httpErrors) {
+        return;
+      }
+
+      // Verificar se o erro atende ao threshold
+      if (errorLog.status < notificationSettings.errorThreshold) {
+        return;
+      }
+
+      const notificationId = `error-${Date.now()}`;
+      
+      chrome.notifications.create(notificationId, {
+        type: 'basic',
+        iconUrl: chrome.runtime.getURL('icon48.png'),
+        title: 'BugSpotter - Erro HTTP Detectado',
+        message: `${errorLog.status} ${errorLog.statusText}`,
+        contextMessage: `URL: ${new URL(errorLog.url).hostname}`,
+        priority: errorLog.status >= 500 ? 2 : 1
+      });
+      
+      // Armazenar notificação
+      await this.storeNotification({
+        id: notificationId,
+        type: 'http-error',
+        severity: errorLog.status >= 500 ? 'high' : 'medium',
+        title: `Erro HTTP ${errorLog.status}`,
+        message: errorLog.statusText,
+        url: errorLog.url,
+        timestamp: Date.now(),
+        tabId: tabId
+      });
+      
+      // Auto-remover após 6 segundos
+      setTimeout(() => {
+        chrome.notifications.clear(notificationId);
+      }, 6000);
+      
+    } catch (error) {
+      console.error('[Background] Erro ao enviar notificação de erro:', error);
+    }
+  }
+
+  async getNotificationHistory() {
+    try {
+      const result = await chrome.storage.local.get(['notifications']);
+      return result.notifications || [];
+    } catch (error) {
+      console.error('[Background] Erro ao obter histórico de notificações:', error);
+      return [];
+    }
+  }
+
+  async clearNotificationHistory() {
+    try {
+      await chrome.storage.local.remove(['notifications']);
+    } catch (error) {
+      console.error('[Background] Erro ao limpar histórico de notificações:', error);
+    }
+  }
+
+  // 🆕 Sistema de Badge para Relatórios AI
+  async updateBadge() {
+    try {
+      const count = await this.getUnreadAIReportsCount();
+      const badgeText = count > 0 ? count.toString() : '';
+      
+      await chrome.action.setBadgeText({ text: badgeText });
+      await chrome.action.setBadgeBackgroundColor({ color: '#FF4444' });
+      
+      console.log(`[Background] Badge atualizado: ${badgeText}`);
+    } catch (error) {
+      console.error('[Background] Erro ao atualizar badge:', error);
+    }
+  }
+
+  async getUnreadAIReportsCount() {
+    try {
+      const result = await chrome.storage.local.get(['unreadAIReports']);
+      return result.unreadAIReports || 0;
+    } catch (error) {
+      console.error('[Background] Erro ao obter contador de relatórios não lidos:', error);
+      return 0;
+    }
+  }
+
+  async incrementUnreadAIReports() {
+    try {
+      // Adicionar stack trace para debug
+      const stack = new Error().stack;
+      console.log('[Background] incrementUnreadAIReports chamado de:', stack.split('\n')[2]?.trim());
+      
+      const currentCount = await this.getUnreadAIReportsCount();
+      const newCount = currentCount + 1;
+      
+      await chrome.storage.local.set({ unreadAIReports: newCount });
+      await this.updateBadge();
+      
+      console.log(`[Background] Relatórios AI não lidos: ${currentCount} → ${newCount}`);
+      
+      // Verificar se o incremento foi persistido corretamente
+      const verifyCount = await this.getUnreadAIReportsCount();
+      if (verifyCount !== newCount) {
+        console.warn(`[Background] PROBLEMA: Contador esperado ${newCount}, mas storage tem ${verifyCount}`);
+      }
+    } catch (error) {
+      console.error('[Background] Erro ao incrementar relatórios não lidos:', error);
+    }
+  }
+
+  async clearUnreadAIReports() {
+    try {
+      await chrome.storage.local.set({ unreadAIReports: 0 });
+      await this.updateBadge();
+      
+      console.log('[Background] Badge limpo - relatórios marcados como lidos');
+    } catch (error) {
+      console.error('[Background] Erro ao limpar relatórios não lidos:', error);
+    }
+  }
+
+  async markAIReportsAsRead() {
+    // Limpeza imediata do badge (removido debounce para teste)
+    console.log('[Background] markAIReportsAsRead chamado - limpando imediatamente');
+    try {
+      // Verificar contador atual antes de limpar
+      const currentCount = await this.getUnreadAIReportsCount();
+      console.log(`[Background] Contador atual antes da limpeza: ${currentCount}`);
+      
+      // Verificar badge atual
+      const currentBadge = await chrome.action.getBadgeText({});
+      console.log(`[Background] Badge atual antes da limpeza: '${currentBadge}'`);
+      
+      await this.clearUnreadAIReports();
+      
+      // Verificar se foi realmente limpo
+      const newCount = await this.getUnreadAIReportsCount();
+      const newBadge = await chrome.action.getBadgeText({});
+      console.log(`[Background] Contador após limpeza: ${newCount}`);
+      console.log(`[Background] Badge após limpeza: '${newBadge}'`);
+      
+      if (newCount === 0 && newBadge === '') {
+        console.log('[Background] Badge limpo com sucesso');
+      } else {
+        console.warn(`[Background] Badge não foi limpo corretamente. Contador: ${newCount}, Badge: '${newBadge}'`);
+        // Forçar limpeza adicional
+        await chrome.action.setBadgeText({ text: '' });
+        console.log('[Background] Limpeza forçada do badge executada');
+      }
+    } catch (error) {
+      console.error('[Background] Erro ao limpar badge:', error);
+    }
+  }
 }
 
-// Inicializa o background script
-new BugSpotterBackground();
+// Implementar padrão singleton para evitar múltiplas instâncias
+if (!globalThis.bugSpotterInstance) {
+  console.log('[Background] Criando nova instância do BugSpotter');
+  globalThis.bugSpotterInstance = new BugSpotterBackground();
+} else {
+  console.log('[Background] Instância do BugSpotter já existe, reutilizando');
+}

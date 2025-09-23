@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Teste - Correção de Dados Corrompidos no Storage</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        .result {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+            border-left: 4px solid #007cba;
+            background-color: #f0f8ff;
+        }
+        .error {
+            border-left-color: #dc3545;
+            background-color: #fff5f5;
+            color: #721c24;
+        }
+        .success {
+            border-left-color: #28a745;
+            background-color: #f0fff4;
+            color: #155724;
+        }
+        .warning {
+            border-left-color: #ffc107;
+            background-color: #fffbf0;
+            color: #856404;
+        }
+        button {
+            background-color: #007cba;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover {
+            background-color: #005a87;
+        }
+        .code {
+            background-color: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-radius: 4px;
+            padding: 10px;
+            font-family: 'Courier New', monospace;
+            white-space: pre-wrap;
+            margin: 10px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔧 Teste - Correção de Dados Corrompidos no Storage</h1>
+        <p>Este teste verifica se o StorageManager corrigido pode lidar adequadamente com dados corrompidos como o erro 'mapbox.eventData.uuid'.</p>
+        
+        <div>
+            <button onclick="testCorruptedData()">🧪 Testar Dados Corrompidos</button>
+            <button onclick="testNormalData()">✅ Testar Dados Normais</button>
+            <button onclick="testCleanup()">🧹 Testar Limpeza</button>
+            <button onclick="detectCorruption()">🔍 Detectar Corrupção</button>
+            <button onclick="clearResults()">🗑️ Limpar Resultados</button>
+        </div>
+    </div>
+
+    <div class="container">
+        <h2>📊 Resultados dos Testes</h2>
+        <div id="results"></div>
+    </div>
+
+    <script src="../src/modules/StorageManager.js"></script>
+    <script>
+        let storageManager;
+        let testResults = [];
+
+        // Inicializar StorageManager
+        try {
+            storageManager = new StorageManager();
+            addResult('✅ StorageManager inicializado com sucesso', 'success');
+        } catch (error) {
+            addResult(`❌ Erro ao inicializar StorageManager: ${error.message}`, 'error');
+        }
+
+        function addResult(message, type = 'result') {
+            const resultsDiv = document.getElementById('results');
+            const resultDiv = document.createElement('div');
+            resultDiv.className = `result ${type}`;
+            resultDiv.innerHTML = `<strong>${new Date().toLocaleTimeString()}</strong>: ${message}`;
+            resultsDiv.appendChild(resultDiv);
+            resultsDiv.scrollTop = resultsDiv.scrollHeight;
+            
+            testResults.push({ time: new Date().toISOString(), message, type });
+        }
+
+        function clearResults() {
+            document.getElementById('results').innerHTML = '';
+            testResults = [];
+            addResult('🗑️ Resultados limpos', 'success');
+        }
+
+        // Simular dados corrompidos similares ao erro reportado
+        function createCorruptedData() {
+            return [
+                'd80e4ff1-8', // String incompleta como no erro
+                'mapbox.eventData.uuid', // Chave malformada
+                '{"incomplete": json', // JSON incompleto
+                'undefined', // String 'undefined'
+                '', // String vazia
+                '   ', // Apenas espaços
+                '{"valid": true, "but": undefined}', // JSON com undefined
+                'not-json-at-all-123', // Texto não-JSON
+                '"valid-string"', // String JSON válida
+                'null', // null como string
+                'true', // boolean como string
+                '42', // número como string
+                '3.14' // float como string
+            ];
+        }
+
+        async function testCorruptedData() {
+            addResult('🧪 Iniciando teste de dados corrompidos...', 'warning');
+            
+            const corruptedData = createCorruptedData();
+            let successCount = 0;
+            let errorCount = 0;
+
+            for (let i = 0; i < corruptedData.length; i++) {
+                const testKey = `test-corrupted-${i}`;
+                const corruptedValue = corruptedData[i];
+                
+                try {
+                    // Simular dados corrompidos no localStorage
+                    localStorage.setItem(testKey, corruptedValue);
+                    addResult(`📝 Dados corrompidos inseridos: ${testKey} = "${corruptedValue.substring(0, 50)}${corruptedValue.length > 50 ? '...' : ''}"`);
+                    
+                    // Tentar recuperar usando o StorageManager corrigido
+                    const retrieved = await storageManager.retrieve(testKey, 'local');
+                    
+                    if (retrieved === null) {
+                        addResult(`✅ Dados corrompidos tratados corretamente: ${testKey} retornou null`, 'success');
+                        successCount++;
+                    } else {
+                        addResult(`⚠️ Dados inesperadamente recuperados: ${testKey} = ${JSON.stringify(retrieved)}`, 'warning');
+                    }
+                    
+                } catch (error) {
+                    addResult(`❌ Erro ao processar ${testKey}: ${error.message}`, 'error');
+                    errorCount++;
+                }
+            }
+            
+            addResult(`📊 Teste concluído: ${successCount} sucessos, ${errorCount} erros`, 
+                     errorCount === 0 ? 'success' : 'warning');
+        }
+
+        async function testNormalData() {
+            addResult('✅ Iniciando teste de dados normais...', 'warning');
+            
+            const normalData = [
+                { key: 'test-object', value: { name: 'Test', value: 123, nested: { prop: true } } },
+                { key: 'test-array', value: [1, 2, 3, 'test', { nested: true }] },
+                { key: 'test-string', value: 'Simple string' },
+                { key: 'test-number', value: 42 },
+                { key: 'test-boolean', value: true },
+                { key: 'test-null', value: null }
+            ];
+
+            let successCount = 0;
+            let errorCount = 0;
+
+            for (const testData of normalData) {
+                try {
+                    // Armazenar dados normais
+                    await storageManager.store(testData.key, testData.value, { storage: 'local' });
+                    addResult(`📝 Dados normais armazenados: ${testData.key}`);
+                    
+                    // Recuperar dados
+                    const retrieved = await storageManager.retrieve(testData.key, 'local');
+                    
+                    if (JSON.stringify(retrieved) === JSON.stringify(testData.value)) {
+                        addResult(`✅ Dados normais recuperados corretamente: ${testData.key}`, 'success');
+                        successCount++;
+                    } else {
+                        addResult(`❌ Dados não coincidem: ${testData.key}`, 'error');
+                        errorCount++;
+                    }
+                    
+                } catch (error) {
+                    addResult(`❌ Erro ao processar dados normais ${testData.key}: ${error.message}`, 'error');
+                    errorCount++;
+                }
+            }
+            
+            addResult(`📊 Teste de dados normais concluído: ${successCount} sucessos, ${errorCount} erros`, 
+                     errorCount === 0 ? 'success' : 'warning');
+        }
+
+        async function testCleanup() {
+            addResult('🧹 Iniciando teste de limpeza...', 'warning');
+            
+            try {
+                // Inserir alguns dados corrompidos e normais
+                localStorage.setItem('cleanup-corrupted-1', 'd80e4ff1-8');
+                localStorage.setItem('cleanup-corrupted-2', '{"incomplete": json');
+                await storageManager.store('cleanup-normal-1', { test: 'data' }, { storage: 'local' });
+                await storageManager.store('cleanup-normal-2', { another: 'test' }, { storage: 'local' });
+                
+                addResult('📝 Dados de teste inseridos para limpeza');
+                
+                // Executar limpeza
+                const cleanedCount = await storageManager.cleanupExpiredItems('local');
+                addResult(`🧹 Limpeza executada: ${cleanedCount} itens removidos`, 'success');
+                
+                // Verificar se dados normais ainda existem
+                const normal1 = await storageManager.retrieve('cleanup-normal-1', 'local');
+                const normal2 = await storageManager.retrieve('cleanup-normal-2', 'local');
+                
+                if (normal1 && normal2) {
+                    addResult('✅ Dados normais preservados após limpeza', 'success');
+                } else {
+                    addResult('⚠️ Alguns dados normais foram removidos', 'warning');
+                }
+                
+                // Verificar se dados corrompidos foram removidos
+                const corrupted1 = localStorage.getItem('cleanup-corrupted-1');
+                const corrupted2 = localStorage.getItem('cleanup-corrupted-2');
+                
+                if (!corrupted1 && !corrupted2) {
+                    addResult('✅ Dados corrompidos removidos com sucesso', 'success');
+                } else {
+                    addResult('⚠️ Alguns dados corrompidos ainda existem', 'warning');
+                }
+                
+            } catch (error) {
+                addResult(`❌ Erro durante teste de limpeza: ${error.message}`, 'error');
+            }
+        }
+
+        async function detectCorruption() {
+            addResult('🔍 Iniciando detecção de corrupção...', 'warning');
+            
+            try {
+                const report = await storageManager.detectCorruptedData('localStorage');
+                if (report) {
+                    addResult(`📊 Relatório de Corrupção:`, 'success');
+                    addResult(`   Total de chaves: ${report.totalKeys}`);
+                    addResult(`   Chaves válidas: ${report.validKeys}`);
+                    addResult(`   Chaves corrompidas: ${report.corruptedKeys.length}`);
+                    addResult(`   Erros gerais: ${report.errors.length}`);
+                    
+                    if (report.corruptedKeys.length > 0) {
+                        addResult('🔍 Chaves corrompidas encontradas:', 'warning');
+                        report.corruptedKeys.forEach(item => {
+                            addResult(`   - ${item.key}: ${item.error}`, 'error');
+                            addResult(`     Preview: ${item.preview}...`);
+                        });
+                    }
+                    
+                    if (report.errors.length > 0) {
+                        addResult('⚠️ Erros durante verificação:', 'warning');
+                        report.errors.forEach(item => {
+                            addResult(`   - ${item.key}: ${item.error}`, 'error');
+                        });
+                    }
+                } else {
+                    addResult('❌ Falha ao gerar relatório de corrupção', 'error');
+                }
+            } catch (error) {
+                addResult(`❌ Erro na detecção: ${error.message}`, 'error');
+            }
+        }
+
+        // Executar teste inicial
+        window.addEventListener('load', () => {
+            addResult('🚀 Página carregada. Pronto para testes!');
+        });
+    </script>
+</body>
+</html>

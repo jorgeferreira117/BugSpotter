@@ -16,7 +16,16 @@
   ],
   "host_permissions": [
     "https://*/*",
-    "http://localhost/*"
+    "http://localhost/*",
+    "file:///*/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["https://*/*", "http://*/*", "file:///*/*"],
+      "js": ["src/modules/StorageManager.js", "src/content/content.js"],
+      "run_at": "document_start",
+      "all_frames": true
+    }
   ],
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;"

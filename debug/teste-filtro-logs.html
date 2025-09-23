@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Teste Filtro de Logs - BugSpotter</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+        }
+        .test-section {
+            background: #e3f2fd;
+            padding: 20px;
+            border-radius: 8px;
+            margin: 15px 0;
+            border-left: 4px solid #2196f3;
+        }
+        .test-section h3 {
+            margin-top: 0;
+            color: #1976d2;
+        }
+        .button {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            margin: 5px;
+            display: inline-block;
+        }
+        .button:hover {
+            background: #45a049;
+        }
+        .button.warn {
+            background: #ff9800;
+        }
+        .button.warn:hover {
+            background: #f57c00;
+        }
+        .button.error {
+            background: #f44336;
+        }
+        .button.error:hover {
+            background: #da190b;
+        }
+        .button.info {
+            background: #2196f3;
+        }
+        .button.info:hover {
+            background: #1976d2;
+        }
+        .results {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 5px;
+            background: #f9f9f9;
+            border: 1px solid #ddd;
+            max-height: 400px;
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 12px;
+        }
+        .log-entry {
+            margin: 5px 0;
+            padding: 5px;
+            border-left: 3px solid #ccc;
+        }
+        .log-success { border-left-color: #4caf50; background: #e8f5e8; }
+        .log-warning { border-left-color: #ff9800; background: #fff3e0; }
+        .log-error { border-left-color: #f44336; background: #ffebee; }
+        .log-info { border-left-color: #2196f3; background: #e3f2fd; }
+        .expected {
+            background: #e8f5e8;
+            padding: 10px;
+            border-radius: 4px;
+            margin: 10px 0;
+            border-left: 4px solid #4caf50;
+        }
+        .not-expected {
+            background: #ffebee;
+            padding: 10px;
+            border-radius: 4px;
+            margin: 10px 0;
+            border-left: 4px solid #f44336;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔍 Teste do Filtro de Logs</h1>
+        
+        <div class="test-section">
+            <h3>📋 Objetivo do Teste</h3>
+            <p>Verificar se o BugSpotter agora captura apenas:</p>
+            <div class="expected">
+                <strong>✅ DEVE CAPTURAR:</strong>
+                <ul>
+                    <li>console.warn() - Avisos</li>
+                    <li>console.error() - Erros</li>
+                    <li>Requisições HTTP com status 400+ (com resposta)</li>
+                </ul>
+            </div>
+            <div class="not-expected">
+                <strong>❌ NÃO DEVE CAPTURAR:</strong>
+                <ul>
+                    <li>console.log() - Logs normais</li>
+                    <li>console.info() - Informações</li>
+                    <li>Requisições HTTP com status 200-399</li>
+                </ul>
+            </div>
+        </div>
+
+        <div class="test-section">
+            <h3>🧪 Testes de Console</h3>
+            <p>Clique nos botões para gerar diferentes tipos de logs:</p>
+            <button class="button" onclick="testarConsoleLog()">console.log() - NÃO deve aparecer</button>
+            <button class="button info" onclick="testarConsoleInfo()">console.info() - NÃO deve aparecer</button>
+            <button class="button warn" onclick="testarConsoleWarn()">console.warn() - DEVE aparecer</button>
+            <button class="button error" onclick="testarConsoleError()">console.error() - DEVE aparecer</button>
+        </div>
+
+        <div class="test-section">
+            <h3>🌐 Testes de Requisições HTTP</h3>
+            <p>Clique nos botões para testar diferentes status HTTP:</p>
+            <button class="button" onclick="testarHttp200()">HTTP 200 - NÃO deve aparecer</button>
+            <button class="button error" onclick="testarHttp404()">HTTP 404 - DEVE aparecer</button>
+            <button class="button error" onclick="testarHttp500()">HTTP 500 - DEVE aparecer</button>
+            <button class="button info" onclick="testarHttpTimeout()">Network Error - DEVE aparecer</button>
+        </div>
+
+        <div class="test-section">
+            <h3>📊 Verificação dos Logs</h3>
+            <button class="button" onclick="verificarLogsSalvos()">🔍 Verificar Logs Salvos</button>
+            <button class="button" onclick="limparLogs()">🗑️ Limpar Logs</button>
+            <button class="button" onclick="exportarLogs()">📄 Exportar Logs</button>
+        </div>
+
+        <div id="results" class="results" style="display: none;"></div>
+    </div>
+
+    <script>
+        function addResult(message, type = 'info') {
+            const results = document.getElementById('results');
+            results.style.display = 'block';
+            
+            const entry = document.createElement('div');
+            entry.className = `log-entry log-${type}`;
+            entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            results.appendChild(entry);
+            results.scrollTop = results.scrollHeight;
+        }
+
+        // Testes de Console
+        function testarConsoleLog() {
+            console.log('🔵 Teste console.log - Este log NÃO deve aparecer no BugSpotter');
+            addResult('console.log() executado - NÃO deve aparecer nos logs salvos', 'info');
+        }
+
+        function testarConsoleInfo() {
+            console.info('ℹ️ Teste console.info - Este log NÃO deve aparecer no BugSpotter');
+            addResult('console.info() executado - NÃO deve aparecer nos logs salvos', 'info');
+        }
+
+        function testarConsoleWarn() {
+            console.warn('⚠️ Teste console.warn - Este warning DEVE aparecer no BugSpotter');
+            addResult('console.warn() executado - DEVE aparecer nos logs salvos', 'warning');
+        }
+
+        function testarConsoleError() {
+            console.error('❌ Teste console.error - Este erro DEVE aparecer no BugSpotter');
+            addResult('console.error() executado - DEVE aparecer nos logs salvos', 'error');
+        }
+
+        // Testes de HTTP
+        async function testarHttp200() {
+            try {
+                addResult('Testando requisição HTTP 200...', 'info');
+                const response = await fetch('https://httpbin.org/status/200');
+                addResult(`HTTP ${response.status} - NÃO deve aparecer nos logs salvos`, 'success');
+            } catch (error) {
+                addResult(`Erro na requisição: ${error.message}`, 'error');
+            }
+        }
+
+        async function testarHttp404() {
+            try {
+                addResult('Testando requisição HTTP 404...', 'info');
+                const response = await fetch('https://httpbin.org/status/404');
+                addResult(`HTTP ${response.status} - DEVE aparecer nos logs salvos`, 'error');
+            } catch (error) {
+                addResult(`Erro na requisição: ${error.message}`, 'error');
+            }
+        }
+
+        async function testarHttp500() {
+            try {
+                addResult('Testando requisição HTTP 500...', 'info');
+                const response = await fetch('https://httpbin.org/status/500');
+                addResult(`HTTP ${response.status} - DEVE aparecer nos logs salvos`, 'error');
+            } catch (error) {
+                addResult(`Erro na requisição: ${error.message}`, 'error');
+            }
+        }
+
+        async function testarHttpTimeout() {
+            try {
+                addResult('Testando erro de rede...', 'info');
+                // URL inválida para forçar erro de rede
+                const response = await fetch('https://url-inexistente-para-teste-12345.com/test');
+                addResult('Requisição não deveria ter funcionado', 'error');
+            } catch (error) {
+                addResult(`Network Error - DEVE aparecer nos logs salvos: ${error.message}`, 'error');
+            }
+        }
+
+        function verificarLogsSalvos() {
+            addResult('Verificando logs salvos no localStorage...', 'info');
+            
+            const savedLogs = localStorage.getItem('bugSpotter_logs');
+            if (!savedLogs) {
+                addResult('❌ Nenhum log encontrado no localStorage', 'error');
+                return;
+            }
+
+            try {
+                const logData = JSON.parse(savedLogs);
+                const logs = logData.logs || [];
+                
+                addResult(`📊 Total de logs salvos: ${logs.length}`, 'info');
+                
+                // Contar tipos de logs
+                const tipos = {};
+                const ultimosLogs = logs.slice(-10); // Últimos 10 logs
+                
+                ultimosLogs.forEach(log => {
+                    const tipo = log.level || 'unknown';
+                    tipos[tipo] = (tipos[tipo] || 0) + 1;
+                });
+                
+                addResult('📈 Tipos de logs (últimos 10):', 'info');
+                Object.entries(tipos).forEach(([tipo, count]) => {
+                    addResult(`  - ${tipo}: ${count}`, 'info');
+                });
+                
+                addResult('📝 Últimos 5 logs:', 'info');
+                ultimosLogs.slice(-5).forEach((log, index) => {
+                    const timestamp = new Date(log.timestamp).toLocaleTimeString();
+                    const message = log.message.substring(0, 100) + (log.message.length > 100 ? '...' : '');
+                    addResult(`  ${index + 1}. [${timestamp}] ${log.level}: ${message}`, log.level === 'error' ? 'error' : log.level === 'warn' ? 'warning' : 'info');
+                });
+                
+            } catch (error) {
+                addResult(`❌ Erro ao analisar logs: ${error.message}`, 'error');
+            }
+        }
+
+        function limparLogs() {
+            if (confirm('Tem certeza que deseja limpar todos os logs salvos?')) {
+                localStorage.removeItem('bugSpotter_logs');
+                addResult('🗑️ Todos os logs foram limpos', 'success');
+            }
+        }
+
+        function exportarLogs() {
+            const savedLogs = localStorage.getItem('bugSpotter_logs');
+            if (!savedLogs) {
+                addResult('❌ Nenhum log para exportar', 'error');
+                return;
+            }
+
+            try {
+                const logData = JSON.parse(savedLogs);
+                const logs = logData.logs || [];
+                
+                // Criar arquivo de texto com os logs
+                let content = `BugSpotter Logs Export - ${new Date().toISOString()}\n`;
+                content += `Total de logs: ${logs.length}\n\n`;
+                
+                logs.forEach((log, index) => {
+                    const timestamp = new Date(log.timestamp).toISOString();
+                    content += `${index + 1}. [${timestamp}] ${log.level.toUpperCase()}: ${log.message}\n`;
+                });
+                
+                // Download do arquivo
+                const blob = new Blob([content], { type: 'text/plain' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `bugspotter-logs-${new Date().toISOString().split('T')[0]}.txt`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+                
+                addResult(`📄 Logs exportados: ${logs.length} entradas`, 'success');
+                
+            } catch (error) {
+                addResult(`❌ Erro ao exportar logs: ${error.message}`, 'error');
+            }
+        }
+
+        // Verificação inicial
+        window.addEventListener('load', () => {
+            addResult('🚀 Página carregada. Pronto para testar o filtro de logs.', 'info');
+            addResult('💡 Dica: Execute alguns testes e depois verifique os logs salvos.', 'info');
+        });
+    </script>
+</body>
+</html>

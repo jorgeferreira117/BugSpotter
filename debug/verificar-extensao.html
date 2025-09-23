@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🔍 Verificador de Extensão BugSpotter</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            min-height: 100vh;
+        }
+        .container {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 30px;
+            border-radius: 15px;
+            backdrop-filter: blur(10px);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+        }
+        .status-card {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 20px;
+            margin: 15px 0;
+            border-radius: 10px;
+            border-left: 5px solid #ffc107;
+        }
+        .success { border-left-color: #28a745; }
+        .error { border-left-color: #dc3545; }
+        .warning { border-left-color: #ffc107; }
+        .info { border-left-color: #17a2b8; }
+        
+        .check-item {
+            display: flex;
+            align-items: center;
+            margin: 10px 0;
+            padding: 10px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 5px;
+        }
+        .check-icon {
+            font-size: 20px;
+            margin-right: 15px;
+            min-width: 30px;
+        }
+        .btn {
+            background: linear-gradient(45deg, #007bff, #0056b3);
+            color: white;
+            border: none;
+            padding: 12px 25px;
+            margin: 10px 5px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: all 0.3s ease;
+        }
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
+        }
+        .log-container {
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 8px;
+            padding: 15px;
+            margin: 15px 0;
+            max-height: 300px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+        }
+        .instructions {
+            background: rgba(255, 193, 7, 0.2);
+            border: 1px solid rgba(255, 193, 7, 0.5);
+            padding: 20px;
+            border-radius: 10px;
+            margin: 20px 0;
+        }
+        .step {
+            margin: 10px 0;
+            padding: 10px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 5px;
+            border-left: 3px solid #ffc107;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔍 Verificador de Extensão BugSpotter</h1>
+        <p>Esta ferramenta ajuda a diagnosticar problemas de instalação da extensão.</p>
+        
+        <div class="instructions">
+            <h3>📋 Antes de começar:</h3>
+            <div class="step">
+                <strong>1.</strong> Abra <code>chrome://extensions/</code> em uma nova aba
+            </div>
+            <div class="step">
+                <strong>2.</strong> Ative o "Modo do desenvolvedor" (toggle superior direito)
+            </div>
+            <div class="step">
+                <strong>3.</strong> Clique "Carregar sem compactação" e selecione a pasta do projeto
+            </div>
+            <div class="step">
+                <strong>4.</strong> Verifique se "BugSpotter" aparece sem erros
+            </div>
+            <div class="step">
+                <strong>5.</strong> Recarregue esta página e clique "Verificar Agora"
+            </div>
+        </div>
+
+        <div style="text-align: center; margin: 20px 0;">
+            <button class="btn" onclick="verificarCompleto()">🔍 Verificar Agora</button>
+            <button class="btn" onclick="limparLogs()">🧹 Limpar Logs</button>
+            <button class="btn" onclick="abrirExtensions()">🔧 Abrir Extensions</button>
+        </div>
+
+        <div id="resultado-verificacao">
+            <div class="status-card warning">
+                <h3>⏳ Aguardando verificação...</h3>
+                <p>Clique em "Verificar Agora" para começar o diagnóstico.</p>
+            </div>
+        </div>
+
+        <div>
+            <h3>📋 Logs de Diagnóstico</h3>
+            <div id="logs" class="log-container">
+                Aguardando logs...
+            </div>
+        </div>
+
+        <div id="solucoes" style="display: none;">
+            <h3>🛠️ Soluções Recomendadas</h3>
+            <div id="lista-solucoes"></div>
+        </div>
+    </div>
+
+    <script>
+        const logs = [];
+        
+        function adicionarLog(tipo, mensagem) {
+            const timestamp = new Date().toLocaleTimeString();
+            logs.push({ tipo, mensagem, timestamp });
+            atualizarLogs();
+        }
+
+        function atualizarLogs() {
+            const container = document.getElementById('logs');
+            if (logs.length === 0) {
+                container.innerHTML = 'Nenhum log ainda...';
+                return;
+            }
+
+            container.innerHTML = logs.map(log => {
+                const cor = {
+                    'info': '#17a2b8',
+                    'success': '#28a745',
+                    'error': '#dc3545',
+                    'warning': '#ffc107'
+                }[log.tipo] || '#ffffff';
+                
+                return `<div style="color: ${cor}; margin: 3px 0;">
+                    <span style="color: #aaa;">[${log.timestamp}]</span> 
+                    <strong>${(log.tipo || 'LOG').toUpperCase()}:</strong> ${log.mensagem}
+                </div>`;
+            }).join('');
+            
+            container.scrollTop = container.scrollHeight;
+        }
+
+        function verificarCompleto() {
+            adicionarLog('info', '🚀 Iniciando verificação completa...');
+            
+            // Aguardar um pouco para a extensão carregar
+            setTimeout(() => {
+                const resultados = {
+                    chrome: typeof chrome !== 'undefined',
+                    chromeRuntime: typeof chrome !== 'undefined' && typeof chrome.runtime !== 'undefined',
+                    chromeStorage: typeof chrome !== 'undefined' && typeof chrome.storage !== 'undefined',
+                    storageManager: typeof window.storageManager !== 'undefined' && window.storageManager !== null,
+                    bugSpotterContent: typeof window.bugSpotterContent !== 'undefined' && window.bugSpotterContent !== null,
+                    BugSpotterContentClass: typeof window.BugSpotterContent !== 'undefined',
+                    StorageManagerClass: typeof window.StorageManager !== 'undefined'
+                };
+                
+                // Verificação adicional para detectar se a extensão está instalada
+                if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.id) {
+                    adicionarLog('info', `📦 Extension ID detectado: ${chrome.runtime.id}`);
+                } else {
+                    adicionarLog('warning', '⚠️ Extension ID não detectado - extensão pode não estar carregada');
+                }
+                
+                processarResultados(resultados);
+            }, 1000);
+        }
+        
+        function processarResultados(resultados) {
+
+            // Log detalhado de cada verificação
+            Object.entries(resultados).forEach(([chave, valor]) => {
+                const tipo = valor ? 'success' : 'error';
+                const icone = valor ? '✅' : '❌';
+                adicionarLog(tipo, `${icone} ${chave}: ${valor}`);
+            });
+
+            // Análise dos resultados
+            let status = 'success';
+            let titulo = '✅ Extensão Funcionando Perfeitamente!';
+            let descricao = 'Todos os componentes da extensão foram detectados.';
+            let solucoes = [];
+
+            // Verificar se há problemas críticos
+            const problemasDetectados = Object.values(resultados).some(valor => !valor);
+             
+            if (!resultados.chrome) {
+                status = 'error';
+                titulo = '❌ Chrome APIs Não Disponíveis';
+                descricao = 'As APIs do Chrome não estão disponíveis. Isso pode indicar que você não está usando o Chrome ou a extensão não foi carregada.';
+                solucoes.push('🔧 Certifique-se de estar usando o Google Chrome');
+                solucoes.push('🔧 Verifique se a extensão está instalada e ativada em chrome://extensions/');
+                solucoes.push('🔧 Certifique-se de que a página foi carregada via extensão ou localhost');
+            } else if (!resultados.chromeRuntime || !resultados.chromeStorage) {
+                status = 'error';
+                titulo = '❌ APIs Essenciais Indisponíveis';
+                descricao = 'Algumas APIs essenciais do Chrome não estão disponíveis.';
+                solucoes.push('🔄 Recarregue a extensão em chrome://extensions/');
+                solucoes.push('🔍 Verifique as permissões da extensão no manifest.json');
+                solucoes.push('🔧 Certifique-se de que a extensão tem as permissões "storage" e "scripting"');
+            } else if (!resultados.StorageManagerClass && !resultados.BugSpotterContentClass) {
+                status = 'error';
+                titulo = '❌ Classes da Extensão Não Encontradas';
+                descricao = 'As classes principais da extensão não foram carregadas. Isso indica um problema no content script.';
+                solucoes.push('🔄 Recarregue a extensão em chrome://extensions/');
+                solucoes.push('🔍 Verifique se os arquivos StorageManager.js e content.js existem');
+                solucoes.push('🔧 Verifique o manifest.json - content_scripts deve incluir ambos os arquivos');
+                solucoes.push('📋 Abra o console (F12) e procure por erros de carregamento');
+            } else if (!resultados.storageManager || !resultados.bugSpotterContent) {
+                status = 'warning';
+                titulo = '⚠️ Instâncias da Extensão Não Inicializadas';
+                descricao = 'As classes estão disponíveis, mas as instâncias não foram criadas. Isso pode ser um problema de timing.';
+                solucoes.push('🔄 Recarregue esta página e aguarde alguns segundos');
+                solucoes.push('🔍 Verifique se há erros no console (F12)');
+                solucoes.push('🔧 A extensão pode estar carregando - tente aguardar mais tempo');
+            }
+
+            // Renderizar resultado
+            renderizarResultado(status, titulo, descricao, solucoes, resultados);
+            
+            adicionarLog('info', '✅ Verificação completa finalizada');
+        }
+        
+        function renderizarResultado(status, titulo, descricao, solucoes, resultados) {
+            const container = document.getElementById('resultado-verificacao');
+            
+            // Criar resumo detalhado dos componentes
+            const componentesHtml = Object.entries(resultados).map(([chave, valor]) => {
+                const icone = valor ? '✅' : '❌';
+                const classe = valor ? 'success' : 'error';
+                const nomeAmigavel = {
+                    chrome: 'Chrome APIs',
+                    chromeRuntime: 'Chrome Runtime',
+                    chromeStorage: 'Chrome Storage',
+                    storageManager: 'Storage Manager (instância)',
+                    bugSpotterContent: 'BugSpotter Content (instância)',
+                    BugSpotterContentClass: 'BugSpotter Content (classe)',
+                    StorageManagerClass: 'Storage Manager (classe)'
+                }[chave] || chave;
+                
+                return `<div class="check-item ${classe}">${icone} ${nomeAmigavel}</div>`;
+            }).join('');
+            
+            container.innerHTML = `
+                <div class="status-card ${status}">
+                    <h3>${titulo}</h3>
+                    <p>${descricao}</p>
+                    <div style="margin-top: 15px;">
+                        <h4>📋 Status dos Componentes:</h4>
+                        ${componentesHtml}
+                    </div>
+                </div>
+            `;
+
+            // Mostrar soluções se houver problemas
+            if (solucoes.length > 0) {
+                const solucoesContainer = document.getElementById('solucoes');
+                const listaSolucoes = document.getElementById('lista-solucoes');
+                
+                listaSolucoes.innerHTML = solucoes.map(solucao => 
+                    `<div class="check-item warning">${solucao}</div>`
+                ).join('');
+                
+                solucoesContainer.style.display = 'block';
+            } else {
+                document.getElementById('solucoes').style.display = 'none';
+            }
+        }
+
+        function limparLogs() {
+            logs.length = 0;
+            atualizarLogs();
+            adicionarLog('info', '🧹 Logs limpos');
+        }
+
+        function abrirExtensions() {
+            if (typeof chrome !== 'undefined' && chrome.tabs) {
+                chrome.tabs.create({ url: 'chrome://extensions/' });
+            } else {
+                adicionarLog('warning', '⚠️ Não foi possível abrir automaticamente. Abra manualmente: chrome://extensions/');
+                // Fallback: tentar abrir em nova janela
+                window.open('chrome://extensions/', '_blank');
+            }
+        }
+
+        // Verificação automática ao carregar
+        window.addEventListener('load', () => {
+            adicionarLog('info', '📄 Página carregada');
+            setTimeout(() => {
+                adicionarLog('info', '⏳ Aguardando 2 segundos para extensão carregar...');
+                setTimeout(verificarCompleto, 2000);
+            }, 1000);
+        });
+
+        // Interceptar logs do console para capturar logs da extensão
+        const originalLog = console.log;
+        const originalError = console.error;
+        const originalWarn = console.warn;
+
+        console.log = function(...args) {
+            const message = args.join(' ');
+            if (message.includes('BugSpotter') || message.includes('StorageManager')) {
+                adicionarLog('info', `📝 Console: ${message}`);
+            }
+            originalLog.apply(console, args);
+        };
+
+        console.error = function(...args) {
+            const message = args.join(' ');
+            adicionarLog('error', `🚨 Erro: ${message}`);
+            originalError.apply(console, args);
+        };
+
+        console.warn = function(...args) {
+            const message = args.join(' ');
+            adicionarLog('warning', `⚠️ Aviso: ${message}`);
+            originalWarn.apply(console, args);
+        };
+
+        adicionarLog('info', '🔍 Verificador iniciado - aguardando verificação...');
+    </script>
+</body>
+</html>

@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Teste AI Quota - BugSpotter</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .test-section {
+            margin: 20px 0;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            background-color: #f9f9f9;
+        }
+        .test-button {
+            background-color: #007cba;
+            color: white;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            margin: 10px 5px;
+            transition: background-color 0.3s;
+        }
+        .test-button:hover {
+            background-color: #005a87;
+        }
+        .test-button.danger {
+            background-color: #dc3545;
+        }
+        .test-button.danger:hover {
+            background-color: #c82333;
+        }
+        .status {
+            margin-top: 15px;
+            padding: 10px;
+            border-radius: 5px;
+            font-weight: bold;
+        }
+        .status.success {
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .status.error {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        .instructions {
+            background-color: #e7f3ff;
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+            border-left: 4px solid #007cba;
+        }
+        .code {
+            background-color: #f8f9fa;
+            padding: 10px;
+            border-radius: 3px;
+            font-family: 'Courier New', monospace;
+            margin: 10px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🤖 Teste AI Quota - BugSpotter</h1>
+        
+        <div class="instructions">
+            <h3>📋 Instruções para Teste</h3>
+            <p>Esta página testa o sistema de fallback da AI quando há problemas de quota (erro 429).</p>
+            <ol>
+                <li><strong>Abra o Console do Navegador</strong> (F12 → Console)</li>
+                <li><strong>Ative a extensão BugSpotter</strong> se não estiver ativa</li>
+                <li><strong>Execute os testes abaixo</strong> e observe os logs no console</li>
+                <li><strong>Verifique se relatórios básicos são gerados</strong> quando a AI falha</li>
+            </ol>
+        </div>
+
+        <div class="test-section">
+            <h3>🔥 Teste 1: Múltiplos Erros HTTP (Simular Rate Limit)</h3>
+            <p>Gera múltiplos erros HTTP rapidamente para testar o rate limiting da AI.</p>
+            <button class="test-button" onclick="testMultipleErrors()">Gerar 10 Erros HTTP Rápidos</button>
+            <div id="status1" class="status" style="display: none;"></div>
+        </div>
+
+        <div class="test-section">
+            <h3>⚡ Teste 2: Erro HTTP com Resposta JSON</h3>
+            <p>Testa se o sistema captura corretamente o corpo da resposta e gera relatório básico.</p>
+            <button class="test-button" onclick="testJsonError()">Erro 500 com JSON</button>
+            <div id="status2" class="status" style="display: none;"></div>
+        </div>
+
+        <div class="test-section">
+            <h3>🚨 Teste 3: Erro de Rede (Timeout)</h3>
+            <p>Simula erro de rede que pode causar problemas na AI.</p>
+            <button class="test-button danger" onclick="testNetworkError()">Simular Timeout</button>
+            <div id="status3" class="status" style="display: none;"></div>
+        </div>
+
+        <div class="test-section">
+            <h3>📊 Verificação dos Resultados</h3>
+            <p>Após executar os testes, verifique:</p>
+            <ul>
+                <li>✅ Console mostra logs da extensão BugSpotter</li>
+                <li>✅ Mensagens de "AI pausada" ou "Gerando relatório básico"</li>
+                <li>✅ Relatórios básicos são gerados mesmo sem AI</li>
+                <li>✅ Não há erros 429 não tratados</li>
+            </ul>
+            <div class="code">
+                Logs esperados no console:<br>
+                [AIService] Rate limit local excedido. Gerando relatório básico.<br>
+                [AIService] AI pausada devido a rate limiting. Gerando relatório básico.<br>
+                [Background] Relatório AI gerado com sucesso: Erro HTTP 500 - localhost
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let errorCount = 0;
+
+        function showStatus(elementId, message, isError = false) {
+            const statusEl = document.getElementById(elementId);
+            statusEl.textContent = message;
+            statusEl.className = `status ${isError ? 'error' : 'success'}`;
+            statusEl.style.display = 'block';
+        }
+
+        async function testMultipleErrors() {
+            console.log('🔥 Iniciando teste de múltiplos erros HTTP...');
+            showStatus('status1', 'Gerando 10 erros HTTP rapidamente...', false);
+            
+            const promises = [];
+            for (let i = 0; i < 10; i++) {
+                promises.push(
+                    fetch(`/fake-endpoint-${i}`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ test: `error-${i}`, timestamp: Date.now() })
+                    }).catch(err => {
+                        console.log(`Erro ${i + 1}/10:`, err.message);
+                        return err;
+                    })
+                );
+            }
+            
+            try {
+                await Promise.all(promises);
+                showStatus('status1', '✅ 10 erros HTTP gerados! Verifique o console para logs da AI.', false);
+            } catch (error) {
+                showStatus('status1', `❌ Erro no teste: ${error.message}`, true);
+            }
+        }
+
+        async function testJsonError() {
+            console.log('⚡ Testando erro HTTP com resposta JSON...');
+            showStatus('status2', 'Gerando erro 500 com resposta JSON...', false);
+            
+            try {
+                const response = await fetch('/api/test-error', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-Test-Error': 'true'
+                    },
+                    body: JSON.stringify({
+                        action: 'test-500-error',
+                        timestamp: new Date().toISOString(),
+                        userAgent: navigator.userAgent
+                    })
+                });
+                
+                if (!response.ok) {
+                    console.log('Resposta de erro capturada:', response.status, response.statusText);
+                }
+                
+                showStatus('status2', '✅ Erro 500 gerado! Verifique se relatório básico foi criado.', false);
+            } catch (error) {
+                console.error('Erro na requisição:', error);
+                showStatus('status2', `✅ Erro de rede capturado: ${error.message}`, false);
+            }
+        }
+
+        async function testNetworkError() {
+            console.log('🚨 Testando erro de rede (timeout)...');
+            showStatus('status3', 'Simulando timeout de rede...', false);
+            
+            try {
+                // Tentar conectar a um endpoint que não existe com timeout baixo
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 1000);
+                
+                await fetch('http://fake-server-that-does-not-exist.com/api/test', {
+                    method: 'GET',
+                    signal: controller.signal,
+                    headers: {
+                        'X-Test-Timeout': 'true'
+                    }
+                });
+                
+                clearTimeout(timeoutId);
+            } catch (error) {
+                console.error('Erro de rede simulado:', error.message);
+                showStatus('status3', `✅ Timeout simulado: ${error.message}`, false);
+            }
+        }
+
+        // Log inicial
+        console.log('🤖 Página de teste AI Quota carregada. Execute os testes acima.');
+        console.log('📊 Monitore os logs para verificar o comportamento da extensão BugSpotter.');
+    </script>
+</body>
+</html>
