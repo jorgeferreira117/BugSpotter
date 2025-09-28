@@ -49,8 +49,45 @@ class BugSpotterSettings {
 
   async init() {
     await this.loadSettings();
-    this.bindEvents();
     this.updateUI();
+    this.bindEvents();
+    this.initTabs();
+  }
+
+  initTabs() {
+    // Initialize tab functionality
+    const tabButtons = document.querySelectorAll('.tab-button');
+    const tabContents = document.querySelectorAll('.tab-content');
+    
+    // Add click event listeners to tab buttons
+    tabButtons.forEach(button => {
+      button.addEventListener('click', () => {
+        const targetTab = button.getAttribute('data-tab');
+        this.switchTab(targetTab);
+      });
+    });
+    
+    // Load saved active tab or default to first tab
+    const savedTab = localStorage.getItem('bugspotter-active-tab') || 'jira';
+    this.switchTab(savedTab);
+  }
+  
+  switchTab(tabName) {
+    // Remove active class from all buttons and contents
+    document.querySelectorAll('.tab-button').forEach(btn => btn.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+    
+    // Add active class to selected button and content
+    const activeButton = document.querySelector(`[data-tab="${tabName}"]`);
+    const activeContent = document.getElementById(`${tabName}-tab`);
+    
+    if (activeButton && activeContent) {
+      activeButton.classList.add('active');
+      activeContent.classList.add('active');
+      
+      // Save active tab to localStorage
+      localStorage.setItem('bugspotter-active-tab', tabName);
+    }
   }
 
   bindEvents() {

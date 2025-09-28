@@ -21,13 +21,13 @@ class StorageManager {
    * Armazena dados com otimizações
    */
   async store(key, data, options = {}) {
-    try {
-      const {
-        compress = true,
-        ttl = this.maxItemAge,
-        storage = 'chrome' // 'chrome' ou 'local'
-      } = options;
+    const {
+      compress = true,
+      ttl = this.maxItemAge,
+      storage = 'chrome' // 'chrome' ou 'local'
+    } = options;
 
+    try {
       const item = {
         data: compress && this.shouldCompress(data) ? this.compress(data) : data,
         compressed: compress && this.shouldCompress(data),
@@ -36,16 +36,8 @@ class StorageManager {
         size: this.calculateSize(data)
       };
 
-      if (storage === 'chrome' && typeof chrome !== 'undefined' && chrome.storage) {
-        await chrome.storage.local.set({ [key]: item });
-      } else if (typeof localStorage !== 'undefined') {
-        localStorage.setItem(key, JSON.stringify(item));
-      } else {
-        // Fallback para contexto de service worker
-        // localStorage não disponível - silenciado
-        await chrome.storage.local.set({ [key]: item });
-      }
-
+      // Tentar armazenar os dados
+      await this.attemptStore(key, item, storage);
       return true;
     } catch (error) {
       // Verificar se é erro de contexto invalidado
@@ -54,9 +46,71 @@ class StorageManager {
         return false;
       }
       
+      // Verificar se é erro de quota excedida
+      if (error.message && error.message.includes('quota exceeded')) {
+        console.warn('⚠️ Quota de armazenamento excedida - tentando limpeza automática');
+        try {
+          // Tentar limpeza automática
+          await this.performEmergencyCleanup(storage);
+          // Tentar armazenar novamente após limpeza
+          const item = {
+            data: options.compress !== false && this.shouldCompress(data) ? this.compress(data) : data,
+            compressed: options.compress !== false && this.shouldCompress(data),
+            timestamp: Date.now(),
+            ttl: options.ttl || this.maxItemAge,
+            size: this.calculateSize(data)
+          };
+          await this.attemptStore(key, item, storage);
+          console.log('✅ Dados armazenados com sucesso após limpeza automática');
+          return true;
+        } catch (cleanupError) {
+          console.error('❌ Falha na limpeza automática:', cleanupError);
+          return false;
+        }
+      }
+      
       console.error('Erro ao armazenar dados:', error);
       return false;
     }
+  }
+
+  /**
+   * Tenta armazenar dados no storage especificado
+   */
+  async attemptStore(key, item, storage) {
+    if (storage === 'chrome' && typeof chrome !== 'undefined' && chrome.storage) {
+      await chrome.storage.local.set({ [key]: item });
+    } else if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(key, JSON.stringify(item));
+    } else {
+      // Fallback para contexto de service worker
+      await chrome.storage.local.set({ [key]: item });
+    }
+  }
+
+  /**
+   * Realiza limpeza de emergência quando quota é excedida
+   */
+  async performEmergencyCleanup(storage = 'chrome') {
+    console.log('🧹 Iniciando limpeza de emergência...');
+    
+    // 1. Limpar itens expirados primeiro
+    const expiredCleaned = await this.cleanupExpiredItems(storage);
+    console.log(`🗑️ Removidos ${expiredCleaned} itens expirados`);
+    
+    // 2. Verificar se ainda precisamos de mais espaço
+    const usage = await this.getStorageUsage(storage);
+    if (usage.usagePercentage > 80) {
+      // 3. Limpar itens mais antigos até atingir 60% de uso
+      const oldestCleaned = await this.cleanupOldestItems(storage, 60);
+      console.log(`🗑️ Removidos ${oldestCleaned} itens antigos`);
+    }
+    
+    // 4. Verificar uso final
+    const finalUsage = await this.getStorageUsage(storage);
+    console.log(`📊 Uso do storage após limpeza: ${finalUsage.usagePercentage.toFixed(1)}%`);
+    
+    return finalUsage.usagePercentage < 90; // Retorna true se conseguiu liberar espaço suficiente
   }
 
   /**
@@ -75,8 +129,18 @@ class StorageManager {
           try {
             item = this.safeJsonParse(stored, key);
           } catch (parseError) {
-            console.warn(`Erro ao parsear JSON para chave ${key}:: ${parseError.message}`);
+            console.warn(`Erro ao parsear JSON para chave ${key}: ${parseError.message}`);
             console.warn(`Dados corrompidos (primeiros 100 chars): ${stored.substring(0, 100)}`);
+            
+            // Detectar padrões específicos de corrupção
+            if (stored.startsWith('mobime-pp') || stored.includes('mobime')) {
+              console.warn(`Detectado padrão de corrupção 'mobime-pp' na chave ${key}`);
+            }
+            
+            // Log adicional para debug
+            console.warn(`Tamanho total dos dados corrompidos: ${stored.length} chars`);
+            console.warn(`Tipo de dados: ${typeof stored}`);
+            
             // Remover item corrompido
             localStorage.removeItem(key);
             item = null;
@@ -228,6 +292,7 @@ class StorageManager {
       const keys = await this.listKeys(storage);
       let cleanedCount = 0;
       let errorCount = 0;
+      let corruptedCount = 0;
 
       for (const key of keys) {
         try {
@@ -239,6 +304,12 @@ class StorageManager {
           // Erro ao processar item específico - continuar com os outros
           console.warn(`Erro ao processar item ${key} durante limpeza:`, itemError.message);
           errorCount++;
+          
+          // Detectar se é corrupção específica do tipo 'mobime-pp'
+          if (itemError.message.includes('mobime-pp')) {
+            console.warn(`Detectada corrupção 'mobime-pp' na chave ${key} - removendo automaticamente`);
+            corruptedCount++;
+          }
           
           // Tentar remover item problemático diretamente
           try {
@@ -357,23 +428,44 @@ class StorageManager {
    * Executa manutenção completa do armazenamento
    */
   async performMaintenance() {
+    console.log('🔧 Iniciando manutenção do storage...');
+    
     try {
       const results = {
-        chrome: { expired: 0, oldest: 0 },
-        local: { expired: 0, oldest: 0 }
+        chrome: { expired: 0, oldest: 0, corrupted: 0 },
+        local: { expired: 0, oldest: 0, corrupted: 0 }
       };
 
-      // Limpeza do chrome.storage
+      // 1. Limpar dados corrompidos conhecidos
+      console.log('🧹 Limpando dados corrompidos...');
+      if (typeof chrome !== 'undefined' && chrome.storage) {
+        const corruptedReport = await this.cleanupCorruptedData('chrome');
+        results.chrome.corrupted = corruptedReport.cleanedKeys.length;
+        if (results.chrome.corrupted > 0) {
+          console.log(`🗑️ Removidos ${results.chrome.corrupted} itens corrompidos do chrome.storage`);
+        }
+      }
+      
+      const localCorruptedReport = await this.cleanupCorruptedData('local');
+      results.local.corrupted = localCorruptedReport.cleanedKeys.length;
+      if (results.local.corrupted > 0) {
+        console.log(`🗑️ Removidos ${results.local.corrupted} itens corrompidos do localStorage`);
+      }
+
+      // 2. Limpeza do chrome.storage
       if (typeof chrome !== 'undefined' && chrome.storage) {
         results.chrome.expired = await this.cleanupExpiredItems('chrome');
         results.chrome.oldest = await this.cleanupOldestItems('chrome');
       }
 
-      // Limpeza do localStorage
+      // 3. Limpeza do localStorage
       results.local.expired = await this.cleanupExpiredItems('local');
       results.local.oldest = await this.cleanupOldestItems('local');
 
-      // Manutenção do armazenamento concluída - silenciado
+      // 4. Gerar relatório final
+      const usage = await this.getStorageUsage('chrome');
+      console.log(`✅ Manutenção concluída. Uso do storage: ${usage.usagePercentage.toFixed(1)}%`);
+      
       return results;
     } catch (error) {
       // Verificar se é erro de contexto invalidado
@@ -382,7 +474,7 @@ class StorageManager {
         return null;
       }
       
-      console.error('Erro na manutenção do armazenamento:', error);
+      console.error('❌ Erro na manutenção do armazenamento:', error);
       return null;
     }
   }
@@ -488,6 +580,11 @@ class StorageManager {
     
     const trimmed = jsonString.trim();
     
+    // Detectar padrões específicos de corrupção conhecidos
+    if (trimmed.startsWith('mobime-pp') || trimmed.includes('mobime')) {
+      throw new Error(`Dados corrompidos detectados - padrão 'mobime-pp': ${trimmed.substring(0, 50)}...`);
+    }
+    
     // Verificar se começa com caracteres válidos de JSON
     if (!trimmed.startsWith('{') && !trimmed.startsWith('[') && !trimmed.startsWith('"')) {
       // Pode ser um valor primitivo ou dados corrompidos
@@ -499,7 +596,9 @@ class StorageManager {
     try {
       return JSON.parse(jsonString);
     } catch (parseError) {
-      throw new Error(`Erro de parsing JSON para chave ${key}: ${parseError.message}`);
+      // Fornecer mais contexto sobre o erro
+      const preview = trimmed.substring(0, 100);
+      throw new Error(`Erro de parsing JSON para chave ${key}: ${parseError.message}. Preview: ${preview}`);
     }
   }
 
@@ -539,7 +638,51 @@ class StorageManager {
   }
 
   /**
-   * Detecta e reporta dados corrompidos no storage
+   * Limpa dados corrompidos conhecidos (como 'mobime-pp')
+   */
+  async cleanupCorruptedData(storage = 'chrome') {
+    const report = {
+      totalKeys: 0,
+      cleanedKeys: [],
+      errors: []
+    };
+
+    try {
+      const keys = await this.listKeys(storage);
+      report.totalKeys = keys.length;
+
+      for (const key of keys) {
+        try {
+          if (storage === 'chrome' && typeof chrome !== 'undefined' && chrome.storage) {
+            const result = await chrome.storage.local.get([key]);
+            const item = result[key];
+            if (item && typeof item === 'string' && (item.startsWith('mobime-pp') || item.includes('mobime'))) {
+              await this.remove(key, storage);
+              report.cleanedKeys.push({ key, reason: 'mobime-pp pattern detected' });
+              console.warn(`Removido dado corrompido 'mobime-pp' da chave: ${key}`);
+            }
+          } else if (typeof localStorage !== 'undefined') {
+            const stored = localStorage.getItem(key);
+            if (stored && (stored.startsWith('mobime-pp') || stored.includes('mobime'))) {
+              localStorage.removeItem(key);
+              report.cleanedKeys.push({ key, reason: 'mobime-pp pattern detected' });
+              console.warn(`Removido dado corrompido 'mobime-pp' da chave: ${key}`);
+            }
+          }
+        } catch (error) {
+          report.errors.push({ key, error: error.message });
+        }
+      }
+    } catch (error) {
+      console.error('Erro durante limpeza de dados corrompidos:', error);
+      report.errors.push({ general: error.message });
+    }
+
+    return report;
+  }
+
+  /**
+   * Detecta dados corrompidos no storage
    */
   async detectCorruptedData(storage = 'chrome') {
     const report = {

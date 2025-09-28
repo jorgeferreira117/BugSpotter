@@ -305,11 +305,21 @@ if (typeof window.bugSpotterContentInitialized === 'undefined') {
         // Verificar se os dados recuperados são válidos
         if (savedLogsData && typeof savedLogsData === 'object') {
           if (savedLogsData.logs && Array.isArray(savedLogsData.logs)) {
-            // Filtrar logs antigos (mais de 1 hora)
+            // Filtrar logs antigos (mais de 1 hora) e logs sobre corrupção
             const oneHourAgo = Date.now() - (60 * 60 * 1000);
             const recentLogs = savedLogsData.logs.filter(log => {
               const logTime = new Date(log.timestamp).getTime();
-              return logTime > oneHourAgo;
+              const isRecent = logTime > oneHourAgo;
+              
+              // Filtrar logs sobre corrupção para quebrar loops
+              const message = log.message || '';
+              const isCorruptionLog = message.includes('mobime-pp') || 
+                                    message.includes('Dados corrompidos') ||
+                                    message.includes('Erro ao parsear JSON') ||
+                                    message.includes('Detectado padrão de corrupção') ||
+                                    message.includes('Removido dado corrompido');
+              
+              return isRecent && !isCorruptionLog;
             });
             
             if (recentLogs.length > 0) {
@@ -386,11 +396,22 @@ if (typeof window.bugSpotterContentInitialized === 'undefined') {
     }
 
     addLog(level, args) {
+      // Filtrar logs sobre corrupção para evitar loops infinitos
+      const message = args.map(arg => 
+        typeof arg === 'object' ? JSON.stringify(arg, null, 2) : String(arg)
+      ).join(' ');
+      
+      if (message.includes('mobime-pp') || 
+          message.includes('Dados corrompidos') ||
+          message.includes('Erro ao parsear JSON') ||
+          message.includes('Detectado padrão de corrupção') ||
+          message.includes('Removido dado corrompido')) {
+        return; // Não salvar logs sobre corrupção
+      }
+      
       const logEntry = {
         level,
-        message: args.map(arg => 
-          typeof arg === 'object' ? JSON.stringify(arg, null, 2) : String(arg)
-        ).join(' '),
+        message: message,
         timestamp: new Date().toISOString(),
         url: window.location.href,
         stack: level === 'error' ? new Error().stack : undefined

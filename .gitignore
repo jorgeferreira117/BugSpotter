@@ -70,3 +70,5 @@ key.pem
 .env
 .env.local
 .env.production
+debug/
+*.log
