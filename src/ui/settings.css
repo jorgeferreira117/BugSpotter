@@ -39,7 +39,7 @@ small {
   display: block;
   margin-top: 6px;
   color: #666666; /* Texto secundário */
-  font-size: 12px;
+  font-size: 11px;
 }
 
 /* Container principal */
@@ -89,6 +89,121 @@ small {
 .main-content {
   padding: 0 32px 32px;
   flex: 1;
+}
+
+/* Tab Navigation */
+.tab-navigation {
+  display: flex;
+  justify-content: space-between;
+  background: rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(10px);
+  border-radius: 12px;
+  padding: 8px;
+  margin-bottom: 24px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+  overflow-x: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.tab-navigation::-webkit-scrollbar {
+  display: none;
+}
+
+.tab-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 16px;
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  color: rgba(0, 0, 0, 0.7);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.tab-button:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(0, 0, 0, 0.9);
+  transform: translateY(-1px);
+}
+
+.tab-button.active {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+}
+
+.tab-button .material-icons {
+  font-size: 18px;
+}
+
+/* Tab Content */
+.tab-content-container {
+  position: relative;
+}
+
+.tab-content {
+  display: none;
+  animation: fadeIn 0.3s ease-in-out;
+}
+
+.tab-content.active {
+  display: block;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Responsive Design for Tabs */
+@media (max-width: 768px) {
+  .tab-navigation {
+    padding: 6px;
+    margin-bottom: 20px;
+  }
+  
+  .tab-button {
+    padding: 10px 12px;
+    font-size: 13px;
+    gap: 6px;
+  }
+  
+  .tab-button span:not(.material-icons) {
+    display: none;
+  }
+  
+  .tab-button .material-icons {
+    font-size: 20px;
+  }
+}
+
+@media (max-width: 480px) {
+  .tab-navigation {
+    padding: 4px;
+    gap: 2px;
+  }
+  
+  .tab-button {
+    padding: 8px 10px;
+    min-width: 44px;
+    justify-content: center;
+  }
 }
 
 /* Fundo principal */
@@ -313,7 +428,7 @@ small {
   display: block;
   margin-top: 6px;
   color: #6b7280;
-  font-size: 12px;
+  font-size: 11px;
 }
 
 small a {
@@ -323,6 +438,14 @@ small a {
 
 small a:hover {
   text-decoration: underline;
+}
+
+/* Help text styling */
+.help-text {
+  font-size: 11px;
+  color: #6b7280;
+  margin-top: 4px;
+  line-height: 1.4;
 }
 
 /* Botões modernos */

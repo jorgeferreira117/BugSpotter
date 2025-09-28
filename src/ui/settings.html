@@ -21,8 +21,39 @@
 
     <!-- Main content -->
     <main class="main-content">
-      <!-- Jira Section -->
-      <section class="settings-section jira-section">
+      <!-- Tab Navigation -->
+      <nav class="tab-navigation">
+        <button class="tab-button active" data-tab="jira">
+          <span class="material-icons">link</span>
+          <span>Jira</span>
+        </button>
+        <button class="tab-button" data-tab="ai">
+          <span class="material-icons">smart_toy</span>
+          <span>AI</span>
+        </button>
+        <button class="tab-button" data-tab="capture">
+          <span class="material-icons">photo_camera</span>
+          <span>Capture</span>
+        </button>
+        <button class="tab-button" data-tab="security">
+          <span class="material-icons">security</span>
+          <span>Security</span>
+        </button>
+        <button class="tab-button" data-tab="notifications">
+          <span class="material-icons">notifications</span>
+          <span>Notifications</span>
+        </button>
+        <button class="tab-button" data-tab="data">
+          <span class="material-icons">storage</span>
+          <span>Data</span>
+        </button>
+      </nav>
+
+      <!-- Tab Content Container -->
+      <div class="tab-content-container">
+        <!-- Jira Tab -->
+        <div class="tab-content active" id="jira-tab">
+          <section class="settings-section jira-section">
         <div class="section-header">
           <h2><span class="material-icons">link</span>Jira Integration</h2>
         </div>
@@ -120,12 +151,14 @@
           </button>
         </form>
       </section>
+        </div>
 
-      <!-- AI Integration Section -->
-      <section class="settings-section ai-section">
+        <!-- AI Tab -->
+        <div class="tab-content" id="ai-tab">
+          <section class="settings-section ai-section">
         <div class="section-header">
           <h2><span class="material-icons">smart_toy</span>AI Integration</h2>
-          <p class="section-description">Configure AI-powered automatic bug report generation</p>
+          <p class="section-description">Configure AI bug reports</p>
         </div>
         
         <form id="aiForm">
@@ -151,7 +184,7 @@
             
             <div class="form-group">
               <label for="aiApiKey">API Key:</label>
-              <input type="password" id="aiApiKey" placeholder="Sua API key...">
+              <input type="password" id="aiApiKey" placeholder="">
               <small class="help-text">
                 <span id="apiKeyHelp">
                   Get your free API key at: <a href="https://makersuite.google.com/app/apikey" target="_blank">Google AI Studio</a>
@@ -198,9 +231,11 @@
           </button>
         </form>
       </section>
+        </div>
 
-      <!-- Capture Section -->
-      <section class="settings-section capture-section">
+        <!-- Capture Tab -->
+        <div class="tab-content" id="capture-tab">
+          <section class="settings-section capture-section">
         <div class="section-header">
           <h2><span class="material-icons">photo_camera</span>Capture Settings</h2>
         </div>
@@ -236,9 +271,11 @@
           </div>
         </form>
       </section>
+        </div>
 
-      <!-- Security Section -->
-      <section class="settings-section security-section">
+        <!-- Security Tab -->
+        <div class="tab-content" id="security-tab">
+          <section class="settings-section security-section">
         <div class="section-header">
           <h2><span class="material-icons">security</span>Security and Privacy</h2>
         </div>
@@ -266,9 +303,11 @@
           </div>
         </form>
       </section>
+        </div>
 
-      <!-- Notifications Section -->
-      <section class="settings-section notifications-section">
+        <!-- Notifications Tab -->
+        <div class="tab-content" id="notifications-tab">
+          <section class="settings-section notifications-section">
         <div class="section-header">
           <h2><span class="material-icons">notifications</span>Notifications</h2>
         </div>
@@ -325,9 +364,11 @@
           </div>
         </form>
       </section>
+        </div>
 
-      <!-- Data Section -->
-      <section class="settings-section data-section">
+        <!-- Data Tab -->
+        <div class="tab-content" id="data-tab">
+          <section class="settings-section data-section">
         <div class="section-header">
           <h2><span class="material-icons">storage</span>Data and Backup</h2>
         </div>
@@ -347,6 +388,8 @@
           </button>
         </div>
       </section>
+        </div>
+      </div>
     </main>
 
     <div class="status-section">

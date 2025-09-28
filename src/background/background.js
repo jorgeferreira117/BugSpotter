@@ -35,6 +35,10 @@ class BugSpotterBackground {
     // ✅ Sistema de rastreamento de aba atual
     this.currentTabId = null;
     
+    // 🆕 Sistema de persistência de estado de gravação
+    this.recordingStates = new Map(); // Armazena estado de gravação por tabId
+    this.recordingStorageKey = 'activeRecordings';
+    
     // Inicializar módulos de forma compatível com Manifest V3
     this.initializeModules();
     this.cleanupInterval = null;
@@ -74,6 +78,9 @@ class BugSpotterBackground {
     
     // 🆕 Carregar erros processados do storage
     await this.loadProcessedErrorsFromStorage();
+    
+    // 🆕 Carregar estados de gravação do storage
+    await this.loadRecordingStatesFromStorage();
     
     // 🆕 Inicializar badge com estado correto
     await this.updateBadge();
@@ -1228,6 +1235,244 @@ class BugSpotterBackground {
             sendResponse({ success: true, count: count });
           } catch (error) {
             console.error('[Background] Erro ao atualizar badge:', error);
+            sendResponse({ success: false, error: error.message });
+          }
+          break;
+
+        case 'START_RECORDING':
+          try {
+            // Obter a aba ativa atual em vez de depender do sender.tab
+            const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+            const tabId = tabs[0]?.id;
+            if (!tabId) {
+              throw new Error('No active tab available');
+            }
+            console.log(`[Background] Iniciando gravação para aba ${tabId}`);
+            await this.setRecordingState(tabId, {
+              isRecording: true,
+              startTime: Date.now(),
+              maxDuration: message.maxDuration || 30000
+            });
+            sendResponse({ success: true, tabId: tabId });
+          } catch (error) {
+            console.error('[Background] Erro ao iniciar gravação:', error);
+            sendResponse({ success: false, error: error.message });
+          }
+          break;
+
+        case 'STOP_RECORDING':
+          try {
+            // Obter a aba ativa atual em vez de depender do sender.tab
+            const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+            const tabId = tabs[0]?.id;
+            if (!tabId) {
+              throw new Error('No active tab available');
+            }
+            console.log(`[Background] Parando gravação para aba ${tabId}`);
+            await this.clearRecordingState(tabId);
+            sendResponse({ success: true, tabId: tabId });
+          } catch (error) {
+            console.error('[Background] Erro ao parar gravação:', error);
+            sendResponse({ success: false, error: error.message });
+          }
+          break;
+
+        case 'GET_RECORDING_STATE':
+          try {
+            // Obter a aba ativa atual em vez de depender do sender.tab
+            const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+            const tabId = tabs[0]?.id;
+            if (!tabId) {
+              throw new Error('No active tab available');
+            }
+            console.log(`[Background] Obtendo estado de gravação para aba ${tabId}`);
+            const state = await this.getRecordingState(tabId);
+            sendResponse({ success: true, state: state, tabId: tabId });
+          } catch (error) {
+            console.error('[Background] Erro ao obter estado de gravação:', error);
+            sendResponse({ success: false, error: error.message });
+          }
+          break;
+
+        case 'INJECT_RECORDING_OVERLAY':
+          try {
+            const tabId = sender.tab?.id;
+            if (!tabId) {
+              throw new Error('No tab ID available');
+            }
+            console.log(`[Background] Injetando overlay de gravação na aba ${tabId}`);
+            
+            // Enviar mensagem para o content script injetar o overlay
+            await chrome.tabs.sendMessage(tabId, {
+              type: 'INJECT_OVERLAY',
+              maxDuration: message.maxDuration || 30000
+            });
+            
+            sendResponse({ success: true });
+          } catch (error) {
+            console.error('[Background] Erro ao injetar overlay:', error);
+            sendResponse({ success: false, error: error.message });
+          }
+          break;
+
+        case 'REMOVE_RECORDING_OVERLAY':
+          try {
+            const tabId = sender.tab?.id;
+            if (!tabId) {
+              throw new Error('No tab ID available');
+            }
+            console.log(`[Background] Removendo overlay de gravação da aba ${tabId}`);
+            
+            // Enviar mensagem para o content script remover o overlay
+            await chrome.tabs.sendMessage(tabId, {
+              type: 'REMOVE_OVERLAY'
+            });
+            
+            sendResponse({ success: true });
+          } catch (error) {
+            console.error('[Background] Erro ao remover overlay:', error);
+            sendResponse({ success: false, error: error.message });
+          }
+          break;
+
+        case 'RECORDING_COMPLETED':
+          try {
+            const tabId = sender.tab?.id;
+            if (!tabId) {
+              throw new Error('No tab ID available');
+            }
+            console.log(`[Background] Gravação concluída na aba ${tabId}`);
+            
+            // Limpar estado de gravação
+            await this.clearRecordingState(tabId);
+            
+            // Armazenar o vídeo gravado
+            if (message.videoData) {
+              const videoKey = `video_${tabId}_${Date.now()}`;
+              await this.storageManager.store(videoKey, {
+                data: message.videoData,
+                timestamp: Date.now(),
+                tabId: tabId,
+                size: message.videoSize || 0
+              });
+              
+              // Tentar abrir popup (pode falhar se não houver janela ativa)
+              try {
+                await chrome.action.openPopup();
+              } catch (popupError) {
+                console.log('[Background] Não foi possível abrir popup automaticamente:', popupError.message);
+                // Mostrar notificação se não conseguir abrir popup
+                chrome.notifications.create({
+                  type: 'basic',
+                  iconUrl: '/icon48.png',
+                  title: 'BugSpotter - Gravação Concluída',
+                  message: 'Vídeo capturado com sucesso! Clique no ícone da extensão para ver.'
+                });
+              }
+              
+              // Notificar popup sobre o vídeo (se estiver aberto)
+              setTimeout(async () => {
+                try {
+                  await chrome.runtime.sendMessage({
+                    type: 'VIDEO_ATTACHED',
+                    videoKey: videoKey,
+                    success: true
+                  });
+                } catch (e) {
+                  console.log('[Background] Popup não está aberto para receber notificação');
+                }
+              }, 500);
+            }
+            
+            sendResponse({ success: true });
+          } catch (error) {
+            console.error('[Background] Erro ao processar gravação concluída:', error);
+            sendResponse({ success: false, error: error.message });
+          }
+          break;
+
+        case 'RECORDING_FAILED':
+          try {
+            const tabId = sender.tab?.id;
+            if (!tabId) {
+              throw new Error('No tab ID available');
+            }
+            console.log(`[Background] Falha na gravação na aba ${tabId}:`, message.error);
+            
+            // Limpar estado de gravação
+            await this.clearRecordingState(tabId);
+            
+            // Abrir popup com erro
+            try {
+              await chrome.action.openPopup();
+            } catch (error) {
+              console.log('[Background] Não foi possível abrir popup automaticamente:', error.message);
+              // Criar notificação para informar sobre o erro
+              chrome.notifications.create({
+                type: 'basic',
+                iconUrl: 'icons/icon48.png',
+                title: 'BugSpotter - Erro na Gravação',
+                message: 'Ocorreu um erro durante a gravação. Clique no ícone da extensão para ver detalhes.'
+              });
+            }
+            
+            // Notificar popup sobre o erro
+            setTimeout(async () => {
+              try {
+                await chrome.runtime.sendMessage({
+                  type: 'VIDEO_ATTACHED',
+                  success: false,
+                  error: message.error || 'Erro desconhecido na gravação'
+                });
+              } catch (e) {
+                console.log('[Background] Popup não está aberto para receber notificação de erro');
+              }
+            }, 500);
+            
+            sendResponse({ success: true });
+          } catch (error) {
+            console.error('[Background] Erro ao processar falha na gravação:', error);
+            sendResponse({ success: false, error: error.message });
+          }
+          break;
+
+        case 'GET_EXTENSION_SETTINGS':
+          try {
+            const settings = await this.getSettings();
+            sendResponse({ success: true, settings: settings });
+          } catch (error) {
+            console.error('[Background] Erro ao obter configurações:', error);
+            sendResponse({ success: false, error: error.message });
+          }
+          break;
+
+        case 'openPopup':
+          try {
+            console.log('[Background] Abrindo popup via ação openPopup');
+            try {
+              await chrome.action.openPopup();
+            } catch (error) {
+              console.log('[Background] Não foi possível abrir popup automaticamente:', error.message);
+              throw error; // Re-throw para manter o comportamento de erro na resposta
+            }
+            sendResponse({ success: true });
+          } catch (error) {
+            console.error('[Background] Erro ao abrir popup:', error);
+            sendResponse({ success: false, error: error.message });
+          }
+          break;
+
+        case 'stopRecording':
+          try {
+            console.log('[Background] Parando gravação via ação stopRecording');
+            const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+            const tabId = tabs[0]?.id;
+            if (tabId) {
+              await this.clearRecordingState(tabId);
+            }
+            sendResponse({ success: true });
+          } catch (error) {
+            console.error('[Background] Erro ao parar gravação:', error);
             sendResponse({ success: false, error: error.message });
           }
           break;
@@ -2589,7 +2834,71 @@ ${bugData.actualBehavior || 'N/A'}
         console.log('[Background] Limpeza forçada do badge executada');
       }
     } catch (error) {
-      console.error('[Background] Erro ao limpar badge:', error);
+      console.log('[Background] Erro ao limpar badge:', error);
+    }
+  }
+
+  // 🆕 Métodos para gerenciar estado de gravação
+  async setRecordingState(tabId, state) {
+    try {
+      console.log(`[Background] Definindo estado de gravação para tab ${tabId}:`, state);
+      this.recordingStates.set(tabId, state);
+      await this.saveRecordingStatesToStorage();
+    } catch (error) {
+      console.error('[Background] Erro ao definir estado de gravação:', error);
+      throw error;
+    }
+  }
+
+  async getRecordingState(tabId) {
+    try {
+      const state = this.recordingStates.get(tabId) || null;
+      console.log(`[Background] Estado de gravação para tab ${tabId}:`, state);
+      return state;
+    } catch (error) {
+      console.error('[Background] Erro ao obter estado de gravação:', error);
+      return null;
+    }
+  }
+
+  async clearRecordingState(tabId) {
+    try {
+      console.log(`[Background] Limpando estado de gravação para tab ${tabId}`);
+      this.recordingStates.delete(tabId);
+      await this.saveRecordingStatesToStorage();
+    } catch (error) {
+      console.error('[Background] Erro ao limpar estado de gravação:', error);
+      throw error;
+    }
+  }
+
+  async loadRecordingStatesFromStorage() {
+    try {
+      const result = await chrome.storage.local.get([this.recordingStorageKey]);
+      const storedStates = result[this.recordingStorageKey] || {};
+      
+      // Converter objeto para Map
+      this.recordingStates = new Map(Object.entries(storedStates));
+      
+      console.log(`[Background] Estados de gravação carregados:`, storedStates);
+    } catch (error) {
+      console.error('[Background] Erro ao carregar estados de gravação:', error);
+      this.recordingStates = new Map();
+    }
+  }
+
+  async saveRecordingStatesToStorage() {
+    try {
+      // Converter Map para objeto
+      const statesToSave = Object.fromEntries(this.recordingStates);
+      
+      await chrome.storage.local.set({
+        [this.recordingStorageKey]: statesToSave
+      });
+      
+      console.log(`[Background] Estados de gravação salvos:`, statesToSave);
+    } catch (error) {
+      console.error('[Background] Erro ao salvar estados de gravação:', error);
     }
   }
 }

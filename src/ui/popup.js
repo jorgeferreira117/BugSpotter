@@ -20,11 +20,19 @@ class BugSpotter {
       console.error('[Popup] Erro ao enviar mensagem POPUP_OPENED:', error);
     }
     
+    // Verificar se há gravação em andamento
+    await this.checkRecordingState();
+    
     // Carregar configurações no cache
     this.cachedSettings = await this.getSettings();
     await this.loadBugHistory();
     await this.loadPriorityOptions();
     this.setupEventListeners();
+    
+    // Listener para mensagens do background script
+    chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+      this.handleBackgroundMessage(message, sender, sendResponse);
+    });
     
     // ADICIONAR: Listener para mudanças nas configurações
     chrome.storage.onChanged.addListener((changes, namespace) => {
@@ -167,8 +175,23 @@ class BugSpotter {
   
   updateCaptureStatus(message, type = 'info') {
     const statusElement = document.getElementById('captureStatus');
+    if (!statusElement) {
+      console.warn('[Popup] Elemento captureStatus não encontrado');
+      return;
+    }
+    
     const statusText = statusElement.querySelector('.status-text');
     const statusIcon = statusElement.querySelector('.status-icon');
+    
+    if (!statusText) {
+      console.warn('[Popup] Elemento .status-text não encontrado');
+      return;
+    }
+    
+    if (!statusIcon) {
+      console.warn('[Popup] Elemento .status-icon não encontrado');
+      return;
+    }
     
     // If no message, hide the div completely
     if (!message || message.trim() === '') {
@@ -668,62 +691,133 @@ class BugSpotter {
 
   async startRecording() {
     try {
-      const stream = await navigator.mediaDevices.getDisplayMedia({
-        video: { mediaSource: 'screen' },
-        audio: true
+      // Obter configurações de duração máxima
+      const settings = await this.getSettings();
+      const maxDuration = (settings.capture?.maxVideoLength || 30); // Em segundos
+      
+      this.updateCaptureStatus('Preparando gravação...', 'loading');
+      
+      // Obter aba ativa
+      const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+      const activeTab = tabs[0];
+      
+      if (!activeTab) {
+        throw new Error('Nenhuma aba ativa encontrada');
+      }
+      
+      // Verificar se a URL é acessível para content scripts
+      const url = activeTab.url;
+      if (url.startsWith('chrome://') || url.startsWith('chrome-extension://') || 
+          url.startsWith('moz-extension://') || url.startsWith('edge://') || 
+          url.startsWith('about:') || url.startsWith('file://')) {
+        throw new Error('Cannot access a chrome:// URL');
+      }
+      
+      // Injetar content script na aba ativa
+      await chrome.scripting.executeScript({
+        target: { tabId: activeTab.id },
+        files: ['src/content/recording-content.js']
       });
       
-      this.mediaRecorder = new MediaRecorder(stream);
-      this.recordedChunks = [];
+      // Aguardar um pouco para o content script inicializar
+      await new Promise(resolve => setTimeout(resolve, 100));
       
-      this.mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          this.recordedChunks.push(event.data);
+      // Enviar comando para injetar overlay
+      await chrome.tabs.sendMessage(activeTab.id, {
+        action: 'INJECT_RECORDING_OVERLAY',
+        config: {
+          maxDuration: maxDuration
         }
-      };
+      });
       
-      this.mediaRecorder.onstop = () => {
-        const blob = new Blob(this.recordedChunks, { type: 'video/webm' });
-        const reader = new FileReader();
-        reader.onload = () => {
-          this.addAttachment({
-            type: 'recording',
-            name: `screen_recording_${Date.now()}.webm`,
-            data: reader.result,
-            size: blob.size
-          });
-          this.updateCaptureStatus('Recording saved successfully!', 'success');
-        };
-        reader.readAsDataURL(blob);
-      };
+      // Notificar background script sobre início da gravação
+      await this.notifyRecordingStart(maxDuration * 1000);
       
-      this.mediaRecorder.start();
-      this.isRecording = true;
+      this.updateCaptureStatus('Overlay de gravação injetado!', 'success');
       
-      const button = document.getElementById('startRecording');
-      const btnText = button.querySelector('.btn-text');
-      btnText.textContent = 'Stop';
-      button.classList.add('recording');
+      // Fechar popup após 1 segundo
+      setTimeout(() => {
+        window.close();
+      }, 1000);
       
-      this.updateCaptureStatus('Recording screen...', 'loading');
     } catch (error) {
       console.error('Error starting recording:', error);
-      this.updateCaptureStatus('Error starting recording', 'error');
+      
+      let errorMessage = 'Erro ao iniciar gravação';
+      if (error.message.includes('Cannot access')) {
+        errorMessage = 'Não é possível gravar nesta página. Tente em uma página web normal (http/https).';
+      } else if (error.message.includes('Nenhuma aba')) {
+        errorMessage = 'Nenhuma aba ativa encontrada';
+      }
+      
+      this.updateCaptureStatus(errorMessage, 'error');
     }
   }
 
   stopRecording() {
     if (this.mediaRecorder && this.isRecording) {
-      this.mediaRecorder.stop();
+      try {
+        this.mediaRecorder.stop();
+      } catch (error) {
+        console.error('Error stopping recording:', error);
+      }
+      
       this.isRecording = false;
       
-      const button = document.getElementById('startRecording');
-      const btnText = button.querySelector('.btn-text');
-      btnText.textContent = 'Video';
-      button.classList.remove('recording');
+      // Notificar background script sobre parada da gravação
+      this.notifyRecordingStop();
       
+      // Limpar timeout se ainda estiver ativo
+      if (this.recordingTimeout) {
+        clearTimeout(this.recordingTimeout);
+        this.recordingTimeout = null;
+      }
+      
+      // Limpar timer de atualização
+      if (this.recordingTimerInterval) {
+        clearInterval(this.recordingTimerInterval);
+        this.recordingTimerInterval = null;
+      }
+      
+      this.resetRecordingButton();
       this.updateCaptureStatus('Finalizing recording...', 'loading');
     }
+  }
+  
+  resetRecordingButton() {
+    const button = document.getElementById('startRecording');
+    if (!button) {
+      console.warn('[Popup] Botão startRecording não encontrado');
+      return;
+    }
+    
+    const btnText = button.querySelector('.btn-text');
+    if (!btnText) {
+      console.warn('[Popup] Elemento .btn-text não encontrado');
+      return;
+    }
+    
+    btnText.textContent = 'Video';
+    button.classList.remove('recording');
+  }
+  
+  updateRecordingTimer(maxDuration, startElapsed = 0) {
+    let elapsed = startElapsed;
+    this.recordingTimerInterval = setInterval(() => {
+      elapsed += 1000;
+      const remaining = Math.max(0, (maxDuration - elapsed) / 1000);
+      
+      if (remaining > 0) {
+        const minutes = Math.floor(remaining / 60);
+        const seconds = Math.round(remaining % 60);
+        this.updateCaptureStatus(`Recording... (${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')} remaining)`, 'loading');
+      }
+      
+      if (elapsed >= maxDuration) {
+        clearInterval(this.recordingTimerInterval);
+        this.recordingTimerInterval = null;
+      }
+    }, 1000);
   }
 
   addAttachment(attachment) {
@@ -762,29 +856,236 @@ class BugSpotter {
         screenshot: 'image',
         logs: 'description',
         dom: 'code',
-        recording: 'videocam'
+        recording: 'videocam',
+        video: 'videocam'
       };
       
+      // Criar elementos base
+      const attachmentInfo = document.createElement('div');
+      attachmentInfo.className = 'attachment-info';
+      
+      const icon = document.createElement('span');
+      icon.className = 'material-icons attachment-icon';
+      icon.textContent = typeIcons[attachment.type];
+      
+      const details = document.createElement('div');
+      details.className = 'attachment-details';
+      
       const nameElement = document.createElement('div');
+      nameElement.className = 'attachment-name';
       nameElement.textContent = attachment.name;
       
-      item.innerHTML = `
-        <div class="attachment-info">
-          <span class="material-icons attachment-icon">${typeIcons[attachment.type]}</span>
-          <div class="attachment-details">
-            <div class="attachment-name"></div>
-            <div class="attachment-size">${this.formatFileSize(attachment.size)}</div>
-          </div>
-        </div>
-        <button class="btn-icon remove-attachment" data-index="${index}" title="Remove attachment">
-          <span class="material-icons">delete</span>
-        </button>
-      `;
+      const sizeElement = document.createElement('div');
+      sizeElement.className = 'attachment-size';
       
-      item.querySelector('.attachment-name').appendChild(nameElement);
+      // Adicionar informações específicas por tipo
+      if (attachment.type === 'recording' && attachment.duration) {
+        sizeElement.textContent = `${this.formatFileSize(attachment.size)} • ${attachment.duration}s`;
+        
+        // Adicionar preview do vídeo se disponível
+        if (attachment.data) {
+          const previewContainer = document.createElement('div');
+          previewContainer.className = 'video-preview-container';
+          
+          const video = document.createElement('video');
+          video.className = 'video-preview';
+          video.src = attachment.data;
+          video.controls = false;
+          video.muted = true;
+          video.preload = 'metadata';
+          video.style.width = '60px';
+          video.style.height = '40px';
+          video.style.objectFit = 'cover';
+          video.style.borderRadius = '4px';
+          video.style.cursor = 'pointer';
+          
+          // Adicionar evento para reproduzir/pausar ao clicar
+          video.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.showVideoPreview(attachment);
+          });
+          
+          // Tentar capturar frame inicial
+          video.addEventListener('loadedmetadata', () => {
+            video.currentTime = Math.min(1, video.duration * 0.1); // 10% do vídeo ou 1s
+          });
+          
+          previewContainer.appendChild(video);
+          
+          // Adicionar overlay de play
+          const playOverlay = document.createElement('div');
+          playOverlay.className = 'video-play-overlay';
+          playOverlay.innerHTML = '<span class="material-icons">play_circle_filled</span>';
+          playOverlay.style.cssText = `
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: white;
+            font-size: 20px;
+            text-shadow: 0 0 4px rgba(0,0,0,0.8);
+            pointer-events: none;
+          `;
+          previewContainer.style.position = 'relative';
+          previewContainer.appendChild(playOverlay);
+          
+          attachmentInfo.appendChild(previewContainer);
+        }
+      } else {
+        sizeElement.textContent = this.formatFileSize(attachment.size);
+        
+        // Remover preview de screenshots conforme solicitado
+      }
+      
+      details.appendChild(nameElement);
+      details.appendChild(sizeElement);
+      
+      attachmentInfo.appendChild(icon);
+      attachmentInfo.appendChild(details);
+      
+      const removeBtn = document.createElement('button');
+      removeBtn.className = 'btn-icon remove-attachment';
+      removeBtn.setAttribute('data-index', index);
+      removeBtn.title = 'Remove attachment';
+      removeBtn.innerHTML = '<span class="material-icons">delete</span>';
+      
+      item.appendChild(attachmentInfo);
+      item.appendChild(removeBtn);
       
       container.appendChild(item);
     });
+  }
+  
+  showVideoPreview(attachment) {
+    // Criar modal para preview do vídeo
+    const modal = document.createElement('div');
+    modal.className = 'video-preview-modal';
+    modal.style.cssText = `
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.8);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 10000;
+    `;
+    
+    const videoContainer = document.createElement('div');
+    videoContainer.style.cssText = `
+      position: relative;
+      max-width: 90%;
+      max-height: 90%;
+    `;
+    
+    const video = document.createElement('video');
+    video.src = attachment.data;
+    video.controls = true;
+    video.autoplay = true;
+    video.style.cssText = `
+      max-width: 100%;
+      max-height: 100%;
+      border-radius: 8px;
+    `;
+    
+    const closeBtn = document.createElement('button');
+    closeBtn.innerHTML = '<span class="material-icons">close</span>';
+    closeBtn.style.cssText = `
+      position: absolute;
+      top: -40px;
+      right: 0;
+      background: rgba(255, 255, 255, 0.9);
+      border: none;
+      border-radius: 50%;
+      width: 32px;
+      height: 32px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    `;
+    
+    closeBtn.addEventListener('click', () => {
+      document.body.removeChild(modal);
+    });
+    
+    modal.addEventListener('click', (e) => {
+      if (e.target === modal) {
+        document.body.removeChild(modal);
+      }
+    });
+    
+    videoContainer.appendChild(video);
+    videoContainer.appendChild(closeBtn);
+    modal.appendChild(videoContainer);
+    document.body.appendChild(modal);
+  }
+  
+  showImagePreview(attachment) {
+    // Criar modal para preview da imagem
+    const modal = document.createElement('div');
+    modal.className = 'image-preview-modal';
+    modal.style.cssText = `
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.8);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 10000;
+    `;
+    
+    const imgContainer = document.createElement('div');
+    imgContainer.style.cssText = `
+      position: relative;
+      max-width: 90%;
+      max-height: 90%;
+    `;
+    
+    const img = document.createElement('img');
+    img.src = attachment.data;
+    img.style.cssText = `
+      max-width: 100%;
+      max-height: 100%;
+      border-radius: 8px;
+    `;
+    
+    const closeBtn = document.createElement('button');
+    closeBtn.innerHTML = '<span class="material-icons">close</span>';
+    closeBtn.style.cssText = `
+      position: absolute;
+      top: -40px;
+      right: 0;
+      background: rgba(255, 255, 255, 0.9);
+      border: none;
+      border-radius: 50%;
+      width: 32px;
+      height: 32px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    `;
+    
+    closeBtn.addEventListener('click', () => {
+      document.body.removeChild(modal);
+    });
+    
+    modal.addEventListener('click', (e) => {
+      if (e.target === modal) {
+        document.body.removeChild(modal);
+      }
+    });
+    
+    imgContainer.appendChild(img);
+    imgContainer.appendChild(closeBtn);
+    modal.appendChild(imgContainer);
+    document.body.appendChild(modal);
   }
 
   async submitBug(event) {
@@ -958,6 +1259,12 @@ class BugSpotter {
         autoCapture: settings.popup?.autoCapture ?? true,
         includeConsole: settings.popup?.includeConsole ?? true,
         maxFileSize: settings.popup?.maxFileSize ?? 5,
+        capture: {
+          autoCaptureLogs: settings.capture?.autoCaptureLogs ?? true,
+          screenshotFormat: settings.capture?.screenshotFormat ?? 'png',
+          maxVideoLength: settings.capture?.maxVideoLength ?? 30,
+          screenshotQuality: settings.capture?.screenshotQuality ?? 90
+        },
         jira: {
           enabled: settings.jira?.enabled ?? false,
           url: settings.jira?.url || '',
@@ -977,6 +1284,12 @@ class BugSpotter {
         autoCapture: true,
         includeConsole: true,
         maxFileSize: 5,
+        capture: {
+          autoCaptureLogs: true,
+          screenshotFormat: 'png',
+          maxVideoLength: 30,
+          screenshotQuality: 90
+        },
         jira: {
           enabled: false,
           url: '',
@@ -2063,12 +2376,344 @@ class BugSpotter {
       console.error('❌ Erro ao carregar prioridades:', error);
     }
   }
+
+  // Métodos para gerenciamento de estado de gravação
+  async checkRecordingState() {
+    try {
+      const response = await chrome.runtime.sendMessage({ action: 'GET_RECORDING_STATE' });
+      if (response && response.success && response.state && response.state.isRecording) {
+        console.log('[Popup] Gravação em andamento detectada, restaurando estado...');
+        
+        // Calcular tempo decorrido e restante
+        const elapsed = Date.now() - response.state.startTime;
+        const remaining = response.state.maxDuration - elapsed;
+        
+        if (remaining > 1000) { // Se ainda há mais de 1 segundo restante
+          // Tentar restaurar gravação ativa
+          await this.attemptRecordingRecovery(remaining);
+        } else {
+          // Gravação deve ter terminado, limpar estado
+          console.log('[Popup] Gravação expirou, limpando estado...');
+          await this.handleExpiredRecording();
+        }
+      }
+    } catch (error) {
+      console.error('[Popup] Erro ao verificar estado de gravação:', error);
+    }
+  }
+
+  async attemptRecordingRecovery(remainingTime) {
+    try {
+      // Verificar se ainda temos acesso ao stream de mídia
+      if (this.mediaRecorder && this.mediaRecorder.state === 'recording') {
+        console.log('[Popup] MediaRecorder ainda ativo, continuando gravação...');
+        await this.restoreRecordingUI(remainingTime);
+        return;
+      }
+      
+      // Se não temos MediaRecorder ativo, mostrar opções de recuperação
+      this.showRecoveryOptions(remainingTime);
+      
+    } catch (error) {
+      console.error('[Popup] Erro na recuperação da gravação:', error);
+      this.showRecoveryOptions(remainingTime);
+    }
+  }
+
+  async restoreRecordingUI(remainingTime) {
+    this.isRecording = true;
+    
+    const button = document.getElementById('startRecording');
+    if (!button) {
+      console.warn('[Popup] Botão startRecording não encontrado ao restaurar UI');
+      return;
+    }
+    
+    const btnText = button.querySelector('.btn-text');
+    if (!btnText) {
+      console.warn('[Popup] Elemento .btn-text não encontrado ao restaurar UI');
+      return;
+    }
+    
+    btnText.textContent = 'Stop';
+    button.classList.add('recording');
+    
+    const totalSeconds = Math.ceil(remainingTime/1000);
+      const minutes = Math.floor(totalSeconds / 60);
+      const seconds = totalSeconds % 60;
+      this.updateCaptureStatus(`Gravação restaurada... (${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')} restantes)`, 'success');
+    
+    // Calcular tempo total baseado nas configurações
+    const settings = await this.getSettings();
+    const maxDuration = (settings.capture?.maxVideoLength || 30) * 1000;
+    const elapsedTime = maxDuration - remainingTime;
+    
+    this.updateRecordingTimer(maxDuration, elapsedTime);
+  }
+
+  showRecoveryOptions(remainingTime) {
+    const statusDiv = document.getElementById('captureStatus');
+    if (!statusDiv) {
+      console.warn('[Popup] Elemento captureStatus não encontrado para mostrar opções de recuperação');
+      return;
+    }
+    
+    statusDiv.innerHTML = `
+      <div class="recovery-options" style="background: #fff3cd; border: 1px solid #ffeaa7; border-radius: 4px; padding: 12px; margin: 8px 0;">
+        <div style="color: #856404; font-weight: bold; margin-bottom: 8px;">
+          🔄 Gravação Interrompida Detectada
+        </div>
+        <div style="color: #856404; margin-bottom: 12px; font-size: 14px;">
+          Uma gravação estava em andamento (${(() => {
+            const totalSeconds = Math.ceil(remainingTime/1000);
+            const minutes = Math.floor(totalSeconds / 60);
+            const seconds = totalSeconds % 60;
+            return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+          })()} restantes). O que deseja fazer?
+        </div>
+        <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+          <button id="continueRecording" class="btn btn-primary" style="font-size: 12px; padding: 6px 12px;">
+            ▶️ Continuar Gravação
+          </button>
+          <button id="cancelRecording" class="btn btn-secondary" style="font-size: 12px; padding: 6px 12px;">
+            ❌ Cancelar
+          </button>
+        </div>
+      </div>
+    `;
+    
+    // Adicionar event listeners para os botões de recuperação
+    const continueBtn = document.getElementById('continueRecording');
+    const cancelBtn = document.getElementById('cancelRecording');
+    
+    if (continueBtn) {
+      continueBtn.addEventListener('click', () => {
+        this.continueRecording(remainingTime);
+      });
+    } else {
+      console.warn('[Popup] Botão continueRecording não encontrado');
+    }
+    
+    if (cancelBtn) {
+      cancelBtn.addEventListener('click', () => {
+        this.cancelRecording();
+      });
+    } else {
+      console.warn('[Popup] Botão cancelRecording não encontrado');
+    }
+  }
+
+  async continueRecording(remainingTime) {
+    try {
+      // Iniciar nova gravação com o tempo restante
+      const settings = await this.getSettings();
+      const stream = await navigator.mediaDevices.getDisplayMedia({
+        video: { 
+          mediaSource: 'screen',
+          width: { ideal: 1920, max: 1920 },
+          height: { ideal: 1080, max: 1080 },
+          frameRate: { ideal: 30, max: 30 }
+        },
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          sampleRate: 44100
+        }
+      });
+      
+      // Configurar MediaRecorder
+      const options = { 
+        mimeType: 'video/webm;codecs=vp9',
+        videoBitsPerSecond: 1000000,
+        audioBitsPerSecond: 128000
+      };
+      
+      if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+        options.mimeType = 'video/webm;codecs=vp8';
+        options.videoBitsPerSecond = 800000;
+        if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+          options.mimeType = 'video/webm';
+          options.videoBitsPerSecond = 600000;
+        }
+      }
+      
+      this.mediaRecorder = new MediaRecorder(stream, options);
+      this.recordedChunks = [];
+      this.recordingStartTime = Date.now() - (settings.capture?.maxVideoLength * 1000 - remainingTime);
+      
+      // Configurar timeout para o tempo restante
+      this.recordingTimeout = setTimeout(() => {
+        if (this.isRecording) {
+          this.updateCaptureStatus('Gravação finalizada automaticamente', 'warning');
+          this.stopRecording();
+        }
+      }, remainingTime);
+      
+      // Event listeners
+      this.mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          this.recordedChunks.push(event.data);
+        }
+      };
+      
+      this.mediaRecorder.onstop = () => {
+        if (this.recordingTimeout) {
+          clearTimeout(this.recordingTimeout);
+          this.recordingTimeout = null;
+        }
+        
+        stream.getTracks().forEach(track => track.stop());
+        
+        const blob = new Blob(this.recordedChunks, { type: options.mimeType });
+        const duration = (Date.now() - this.recordingStartTime) / 1000;
+        
+        const maxSize = 50 * 1024 * 1024;
+        if (blob.size > maxSize) {
+          this.updateCaptureStatus('Gravação muito grande (>50MB)', 'error');
+          return;
+        }
+        
+        const reader = new FileReader();
+        reader.onload = () => {
+          this.addAttachment({
+            type: 'recording',
+            name: `screen_recording_recovered_${Date.now()}.webm`,
+            data: reader.result,
+            size: blob.size,
+            duration: Math.round(duration)
+          });
+          this.updateCaptureStatus(`Gravação recuperada com sucesso! (${Math.round(duration)}s)`, 'success');
+        };
+        reader.readAsDataURL(blob);
+      };
+      
+      stream.getVideoTracks()[0].addEventListener('ended', () => {
+        if (this.isRecording) {
+          this.updateCaptureStatus('Compartilhamento de tela encerrado', 'info');
+          this.stopRecording();
+        }
+      });
+      
+      this.mediaRecorder.start(1000);
+      this.isRecording = true;
+      await this.restoreRecordingUI(remainingTime);
+      
+    } catch (error) {
+      console.error('[Popup] Erro ao continuar gravação:', error);
+      this.updateCaptureStatus('Erro ao continuar gravação', 'error');
+      this.cancelRecording();
+    }
+  }
+
+  async cancelRecording() {
+    try {
+      await chrome.runtime.sendMessage({ action: 'STOP_RECORDING' });
+      this.updateCaptureStatus('Gravação cancelada', 'info');
+      this.resetRecordingButton();
+    } catch (error) {
+      console.error('[Popup] Erro ao cancelar gravação:', error);
+    }
+  }
+
+  async handleExpiredRecording() {
+    try {
+      await chrome.runtime.sendMessage({ action: 'STOP_RECORDING' });
+      this.updateCaptureStatus('Gravação anterior expirou', 'warning');
+      this.resetRecordingButton();
+    } catch (error) {
+      console.error('[Popup] Erro ao limpar gravação expirada:', error);
+    }
+  }
+
+  async notifyRecordingStart(maxDuration) {
+    try {
+      await chrome.runtime.sendMessage({
+        action: 'START_RECORDING',
+        maxDuration: maxDuration
+      });
+      console.log('[Popup] Background notificado sobre início da gravação');
+    } catch (error) {
+      console.error('[Popup] Erro ao notificar início da gravação:', error);
+    }
+  }
+
+  async notifyRecordingStop() {
+    try {
+      await chrome.runtime.sendMessage({ action: 'STOP_RECORDING' });
+      console.log('[Popup] Background notificado sobre parada da gravação');
+    } catch (error) {
+      console.error('[Popup] Erro ao notificar parada da gravação:', error);
+    }
+  }
+
+  handleBackgroundMessage(message, sender, sendResponse) {
+    console.log('[Popup] Mensagem recebida do background:', message);
+    
+    switch (message.type) {
+      case 'VIDEO_ATTACHED':
+        this.handleVideoAttached(message);
+        break;
+      default:
+        console.log('[Popup] Tipo de mensagem desconhecido:', message.type);
+    }
+    
+    sendResponse({ success: true });
+  }
+
+  async handleVideoAttached(message) {
+    try {
+      if (message.success && message.videoKey) {
+        // Sucesso - carregar o vídeo e adicionar aos anexos
+        console.log('[Popup] Vídeo anexado com sucesso:', message.videoKey);
+        
+        // Recuperar dados do vídeo do storage
+        const videoData = await chrome.storage.local.get(message.videoKey);
+        if (videoData[message.videoKey]) {
+          const storedItem = videoData[message.videoKey];
+          // O StorageManager armazena dados com metadados
+          const video = storedItem.data || storedItem;
+          
+          // Criar anexo de vídeo
+          const attachment = {
+            type: 'video',
+            name: `video_recording_${Date.now()}.webm`,
+            data: video.data || video,
+            timestamp: storedItem.timestamp || Date.now(),
+            size: storedItem.size || this.calculateDataUrlSize(video.data || video)
+          };
+          
+          // Adicionar aos anexos
+          this.addAttachment(attachment);
+          
+          // Exibir mensagem de sucesso
+          this.updateCaptureStatus('Gravação de vídeo concluída com sucesso!', 'success');
+          
+          // Limpar dados temporários do storage
+          await chrome.storage.local.remove(message.videoKey);
+        } else {
+          throw new Error('Dados do vídeo não encontrados no storage');
+        }
+      } else {
+        // Erro na gravação
+        const errorMsg = message.error || 'Erro desconhecido na gravação';
+        console.error('[Popup] Erro na gravação:', errorMsg);
+        this.updateCaptureStatus(`❌ Falha na gravação: ${errorMsg}`, 'error');
+      }
+    } catch (error) {
+      console.error('[Popup] Erro ao processar vídeo anexado:', error);
+      this.updateCaptureStatus('❌ Erro ao processar gravação de vídeo', 'error');
+    }
+  }
 }
 
 // Initialize when DOM is ready
-document.addEventListener('DOMContentLoaded', () => {
-  window.bugSpotter = new BugSpotter();
-  window.bugSpotter.init(); // Add this line!
+document.addEventListener('DOMContentLoaded', async () => {
+  try {
+    window.bugSpotter = new BugSpotter();
+    await window.bugSpotter.init();
+  } catch (error) {
+    console.error('[Popup] Erro na inicialização:', error);
+  }
 });
 
 // Adicionar error boundary global
