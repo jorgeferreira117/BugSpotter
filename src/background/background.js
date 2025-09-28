@@ -1687,11 +1687,14 @@ class BugSpotterBackground {
         
         let blob;
         
-        // Verificar se é base64 (screenshot) ou texto puro (DOM/console)
+        // Verificar se é base64 (screenshot/video) ou texto puro (DOM/console)
         if (attachment.data.startsWith('data:')) {
-          // É base64 (screenshot)
+          // É base64 (screenshot ou vídeo)
           // Processando anexo base64 - silenciado
           try {
+            const mimeMatch = attachment.data.match(/data:([^;]+);base64,/);
+            const detectedMimeType = mimeMatch ? mimeMatch[1] : this.getMimeType(attachment.type);
+            
             const base64Data = attachment.data.split(',')[1];
             const byteCharacters = atob(base64Data);
             const byteNumbers = new Array(byteCharacters.length);
@@ -1701,7 +1704,14 @@ class BugSpotterBackground {
             }
             
             const byteArray = new Uint8Array(byteNumbers);
-            blob = new Blob([byteArray], { type: this.getMimeType(attachment.type) });
+            blob = new Blob([byteArray], { type: detectedMimeType });
+            
+            // Para vídeos, garantir que o nome do arquivo tenha a extensão correta
+            if (attachment.type === 'recording' || detectedMimeType.startsWith('video/')) {
+              if (!attachment.name.endsWith('.webm')) {
+                attachment.name = attachment.name.replace(/\.[^.]*$/, '') + '.webm';
+              }
+            }
           } catch (base64Error) {
             console.error(`Erro ao processar base64 do anexo ${attachment.name}:`, base64Error);
             failedAttachments.push({ name: attachment.name, error: 'Erro no processamento base64' });
@@ -1769,7 +1779,8 @@ class BugSpotterBackground {
       'screenshot': 'image/png',
       'logs': 'application/json',  // Corrigido: logs são JSON
       'dom': 'text/html',
-      'recording': 'video/webm'
+      'recording': 'video/webm',
+      'video': 'video/webm'  // Adicionado suporte para tipo 'video'
     };
     return mimeTypes[attachmentType] || 'application/octet-stream';
   }
