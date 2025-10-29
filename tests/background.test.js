@@ -286,6 +286,31 @@ class BugSpotterBackground {
     this.bufferSize = 1000;
   }
 
+  deduplicateNetworkRequests(requests) {
+    if (!Array.isArray(requests)) return [];
+    const seen = new Set();
+    return requests.filter(req => {
+      try {
+        const ts = new Date(req.timestamp || 0).getTime();
+        const roundedSec = isNaN(ts) ? 0 : Math.floor(ts / 1000);
+        const key = req.requestId && typeof req.requestId === 'string'
+          ? `id:${req.requestId}`
+          : [
+              'm', (req.method || '').toUpperCase(),
+              'u', (req.url || ''),
+              's', (typeof req.status === 'number' ? req.status : 'NA'),
+              't', (req.type || ''),
+              'sec', roundedSec
+            ].join('|');
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      } catch (_) {
+        return true;
+      }
+    });
+  }
+
   getDebuggerLogs(tabId, domainFilter = null) {
     const session = this.debuggerSessions.get(tabId);
     const persistentData = this.persistentLogs.get(tabId) || { logs: [], networkRequests: [], errors: [] };
@@ -301,7 +326,10 @@ class BugSpotterBackground {
     }
     
     const combinedLogs = [...persistentData.logs, ...session.logs];
-    const combinedNetworkRequests = [...persistentData.networkRequests, ...session.networkRequests];
+    const combinedNetworkRequests = this.deduplicateNetworkRequests([
+      ...persistentData.networkRequests,
+      ...session.networkRequests
+    ]);
     const combinedErrors = [...persistentData.errors, ...session.logs.filter(log => log.level === 'error')];
     
     if (domainFilter) {
@@ -437,6 +465,38 @@ class BugSpotterBackground {
       seen.add(key);
       return true;
     });
+  }
+
+  getRecentLogs(tabId, { windowMs = 30000, limit = 50, domainFilter = null } = {}) {
+    const now = Date.now();
+    const logsBundle = this.getDebuggerLogs(tabId, domainFilter);
+    const allLogs = Array.isArray(logsBundle.logs) ? logsBundle.logs : [];
+
+    const keywords = [
+      'error', 'failed', 'exception', 'timeout', 'unauthorized',
+      'forbidden', 'not found', 'invalid', 'denied', 'reject', 'rejected',
+      'blocked', 'abort', 'unavailable', 'overload'
+    ];
+
+    const filtered = allLogs
+      .filter(log => {
+        if (!log || !log.timestamp) return false;
+        const ts = new Date(log.timestamp).getTime();
+        if (isNaN(ts)) return false;
+        if (ts < now - windowMs) return false;
+        if (log.type === 'exception') return true;
+        const level = (log.level || '').toLowerCase();
+        const text = (log.text || '').toLowerCase();
+        if (level === 'error' || level === 'warn') return true;
+        if (level === 'info' || level === 'log' || level === '') {
+          return keywords.some(k => text.includes(k));
+        }
+        return false;
+      })
+      .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp))
+      .slice(-limit);
+
+    return filtered;
   }
 
   getMimeType(attachmentType) {
@@ -606,6 +666,42 @@ describe('BugSpotterBackground', () => {
     bugSpotter = new BugSpotterBackground();
   });
 
+  describe('deduplicateNetworkRequests', () => {
+    it('should keep request and response events without requestId in same second', () => {
+      const baseTs = Date.now();
+      const url = 'https://api.example.com/data';
+      const items = [
+        { method: 'GET', url, type: 'request', timestamp: baseTs },
+        { method: 'GET', url, status: 200, type: 'response', timestamp: baseTs + 300 }
+      ];
+      const result = bugSpotter.deduplicateNetworkRequests(items);
+      expect(result).toHaveLength(2);
+    });
+
+    it('should collapse exact duplicates without requestId in same second', () => {
+      const baseTs = Math.floor(Date.now() / 1000) * 1000 + 100; // fixa dentro do mesmo segundo
+      const url = 'https://api.example.com/data';
+      const items = [
+        { method: 'GET', url, status: 200, type: 'response', timestamp: baseTs },
+        { method: 'GET', url, status: 200, type: 'response', timestamp: baseTs + 800 }
+      ];
+      const result = bugSpotter.deduplicateNetworkRequests(items);
+      expect(result).toHaveLength(1);
+    });
+
+    it('should collapse by requestId even if other fields vary', () => {
+      const baseTs = Date.now();
+      const id = 'req-123';
+      const url = 'https://api.example.com/data';
+      const items = [
+        { requestId: id, method: 'GET', url, type: 'request', timestamp: baseTs },
+        { requestId: id, method: 'GET', url, status: 200, type: 'response', timestamp: baseTs + 5000 }
+      ];
+      const result = bugSpotter.deduplicateNetworkRequests(items);
+      expect(result).toHaveLength(1);
+    });
+  });
+
   describe('setupContextMenus', () => {
     it('should create context menu items', () => {
       bugSpotter.setupContextMenus();
@@ -710,7 +806,10 @@ describe('BugSpotterBackground', () => {
           { message: 'log1', url: 'https://example.com/page' },
           { message: 'log2', url: 'https://other.com/page' }
         ],
-        networkRequests: [],
+        networkRequests: [
+          { method: 'GET', url: 'https://example.com/api', type: 'request', timestamp: Date.now() },
+          { method: 'GET', url: 'https://example.com/api', status: 200, type: 'response', timestamp: Date.now() }
+        ],
         errors: []
       };
       bugSpotter.persistentLogs.set(123, mockLogs);
@@ -719,6 +818,91 @@ describe('BugSpotterBackground', () => {
       
       expect(result.logs).toHaveLength(1);
       expect(result.logs[0].message).toBe('log1');
+      expect(result.networkRequests.every(r => r.url.includes('example.com'))).toBe(true);
+    });
+
+    it('should deduplicate networkRequests when combining persistent and session', () => {
+      const tabId = 321;
+      const url = 'https://example.com/api';
+      const now = Math.floor(Date.now() / 1000) * 1000 + 100; // garantir mesmo segundo
+      bugSpotter.persistentLogs.set(tabId, {
+        logs: [],
+        networkRequests: [
+          { method: 'GET', url, status: 200, type: 'response', timestamp: now }
+        ],
+        errors: []
+      });
+      bugSpotter.debuggerSessions.set(tabId, {
+        logs: [],
+        networkRequests: [
+          { method: 'GET', url, status: 200, type: 'response', timestamp: now + 800 }
+        ]
+      });
+
+      const result = bugSpotter.getDebuggerLogs(tabId);
+      expect(result.networkRequests).toHaveLength(1);
+    });
+  });
+
+  describe('getRecentLogs', () => {
+    it('should filter by windowMs and include only recent errors', () => {
+      const tabId = 555;
+      const now = Date.now();
+      bugSpotter.persistentLogs.set(tabId, {
+        logs: [
+          { level: 'error', text: 'old error', timestamp: new Date(now - 40000).toISOString() },
+          { level: 'error', text: 'recent error 1', timestamp: new Date(now - 5000).toISOString() },
+          { level: 'warn', text: 'recent warn', timestamp: new Date(now - 1000).toISOString() }
+        ],
+        networkRequests: [],
+        errors: []
+      });
+
+      const result = bugSpotter.getRecentLogs(tabId, { windowMs: 30000, limit: 10 });
+      expect(result.map(l => l.text)).toEqual(['recent error 1', 'recent warn']);
+    });
+
+    it('should honor limit and return last N sorted ascending', () => {
+      const tabId = 556;
+      const now = Date.now();
+      bugSpotter.persistentLogs.set(tabId, {
+        logs: [
+          { level: 'error', text: 'e1', timestamp: new Date(now - 25000).toISOString() },
+          { level: 'error', text: 'e2', timestamp: new Date(now - 20000).toISOString() },
+          { level: 'error', text: 'e3', timestamp: new Date(now - 15000).toISOString() }
+        ],
+        networkRequests: [],
+        errors: []
+      });
+
+      const result = bugSpotter.getRecentLogs(tabId, { windowMs: 30000, limit: 2 });
+      expect(result.map(l => l.text)).toEqual(['e2', 'e3']);
+    });
+
+    it('should not interfere with networkRequests dedupe', () => {
+      const tabId = 557;
+      const now = Math.floor(Date.now() / 1000) * 1000 + 100;
+      const url = 'https://example.com/api';
+      bugSpotter.persistentLogs.set(tabId, {
+        logs: [
+          { level: 'error', text: 'recent', timestamp: new Date(now).toISOString() }
+        ],
+        networkRequests: [
+          { method: 'GET', url, status: 200, type: 'response', timestamp: now }
+        ],
+        errors: []
+      });
+      bugSpotter.debuggerSessions.set(tabId, {
+        logs: [],
+        networkRequests: [
+          { method: 'GET', url, status: 200, type: 'response', timestamp: now + 800 }
+        ]
+      });
+
+      const logs = bugSpotter.getRecentLogs(tabId, { windowMs: 30000, limit: 10 });
+      expect(Array.isArray(logs)).toBe(true);
+      const { networkRequests } = bugSpotter.getDebuggerLogs(tabId);
+      expect(networkRequests).toHaveLength(1);
     });
   });
 });

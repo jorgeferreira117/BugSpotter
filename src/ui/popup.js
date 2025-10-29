@@ -50,8 +50,7 @@ class BugSpotter {
   setupEventListeners() {
     // Event listeners for main buttons
     document.getElementById('captureScreenshot').addEventListener('click', () => this.captureScreenshot());
-    // Split-button: ação principal usa preferência
-    document.getElementById('captureLogs').addEventListener('click', () => this.captureByPreferredMode());
+    // Split-button: botão principal (Logs) não é clicável; apenas o caret abre o menu
     document.getElementById('captureDOM').addEventListener('click', () => this.captureDOM());
     document.getElementById('startRecording').addEventListener('click', () => this.startRecording());
     document.getElementById('clearHistory').addEventListener('click', () => this.clearHistory());
@@ -443,29 +442,75 @@ class BugSpotter {
     
     try {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      
-      // Tentar usar Chrome Debugger API primeiro
-      let logData = await this.captureLogsWithDebugger(tab.id);
-      
-      // Se falhar, usar método tradicional como fallback
-      if (!logData || logData.length === 0) {
-        // Debugger API failed, using fallback method - silenciado
-        logData = await this.captureLogsTraditional(tab.id);
+
+      // Extrair parâmetros configuráveis de janela e limite
+      const cfg = this.cachedSettings?.capture || {};
+      let winSec = Number(cfg.recentLogsWindowSeconds ?? 30);
+      let lim = Number(cfg.recentLogsLimit ?? 10);
+      winSec = isFinite(winSec) ? Math.max(30, Math.min(120, winSec)) : 30;
+      lim = isFinite(lim) ? Math.max(10, Math.min(50, lim)) : 10;
+      const windowMsCfg = winSec * 1000;
+
+      // 1) Tente obter logs recentes diretamente do background (unificado)
+      let recentLogs = null;
+      try {
+        const res = await chrome.runtime.sendMessage({
+          action: 'GET_RECENT_LOGS',
+          tabId: tab?.id,
+          windowMs: windowMsCfg,
+          limit: lim
+        });
+        if (res?.success && Array.isArray(res.data?.logs)) {
+          recentLogs = res.data.logs;
+        }
+      } catch (_) {
+        // Silenciar e seguir para fallback
       }
-      
-      if (logData && logData.length > 0) {
+
+      // 2) Se não houver logs, tentar anexar debugger rapidamente e repetir
+      if ((!recentLogs || recentLogs.length === 0) && tab?.id) {
+        try {
+          const attachResult = await chrome.runtime.sendMessage({ action: 'ATTACH_DEBUGGER', tabId: tab.id });
+          if (attachResult?.success) {
+            await new Promise(r => setTimeout(r, 500));
+            const res2 = await chrome.runtime.sendMessage({
+              action: 'GET_RECENT_LOGS',
+              tabId: tab.id,
+              windowMs: windowMsCfg,
+              limit: lim
+            });
+            if (res2?.success && Array.isArray(res2.data?.logs)) {
+              recentLogs = res2.data.logs;
+            }
+          }
+        } catch (_) {
+          // Ignorar e usar fallback tradicional
+        } finally {
+          try { await chrome.runtime.sendMessage({ action: 'DETACH_DEBUGGER', tabId: tab.id }); } catch (_) {}
+        }
+      }
+
+      // 3) Se ainda vazio, usar fallback tradicional que injeta script
+      let logLines = [];
+      if (recentLogs && recentLogs.length > 0) {
+        logLines = this.formatUnifiedLogs(recentLogs);
+      } else {
+        const fallback = await this.captureLogsTraditional(tab?.id);
+        if (Array.isArray(fallback) && fallback.length > 0) {
+          logLines = fallback;
+        }
+      }
+
+      if (logLines.length > 0) {
         const attachment = {
           type: 'logs',
           name: `console_logs_${Date.now()}.txt`,
-          data: logData.join('\n'),
-          size: new Blob([logData.join('\n')]).size
+          data: logLines.join('\n'),
+          size: new Blob([logLines.join('\n')]).size
         };
-        
+
         const added = this.addAttachment(attachment);
-        
-        if (added) {
-          this.updateCaptureStatus('Console logs captured successfully!', 'success');
-        }
+        if (added) this.updateCaptureStatus('Console logs captured successfully!', 'success');
       } else {
         this.updateCaptureStatus('No console logs found', 'warning');
       }
@@ -788,6 +833,33 @@ class BugSpotter {
       console.error('Traditional capture failed:', error);
       return null;
     }
+  }
+
+  // Formata logs unificados (console, console-api, exception) em linhas de texto
+  formatUnifiedLogs(entries) {
+    const lines = [];
+    for (const log of entries) {
+      const ts = (() => { try { return new Date(log.timestamp).toISOString(); } catch { return String(log.timestamp || '') } })();
+      if (log.type === 'exception') {
+        let where = '';
+        const st = log.stackTrace;
+        if (st && Array.isArray(st.callFrames) && st.callFrames.length > 0) {
+          const f = st.callFrames[0];
+          where = ` at ${f.functionName || '<anonymous>'} (${f.url || log.url || ''}:${f.lineNumber}:${f.columnNumber})`;
+        } else if (log.url) {
+          where = ` at ${log.url}:${log.lineNumber}:${log.columnNumber}`;
+        }
+        const excRaw = (log.text !== undefined ? log.text : (log.message !== undefined ? log.message : 'Runtime Exception'));
+        const excText = typeof excRaw === 'string' ? excRaw : (() => { try { return JSON.stringify(excRaw); } catch { return String(excRaw); } })();
+        lines.push(`[ERROR] ${ts}: Exception: ${excText}${where}`);
+      } else {
+        const level = (log.level || 'log').toUpperCase();
+        const rawText = (log.text !== undefined ? log.text : (log.message !== undefined ? log.message : ''));
+        const text = typeof rawText === 'string' ? rawText : (() => { try { return JSON.stringify(rawText); } catch { return String(rawText); } })();
+        lines.push(`[${level}] ${ts}: ${text}`);
+      }
+    }
+    return lines;
   }
 
   async captureDOM() {
@@ -1421,7 +1493,9 @@ class BugSpotter {
           autoCaptureLogs: settings.capture?.autoCaptureLogs ?? true,
           screenshotFormat: settings.capture?.screenshotFormat ?? 'png',
           maxVideoLength: settings.capture?.maxVideoLength ?? 30,
-          screenshotQuality: settings.capture?.screenshotQuality ?? 90
+          screenshotQuality: settings.capture?.screenshotQuality ?? 90,
+          recentLogsWindowSeconds: settings.capture?.recentLogsWindowSeconds ?? 30,
+          recentLogsLimit: settings.capture?.recentLogsLimit ?? 10
         },
         jira: {
           enabled: settings.jira?.enabled ?? false,
@@ -2357,6 +2431,7 @@ class BugSpotter {
         });
         if (tabs && tabs.length > 0) {
           const tabId = tabs[0].id;
+          // 1) Detalhes de rede
           const netDetailsResp = await new Promise((resolve) => {
             chrome.runtime.sendMessage({
               action: 'GET_NETWORK_DETAILS',
@@ -2373,6 +2448,47 @@ class BugSpotter {
               name: 'network-details.json',
               data: jsonContent
             });
+          }
+
+          // 2) Logs de console recentes com parâmetros configuráveis
+          try {
+            // Extrair domínio para filtrar logs relevantes da aba corrente
+            let domainFilter = '';
+            try {
+              const useUrl = bugData.url && bugData.url.startsWith('http') ? bugData.url : (tabs[0].url || '');
+              domainFilter = new URL(useUrl).hostname || '';
+            } catch (_) {
+              domainFilter = '';
+            }
+            // Ler window/limit das configurações
+            const cfg = this.cachedSettings?.capture || {};
+            let winSec = Number(cfg.recentLogsWindowSeconds ?? 30);
+            let lim = Number(cfg.recentLogsLimit ?? 10);
+            winSec = isFinite(winSec) ? Math.max(30, Math.min(120, winSec)) : 30;
+            lim = isFinite(lim) ? Math.max(10, Math.min(50, lim)) : 10;
+            const windowMsCfg = winSec * 1000;
+            const recentResp = await new Promise((resolve) => {
+              chrome.runtime.sendMessage({
+                action: 'GET_RECENT_LOGS',
+                tabId,
+                windowMs: windowMsCfg,
+                limit: lim,
+                domainFilter
+              }, resolve);
+            });
+            if (recentResp && recentResp.success && Array.isArray(recentResp.data?.logs) && recentResp.data.logs.length > 0) {
+              const lines = this.formatUnifiedLogs(recentResp.data.logs);
+              if (lines && lines.length > 0) {
+                bugData.attachments = bugData.attachments || [];
+                bugData.attachments.push({
+                  type: 'text',
+                  name: 'console-logs-recent.txt',
+                  data: lines.join('\n')
+                });
+              }
+            }
+          } catch (_) {
+            // Silenciar falhas ao coletar console; envio continua
           }
         }
       } catch (_) {

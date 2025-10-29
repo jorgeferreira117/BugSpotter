@@ -260,11 +260,31 @@ section:hover {
   justify-content: center;
 }
 
+/* Tornar o rótulo Logs claramente não interativo por padrão */
+.split-main[aria-disabled="true"] {
+  cursor: default;
+  pointer-events: none; /* evita aplicar :hover globais do .capture-btn */
+}
+
+.split-main[aria-disabled="true"]:hover {
+  transform: none;
+  box-shadow: none;
+}
+
 .split-caret {
   padding: 0;
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+/* Estado visual da seta quando o menu está aberto */
+.split-caret .material-icons {
+  transition: transform 0.2s ease;
+}
+
+.split-caret[aria-expanded="true"] .material-icons {
+  transform: rotate(180deg);
 }
 
 /* Dropdown menu */

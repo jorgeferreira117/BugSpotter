@@ -519,16 +519,37 @@ class BugSpotterBackground {
         break;
   
       case 'Runtime.consoleAPICalled':
+        const prettyArg = (arg) => {
+          try {
+            // Tipos primitivos e valores serializáveis diretamente
+            if (arg.value !== undefined) {
+              if (typeof arg.value === 'object' && arg.value !== null) {
+                try { return JSON.stringify(arg.value); } catch { /* fallthrough */ }
+              }
+              return String(arg.value);
+            }
+            // Preview de objetos (quando disponível via DevTools)
+            if (arg.preview && Array.isArray(arg.preview.properties)) {
+              const props = arg.preview.properties.map(p => `${p.name}: ${p.value}`).join(', ');
+              return `{ ${props}${arg.preview.overflow ? ', …' : ''} }`;
+            }
+            // Descrições úteis (Date, Error, Function, etc.)
+            if (arg.description !== undefined) return arg.description;
+            // Valores não serializáveis (Infinity, -0, NaN, BigInt, etc.)
+            if (arg.unserializableValue !== undefined) return String(arg.unserializableValue);
+            // Fallback identificando tipo de objeto remoto
+            if (arg.type) return `[${arg.type}]`;
+            if (arg.objectId) return '[Object]';
+            return JSON.stringify(arg);
+          } catch (_) {
+            return '[Unserializable]';
+          }
+        };
+
         const apiEntry = {
           type: 'console-api',
           level: params.type || 'log',
-          text: params.args ? params.args.map(arg => {
-            if (arg.value !== undefined) return String(arg.value);
-            if (arg.description !== undefined) return arg.description;
-            if (arg.unserializableValue !== undefined) return arg.unserializableValue;
-            if (arg.objectId) return '[Object]';
-            return JSON.stringify(arg);
-          }).join(' ') : '',
+          text: params.args && Array.isArray(params.args) ? params.args.map(prettyArg).join(' ') : '',
           timestamp: new Date(timestamp).toISOString(),
           stackTrace: params.stackTrace,
           executionContextId: params.executionContextId
@@ -1093,22 +1114,65 @@ class BugSpotterBackground {
     // Combinar logs da sessão atual com logs persistentes
     const combinedLogs = [...persistentData.logs, ...session.logs];
     const combinedNetworkRequests = [...persistentData.networkRequests, ...session.networkRequests];
+    const dedupedNetworkRequests = this.deduplicateNetworkRequests(combinedNetworkRequests);
     const combinedErrors = [...persistentData.errors, ...session.logs.filter(log => log.level === 'error')];
+    // Deduplicar para evitar entradas repetidas
+    const dedupedLogs = this.deduplicateLogs(combinedLogs);
+    const dedupedErrors = this.deduplicateLogs(combinedErrors);
     
     // Aplicar filtro se especificado
     if (domainFilter) {
       return {
-        logs: combinedLogs.filter(log => !log.url || log.url.includes(domainFilter)),
-        networkRequests: combinedNetworkRequests.filter(req => req.url.includes(domainFilter)),
-        errors: combinedErrors.filter(err => !err.url || err.url.includes(domainFilter))
+        logs: dedupedLogs.filter(log => !log.url || log.url.includes(domainFilter)),
+        networkRequests: dedupedNetworkRequests.filter(req => req.url.includes(domainFilter)),
+        errors: dedupedErrors.filter(err => !err.url || err.url.includes(domainFilter))
       };
     }
     
     return {
-      logs: combinedLogs,
-      networkRequests: combinedNetworkRequests,
-      errors: combinedErrors
+      logs: dedupedLogs,
+      networkRequests: dedupedNetworkRequests,
+      errors: dedupedErrors
     };
+  }
+
+  // Obter logs recentes unificados (console + console-api + exception)
+  getRecentLogs(tabId, { windowMs = 30000, limit = 50, domainFilter = null } = {}) {
+    const now = Date.now();
+    const logsBundle = this.getDebuggerLogs(tabId, domainFilter);
+    const allLogs = Array.isArray(logsBundle.logs) ? logsBundle.logs : [];
+
+    // Tipos relevantes e filtro prático para debug (palavras‑chave expandidas)
+    const keywords = [
+      'error', 'failed', 'exception', 'timeout', 'unauthorized',
+      'forbidden', 'not found', 'invalid', 'denied', 'reject', 'rejected',
+      'blocked', 'abort', 'unavailable', 'overload'
+    ];
+
+    const filtered = allLogs
+      .filter(log => {
+        if (!log || !log.timestamp) return false;
+        const ts = new Date(log.timestamp).getTime();
+        if (isNaN(ts)) return false;
+        if (ts < now - windowMs) return false;
+
+        // Incluir sempre exceções
+        if (log.type === 'exception') return true;
+
+        const level = (log.level || '').toLowerCase();
+        const text = (log.text || '').toLowerCase();
+
+        // Incluir erros e avisos; incluir infos com palavras‑chave úteis
+        if (level === 'error' || level === 'warn') return true;
+        if (level === 'info' || level === 'log' || level === '') {
+          return keywords.some(k => text.includes(k));
+        }
+        return false;
+      })
+      .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp))
+      .slice(-limit);
+
+    return filtered;
   }
 
   async getNetworkDetailsForError(tabId, url, timestamp) {
@@ -1246,7 +1310,7 @@ class BugSpotterBackground {
           const errorLog = {
             level: 'error',
             message: errorMessage,
-            timestamp: message.data.timestamp,
+            timestamp: message.data.timestamp || new Date().toISOString(),
             source: 'network',
             url: message.data.url,
             status: message.data.status,
@@ -1254,12 +1318,15 @@ class BugSpotterBackground {
             responseBody: message.data.responseBody,
             responseText: message.data.responseText
           };
-          
-          // Adicionar aos logs persistentes
-          if (!this.persistentLogs.has(tabId)) {
-            this.persistentLogs.set(tabId, []);
+
+          // Adicionar aos logs persistentes (normalizado: objeto { logs, networkRequests, errors })
+          let persistent = this.persistentLogs.get(tabId);
+          if (!persistent || Array.isArray(persistent)) {
+            persistent = { logs: [], networkRequests: [], errors: [] };
+            this.persistentLogs.set(tabId, persistent);
           }
-          this.addToBuffer(this.persistentLogs.get(tabId), errorLog);
+          this.addToBuffer(persistent.logs, errorLog);
+          this.addToBuffer(persistent.errors, errorLog);
           
           // Processar com AI se habilitado
           try {
@@ -1363,12 +1430,12 @@ class BugSpotterBackground {
           }
           break;
 
-      case 'GET_DEBUGGER_LOGS':
-        try {
-          const tabId = message.tabId || sender.tab?.id;
-          if (!tabId) {
-            throw new Error('No tab ID provided');
-          }
+        case 'GET_DEBUGGER_LOGS':
+          try {
+            const tabId = message.tabId || sender.tab?.id;
+            if (!tabId) {
+              throw new Error('No tab ID provided');
+            }
             
             // ✅ VALIDAR se a tab ainda existe (opcional para logs)
             const tabExists = await this.tabExists(tabId);
@@ -1415,6 +1482,33 @@ class BugSpotterBackground {
             sendResponse({ success: true, data: combinedLogs });
           } catch (error) {
             // Get debugger logs failed - silenciado
+            sendResponse({ success: false, error: error.message });
+          }
+          break;
+
+        case 'GET_RECENT_LOGS':
+          try {
+            const tabId = message.tabId || sender.tab?.id;
+            if (!tabId) {
+              throw new Error('No tab ID provided');
+            }
+
+            // Parâmetros opcionais
+            const windowMs = typeof message.windowMs === 'number' ? message.windowMs : 30000;
+            const limit = typeof message.limit === 'number' ? message.limit : 50;
+            const domainFilter = message.domainFilter || null;
+
+            // Se a aba não existir, ainda assim retornamos logs persistentes dentro da janela
+            const tabExists = await this.tabExists(tabId);
+            if (!tabExists) {
+              const logs = this.getRecentLogs(tabId, { windowMs, limit, domainFilter });
+              sendResponse({ success: true, data: { logs, tabClosed: true } });
+              break;
+            }
+
+            const logs = this.getRecentLogs(tabId, { windowMs, limit, domainFilter });
+            sendResponse({ success: true, data: { logs, tabClosed: false } });
+          } catch (error) {
             sendResponse({ success: false, error: error.message });
           }
           break;
@@ -2625,6 +2719,35 @@ Timestamp: ${originalTimestamp}`;
       }
       seen.add(key);
       return true;
+    });
+  }
+
+  // 🆕 NOVO: Deduplicar requisições de rede
+  deduplicateNetworkRequests(requests) {
+    if (!Array.isArray(requests)) return [];
+    const seen = new Set();
+    return requests.filter(req => {
+      try {
+        const ts = new Date(req.timestamp || 0).getTime();
+        const roundedSec = isNaN(ts) ? 0 : Math.floor(ts / 1000);
+        // Prefer a strong key by requestId when available
+        const key = req.requestId && typeof req.requestId === 'string'
+          ? `id:${req.requestId}`
+          : [
+              'm', (req.method || '').toUpperCase(),
+              'u', (req.url || ''),
+              // Include status when present to avoid collapsing different outcomes
+              's', (typeof req.status === 'number' ? req.status : 'NA'),
+              // Use type as a proxy for phase (request/response/failed/finished)
+              't', (req.type || ''),
+              'sec', roundedSec
+            ].join('|');
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      } catch (_) {
+        return true;
+      }
     });
   }
 
