@@ -20,7 +20,9 @@ class BugSpotterSettings {
         autoCaptureLogs: true,
         screenshotFormat: 'png',
         maxVideoLength: 30,
-        screenshotQuality: 90
+        screenshotQuality: 90,
+        recentLogsWindowSeconds: 30,
+        recentLogsLimit: 10
       },
       security: {
         encryptData: true,
@@ -227,6 +229,11 @@ class BugSpotterSettings {
     document.getElementById('maxVideoLength').value = this.settings.capture.maxVideoLength;
     document.getElementById('screenshotQuality').value = this.settings.capture.screenshotQuality;
     document.getElementById('qualityValue').textContent = this.settings.capture.screenshotQuality + '%';
+    // 🆕 Recent logs parameters
+    const winSecondsInput = document.getElementById('recentLogsWindowSeconds');
+    const limitInput = document.getElementById('recentLogsLimit');
+    if (winSecondsInput) winSecondsInput.value = this.settings.capture.recentLogsWindowSeconds ?? 30;
+    if (limitInput) limitInput.value = this.settings.capture.recentLogsLimit ?? 10;
 
     // Security settings
     document.getElementById('encryptData').checked = this.settings.security.encryptData;
@@ -382,7 +389,9 @@ class BugSpotterSettings {
         autoCaptureLogs: document.getElementById('autoCaptureLogs').checked,
         screenshotFormat: document.getElementById('screenshotFormat').value,
         maxVideoLength: parseInt(document.getElementById('maxVideoLength').value),
-        screenshotQuality: parseInt(document.getElementById('screenshotQuality').value)
+        screenshotQuality: parseInt(document.getElementById('screenshotQuality').value),
+        recentLogsWindowSeconds: parseInt(document.getElementById('recentLogsWindowSeconds').value),
+        recentLogsLimit: parseInt(document.getElementById('recentLogsLimit').value)
       };
       
       // Schema de validação
@@ -403,6 +412,18 @@ class BugSpotterSettings {
           type: 'number',
           min: 50,
           max: 100
+        },
+        recentLogsWindowSeconds: {
+          required: true,
+          type: 'number',
+          min: 30,
+          max: 120
+        },
+        recentLogsLimit: {
+          required: true,
+          type: 'number',
+          min: 10,
+          max: 50
         }
       };
       
@@ -423,6 +444,14 @@ class BugSpotterSettings {
         }
         if (captureData.screenshotQuality < 50 || captureData.screenshotQuality > 100) {
           this.showStatus('❌ Image quality must be between 50% and 100%', 'error');
+          return;
+        }
+        if (captureData.recentLogsWindowSeconds < 30 || captureData.recentLogsWindowSeconds > 120) {
+          this.showStatus('❌ Recent logs window must be between 30 and 120 seconds', 'error');
+          return;
+        }
+        if (captureData.recentLogsLimit < 10 || captureData.recentLogsLimit > 50) {
+          this.showStatus('❌ Recent logs limit must be between 10 and 50 entries', 'error');
           return;
         }
       }

@@ -275,6 +275,19 @@
               <span id="qualityValue">90%</span>
             </div>
           </div>
+
+          <!-- Recent logs parameters -->
+          <div class="form-group">
+            <label for="recentLogsWindowSeconds">Recent logs window (seconds):</label>
+            <input type="number" id="recentLogsWindowSeconds" value="30" min="30" max="120" step="10">
+            <small>Collect console logs from the last 30–120 seconds</small>
+          </div>
+
+          <div class="form-group">
+            <label for="recentLogsLimit">Recent logs limit (entries):</label>
+            <input type="number" id="recentLogsLimit" value="10" min="10" max="50" step="5">
+            <small>Include the last 10–50 relevant entries</small>
+          </div>
         </form>
       </section>
         </div>

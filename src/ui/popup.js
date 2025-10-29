@@ -50,12 +50,63 @@ class BugSpotter {
   setupEventListeners() {
     // Event listeners for main buttons
     document.getElementById('captureScreenshot').addEventListener('click', () => this.captureScreenshot());
-    document.getElementById('captureLogs').addEventListener('click', () => this.captureLogs());
+    // Split-button: botão principal (Logs) não é clicável; apenas o caret abre o menu
     document.getElementById('captureDOM').addEventListener('click', () => this.captureDOM());
     document.getElementById('startRecording').addEventListener('click', () => this.startRecording());
     document.getElementById('clearHistory').addEventListener('click', () => this.clearHistory());
     document.getElementById('openSettings').addEventListener('click', () => this.openSettings());
-    
+
+    // Split-button: toggle e menu
+    const caretBtn = document.getElementById('captureLogsToggle');
+    const menu = document.getElementById('captureLogsMenu');
+    if (caretBtn && menu) {
+      caretBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const isOpen = menu.classList.toggle('open');
+        caretBtn.setAttribute('aria-expanded', String(isOpen));
+        menu.setAttribute('aria-hidden', String(!isOpen));
+      });
+
+      // Menu items
+      const itemConsole = document.getElementById('menuConsole');
+      const itemNetwork = document.getElementById('menuNetwork');
+      itemConsole?.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        await this.setLastCaptureMode('console');
+        menu.classList.remove('open');
+        caretBtn.setAttribute('aria-expanded', 'false');
+        menu.setAttribute('aria-hidden', 'true');
+        await this.captureLogs();
+      });
+      itemNetwork?.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        await this.setLastCaptureMode('network');
+        menu.classList.remove('open');
+        caretBtn.setAttribute('aria-expanded', 'false');
+        menu.setAttribute('aria-hidden', 'true');
+        await this.captureNetworkDetails();
+      });
+      // Removida opção 'Console + Network'
+
+      // Fechar ao clicar fora
+      document.addEventListener('click', (ev) => {
+        if (!menu.classList.contains('open')) return;
+        const wrapper = caretBtn.closest('.split-button');
+        if (wrapper && !wrapper.contains(ev.target)) {
+          menu.classList.remove('open');
+          caretBtn.setAttribute('aria-expanded', 'false');
+          menu.setAttribute('aria-hidden', 'true');
+        }
+      });
+      // Fechar com ESC
+      window.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Escape' && menu.classList.contains('open')) {
+          menu.classList.remove('open');
+          caretBtn.setAttribute('aria-expanded', 'false');
+          menu.setAttribute('aria-hidden', 'true');
+        }
+      });
+    }
 
     
     // Event listener for bug form
@@ -172,6 +223,31 @@ class BugSpotter {
         this.deleteAIReport(parseInt(index));
       }
     });
+  }
+
+  async captureByPreferredMode() {
+    const last = await this.getLastCaptureMode();
+    if (last === 'network') {
+      return this.captureNetworkDetails();
+    }
+    return this.captureLogs(); // default console
+  }
+
+  async getLastCaptureMode() {
+    try {
+      const { lastCaptureMode } = await chrome.storage.local.get(['lastCaptureMode']);
+      // aceitar apenas 'console' ou 'network'
+      return lastCaptureMode === 'network' ? 'network' : 'console';
+    } catch (_) {
+      return 'console';
+    }
+  }
+
+  async setLastCaptureMode(mode) {
+    try {
+      const sanitized = mode === 'network' ? 'network' : 'console';
+      await chrome.storage.local.set({ lastCaptureMode: sanitized });
+    } catch (_) {}
   }
   
   filterHistory() {
@@ -362,44 +438,194 @@ class BugSpotter {
     button.disabled = true;
     btnText.textContent = 'Capturing...';
     
-    this.updateCaptureStatus('Capturing logs...', 'loading');
+    this.updateCaptureStatus('Capturing console logs...', 'loading');
     
     try {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      
-      // Tentar usar Chrome Debugger API primeiro
-      let logData = await this.captureLogsWithDebugger(tab.id);
-      
-      // Se falhar, usar método tradicional como fallback
-      if (!logData || logData.length === 0) {
-        // Debugger API failed, using fallback method - silenciado
-        logData = await this.captureLogsTraditional(tab.id);
+
+      // Extrair parâmetros configuráveis de janela e limite
+      const cfg = this.cachedSettings?.capture || {};
+      let winSec = Number(cfg.recentLogsWindowSeconds ?? 30);
+      let lim = Number(cfg.recentLogsLimit ?? 10);
+      winSec = isFinite(winSec) ? Math.max(30, Math.min(120, winSec)) : 30;
+      lim = isFinite(lim) ? Math.max(10, Math.min(50, lim)) : 10;
+      const windowMsCfg = winSec * 1000;
+
+      // 1) Tente obter logs recentes diretamente do background (unificado)
+      let recentLogs = null;
+      try {
+        const res = await chrome.runtime.sendMessage({
+          action: 'GET_RECENT_LOGS',
+          tabId: tab?.id,
+          windowMs: windowMsCfg,
+          limit: lim
+        });
+        if (res?.success && Array.isArray(res.data?.logs)) {
+          recentLogs = res.data.logs;
+        }
+      } catch (_) {
+        // Silenciar e seguir para fallback
       }
-      
-      if (logData && logData.length > 0) {
+
+      // 2) Se não houver logs, tentar anexar debugger rapidamente e repetir
+      if ((!recentLogs || recentLogs.length === 0) && tab?.id) {
+        try {
+          const attachResult = await chrome.runtime.sendMessage({ action: 'ATTACH_DEBUGGER', tabId: tab.id });
+          if (attachResult?.success) {
+            await new Promise(r => setTimeout(r, 500));
+            const res2 = await chrome.runtime.sendMessage({
+              action: 'GET_RECENT_LOGS',
+              tabId: tab.id,
+              windowMs: windowMsCfg,
+              limit: lim
+            });
+            if (res2?.success && Array.isArray(res2.data?.logs)) {
+              recentLogs = res2.data.logs;
+            }
+          }
+        } catch (_) {
+          // Ignorar e usar fallback tradicional
+        } finally {
+          try { await chrome.runtime.sendMessage({ action: 'DETACH_DEBUGGER', tabId: tab.id }); } catch (_) {}
+        }
+      }
+
+      // 3) Se ainda vazio, usar fallback tradicional que injeta script
+      let logLines = [];
+      if (recentLogs && recentLogs.length > 0) {
+        logLines = this.formatUnifiedLogs(recentLogs);
+      } else {
+        const fallback = await this.captureLogsTraditional(tab?.id);
+        if (Array.isArray(fallback) && fallback.length > 0) {
+          logLines = fallback;
+        }
+      }
+
+      if (logLines.length > 0) {
         const attachment = {
           type: 'logs',
           name: `console_logs_${Date.now()}.txt`,
-          data: logData.join('\n'),
-          size: new Blob([logData.join('\n')]).size
+          data: logLines.join('\n'),
+          size: new Blob([logLines.join('\n')]).size
         };
-        
+
         const added = this.addAttachment(attachment);
-        
-        if (added) {
-          this.updateCaptureStatus('Logs captured successfully!', 'success');
-        }
+        if (added) this.updateCaptureStatus('Console logs captured successfully!', 'success');
       } else {
-        this.updateCaptureStatus('No logs found', 'warning');
+        this.updateCaptureStatus('No console logs found', 'warning');
       }
     } catch (error) {
       console.error('Error capturing logs:', error);
-      this.updateCaptureStatus('Error capturing logs', 'error');
+      this.updateCaptureStatus('Error capturing console logs', 'error');
     } finally {
       button.disabled = false;
       btnText.textContent = 'Logs';
     }
   }
+
+  async captureNetworkDetails() {
+    const button = document.getElementById('captureLogs');
+    const btnText = button?.querySelector('.btn-text');
+
+    if (button && button.disabled) {
+      return;
+    }
+    if (button) button.disabled = true;
+    if (btnText) btnText.textContent = 'Capturing...';
+    this.updateCaptureStatus('Capturing network logs...', 'loading');
+
+    try {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (!tab) throw new Error('No active tab');
+
+      const domain = (() => {
+        try { return new URL(tab.url).hostname; } catch (_) { return null; }
+      })();
+
+      const logsResult = await chrome.runtime.sendMessage({
+        action: 'GET_DEBUGGER_LOGS',
+        tabId: tab.id,
+        domainFilter: domain || null
+      });
+
+      if (!logsResult?.success) {
+        throw new Error(logsResult?.error || 'Failed to get logs');
+      }
+
+      const requests = (logsResult.data?.networkRequests || [])
+        .filter(r => (typeof r.status === 'number' ? r.status >= 400 : false))
+        .sort((a, b) => new Date(b.timestamp || 0) - new Date(a.timestamp || 0))
+        .slice(0, 3);
+
+      if (!requests.length) {
+        this.updateCaptureStatus('No recent network errors found', 'warning');
+        return;
+      }
+
+      const detailsList = [];
+      for (const req of requests) {
+        const res = await chrome.runtime.sendMessage({
+          action: 'GET_NETWORK_DETAILS',
+          tabId: tab.id,
+          url: req.url,
+          timestamp: req.timestamp
+        });
+        if (res?.success) {
+          const d = res.data || {};
+          // Redact sensitive headers
+          d.requestHeaders = this.redactHeaders(d.requestHeaders || {});
+          d.responseHeaders = this.redactHeaders(d.responseHeaders || {});
+          // Truncate response body
+          if (typeof d.responseBody === 'string') {
+            d.responseBody = this.truncateBody(d.responseBody, 5000);
+          }
+          detailsList.push(d);
+        }
+      }
+
+      const json = JSON.stringify({ collectedAt: new Date().toISOString(), items: detailsList }, null, 2);
+      const attachment = {
+        type: 'network',
+        name: `network-details_${Date.now()}.json`,
+        data: json,
+        size: new Blob([json]).size
+      };
+      const added = this.addAttachment(attachment);
+      if (added) {
+        this.updateCaptureStatus('Network logs captured successfully!', 'success');
+      }
+    } catch (error) {
+      console.error('Error capturing network details:', error);
+      this.updateCaptureStatus('Error capturing network logs', 'error');
+    } finally {
+      if (button) button.disabled = false;
+      if (btnText) btnText.textContent = 'Logs';
+    }
+  }
+
+  truncateBody(text, maxLen) {
+    try {
+      if (typeof text !== 'string') return text;
+      if (text.length <= maxLen) return text;
+      return text.slice(0, maxLen) + '...';
+    } catch (_) { return text; }
+  }
+
+  redactHeaders(headers) {
+    try {
+      const redacted = { ...headers };
+      const keys = Object.keys(redacted);
+      for (const k of keys) {
+        const lower = k.toLowerCase();
+        if (lower === 'authorization' || lower === 'cookie' || lower === 'set-cookie' || lower.includes('token')) {
+          redacted[k] = '[REDACTED]';
+        }
+      }
+      return redacted;
+    } catch (_) { return headers; }
+  }
+
+  // Removido modo combinado 'Console + Network'
 
   // Novo método para capturar logs usando Chrome Debugger API
   async captureLogsWithDebugger(tabId) {
@@ -477,56 +703,7 @@ class BugSpotter {
         });
       }
       
-      // 🆕 CORREÇÃO: Incluir logs de erro HTTP com corpo da resposta (com limite)
-      if (logsResult.data.logs && formattedLogs.length < maxLogs) {
-        logsResult.data.logs.forEach(log => {
-          if (formattedLogs.length >= maxLogs) return; // Parar se atingir o limite
-          
-          const timestamp = log.timestamp || new Date().toISOString();
-          
-          // Incluir apenas erros HTTP (mais relevantes para debugging)
-          if (log.type === 'http-error-with-body' || log.type === 'http-error') {
-            // Log de erro HTTP com detalhes completos
-            let errorText = `${timestamp}: ${log.text}`;
-            
-            // Adicionar corpo da resposta se disponível (limitado)
-            if (log.decodedBody) {
-              const body = log.decodedBody.length > 500 ? log.decodedBody.substring(0, 500) + '...' : log.decodedBody;
-              errorText += `\nResponse Body: ${body}`;
-            } else if (log.responseBody) {
-              const body = log.responseBody.length > 500 ? log.responseBody.substring(0, 500) + '...' : log.responseBody;
-              errorText += `\nResponse Body: ${body}`;
-            }
-            
-            formattedLogs.push(errorText);
-          } else if (log.text && (log.text.includes('error') || log.text.includes('Error') || log.text.includes('failed'))) {
-            // Outros logs apenas se contiverem palavras-chave de erro
-            formattedLogs.push(`${timestamp}: ${log.text}`);
-          }
-        });
-      }
-      
-      // Incluir apenas erros de rede (status >= 400)
-      if (logsResult.data.networkRequests && formattedLogs.length < maxLogs) {
-        logsResult.data.networkRequests.forEach(req => {
-          if (formattedLogs.length >= maxLogs) return; // Parar se atingir o limite
-          
-          const timestamp = new Date(req.timestamp).toISOString();
-          
-          // Só adicionar se for um erro HTTP (status >= 400)
-          if (req.status && req.status >= 400) {
-            let method = req.method || 'Unknown';
-            let status = req.status || 'Unknown';
-            let url = req.url || 'Unknown URL';
-            
-            if (req.text) {
-              formattedLogs.push(`${timestamp}: ${req.text}`);
-            } else {
-              formattedLogs.push(`${timestamp}: [NETWORK ERROR] ${method} ${status} - ${url}`);
-            }
-          }
-        });
-      }
+      // Removido: não incluir eventos/erros de rede aqui. Console logs apenas.
       
       // Logs formatados - silenciado
       
@@ -656,6 +833,33 @@ class BugSpotter {
       console.error('Traditional capture failed:', error);
       return null;
     }
+  }
+
+  // Formata logs unificados (console, console-api, exception) em linhas de texto
+  formatUnifiedLogs(entries) {
+    const lines = [];
+    for (const log of entries) {
+      const ts = (() => { try { return new Date(log.timestamp).toISOString(); } catch { return String(log.timestamp || '') } })();
+      if (log.type === 'exception') {
+        let where = '';
+        const st = log.stackTrace;
+        if (st && Array.isArray(st.callFrames) && st.callFrames.length > 0) {
+          const f = st.callFrames[0];
+          where = ` at ${f.functionName || '<anonymous>'} (${f.url || log.url || ''}:${f.lineNumber}:${f.columnNumber})`;
+        } else if (log.url) {
+          where = ` at ${log.url}:${log.lineNumber}:${log.columnNumber}`;
+        }
+        const excRaw = (log.text !== undefined ? log.text : (log.message !== undefined ? log.message : 'Runtime Exception'));
+        const excText = typeof excRaw === 'string' ? excRaw : (() => { try { return JSON.stringify(excRaw); } catch { return String(excRaw); } })();
+        lines.push(`[ERROR] ${ts}: Exception: ${excText}${where}`);
+      } else {
+        const level = (log.level || 'log').toUpperCase();
+        const rawText = (log.text !== undefined ? log.text : (log.message !== undefined ? log.message : ''));
+        const text = typeof rawText === 'string' ? rawText : (() => { try { return JSON.stringify(rawText); } catch { return String(rawText); } })();
+        lines.push(`[${level}] ${ts}: ${text}`);
+      }
+    }
+    return lines;
   }
 
   async captureDOM() {
@@ -1289,7 +1493,9 @@ class BugSpotter {
           autoCaptureLogs: settings.capture?.autoCaptureLogs ?? true,
           screenshotFormat: settings.capture?.screenshotFormat ?? 'png',
           maxVideoLength: settings.capture?.maxVideoLength ?? 30,
-          screenshotQuality: settings.capture?.screenshotQuality ?? 90
+          screenshotQuality: settings.capture?.screenshotQuality ?? 90,
+          recentLogsWindowSeconds: settings.capture?.recentLogsWindowSeconds ?? 30,
+          recentLogsLimit: settings.capture?.recentLogsLimit ?? 10
         },
         jira: {
           enabled: settings.jira?.enabled ?? false,
@@ -2225,6 +2431,7 @@ class BugSpotter {
         });
         if (tabs && tabs.length > 0) {
           const tabId = tabs[0].id;
+          // 1) Detalhes de rede
           const netDetailsResp = await new Promise((resolve) => {
             chrome.runtime.sendMessage({
               action: 'GET_NETWORK_DETAILS',
@@ -2241,6 +2448,47 @@ class BugSpotter {
               name: 'network-details.json',
               data: jsonContent
             });
+          }
+
+          // 2) Logs de console recentes com parâmetros configuráveis
+          try {
+            // Extrair domínio para filtrar logs relevantes da aba corrente
+            let domainFilter = '';
+            try {
+              const useUrl = bugData.url && bugData.url.startsWith('http') ? bugData.url : (tabs[0].url || '');
+              domainFilter = new URL(useUrl).hostname || '';
+            } catch (_) {
+              domainFilter = '';
+            }
+            // Ler window/limit das configurações
+            const cfg = this.cachedSettings?.capture || {};
+            let winSec = Number(cfg.recentLogsWindowSeconds ?? 30);
+            let lim = Number(cfg.recentLogsLimit ?? 10);
+            winSec = isFinite(winSec) ? Math.max(30, Math.min(120, winSec)) : 30;
+            lim = isFinite(lim) ? Math.max(10, Math.min(50, lim)) : 10;
+            const windowMsCfg = winSec * 1000;
+            const recentResp = await new Promise((resolve) => {
+              chrome.runtime.sendMessage({
+                action: 'GET_RECENT_LOGS',
+                tabId,
+                windowMs: windowMsCfg,
+                limit: lim,
+                domainFilter
+              }, resolve);
+            });
+            if (recentResp && recentResp.success && Array.isArray(recentResp.data?.logs) && recentResp.data.logs.length > 0) {
+              const lines = this.formatUnifiedLogs(recentResp.data.logs);
+              if (lines && lines.length > 0) {
+                bugData.attachments = bugData.attachments || [];
+                bugData.attachments.push({
+                  type: 'text',
+                  name: 'console-logs-recent.txt',
+                  data: lines.join('\n')
+                });
+              }
+            }
+          } catch (_) {
+            // Silenciar falhas ao coletar console; envio continua
           }
         }
       } catch (_) {
