@@ -171,7 +171,16 @@ class PerformanceMonitor {
    */
   handleSlowOperation(metric) {
     // Registrar no console para debug
-    // Operação lenta detectada - silenciado
+    const threshold = this.thresholds[metric.type] || 0;
+    try {
+      console.warn('[PerformanceMonitor] Operação lenta detectada:', {
+        type: metric.type,
+        duration: `${metric.duration.toFixed(2)}ms`,
+        threshold: `${threshold}ms`
+      });
+    } catch (e) {
+      // Silenciar erros de logging
+    }
 
     // Aqui poderia enviar para analytics ou sistema de monitoramento
     // this.sendToAnalytics(metric);

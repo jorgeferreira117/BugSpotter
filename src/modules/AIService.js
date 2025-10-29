@@ -8,7 +8,8 @@ class AIService {
     constructor() {
         this.provider = 'gemini';
         this.apiKey = null;
-        this.baseUrl = 'https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent';
+        this.baseUrl = 'https://generativelanguage.googleapis.com/v1beta/models';
+        this.model = 'gemini-2.0-flash';
         this.isEnabled = false;
         this.rateLimiter = {
             requests: 0,
@@ -41,13 +42,13 @@ class AIService {
             
             // Se AI está habilitada mas não há API key válida, desabilitar
             if (this.isEnabled && (!this.apiKey || this.apiKey === '')) {
-                console.warn('[AIService] AI habilitada mas API key não configurada. Desabilitando AI.');
+                console.warn('[AIService] AI enabled but API key not configured. Disabling AI.');
                 this.isEnabled = false;
             }
             
             // AIService inicializado - silenciado
         } catch (error) {
-            console.error('[AIService] Erro na inicialização:', error);
+            console.error('[AIService] Initialization error:', error);
             this.isEnabled = false;
             this.apiKey = null;
         }
@@ -77,7 +78,9 @@ class AIService {
                typeof this.apiKey === 'string' && 
                this.apiKey.trim() !== '' &&
                this.baseUrl &&
-               typeof this.baseUrl === 'string';
+               typeof this.baseUrl === 'string' &&
+               this.model &&
+               typeof this.model === 'string';
     }
 
     /**
@@ -113,7 +116,7 @@ class AIService {
             
             return false;
         } catch (error) {
-            console.warn('[AIService] Erro ao verificar pausa da AI:', error);
+            console.warn('[AIService] Error checking AI pause:', error);
             return false;
         }
     }
@@ -132,7 +135,7 @@ class AIService {
             
             console.warn(`[AIService] AI pausada por ${minutes} minutos devido a rate limiting`);
         } catch (error) {
-            console.error('[AIService] Erro ao definir pausa da AI:', error);
+            console.error('[AIService] Error setting AI pause:', error);
         }
     }
 
@@ -214,10 +217,10 @@ class AIService {
         const error = errorData.error || errorData;
         const context = errorData.context || {};
         
-        const url = error.url || context.url || 'URL não disponível';
-        const status = error.status || context.status || 'Status não disponível';
-        const statusText = error.statusText || context.statusText || 'Status text não disponível';
-        const responseBody = error.responseBody || context.responseBody || error.responseText || 'Resposta não disponível';
+        const url = error.url || context.url || 'URL not available';
+        const status = error.status || context.status || 'Status not available';
+        const statusText = error.statusText || context.statusText || 'Status text not available';
+        const responseBody = error.responseBody || context.responseBody || error.responseText || 'Response not available';
         const method = error.method || context.method || 'GET';
         
         // Tentar extrair informações úteis da resposta
@@ -229,33 +232,28 @@ class AIService {
         }
         
         return {
-            title: `Erro HTTP ${status} - ${method} ${new URL(url).hostname}`,
-            description: `Foi detectado um erro HTTP ${status} (${statusText}) na requisição ${method} para ${url}.`,
-            severity: status >= 500 ? 'High' : status >= 400 ? 'Medium' : 'Low',
-            priority: status >= 500 ? 'High' : 'Medium',
+            title: `HTTP Error ${status} - ${method} ${new URL(url).hostname}`,
+            description: `An HTTP error ${status} (${statusText}) was detected on a ${method} request to ${url}.`,
             category: 'Network Error',
-            steps: [
-                '1. Acessar a página onde o erro ocorreu',
-                '2. Executar a ação que causou a requisição HTTP',
-                '3. Observar o erro na rede/console'
+            stepsToReproduce: [
+                '1. Navigate to the page where the error occurred',
+                '2. Reproduce the action that caused the error',
+                '3. Observe the error in network/console'
             ],
-            expectedBehavior: 'A requisição deveria ser processada com sucesso',
-            actualBehavior: `Erro HTTP ${status}: ${statusText}`,
-            technicalDetails: {
-                url: url,
-                method: method,
-                httpStatus: status,
-                statusText: statusText,
+            expectedBehavior: 'The request should be processed successfully',
+            actualBehavior: `HTTP Error ${status}: ${statusText}`,
+            details: {
+                url,
+                method,
+                status,
+                statusText,
                 responseBody: errorDetails,
                 timestamp: error.timestamp || context.timestamp || new Date().toISOString(),
                 userAgent: error.userAgent || context.userAgent || navigator.userAgent
             },
-            metadata: {
-                generatedAt: new Date().toISOString(),
-                aiProvider: 'basic-fallback',
-                version: '1.0.0',
-                note: 'Relatório gerado sem AI devido a limitações de quota'
-            }
+            severity: status >= 500 ? 'high' : 'medium',
+            errorType: 'HTTP Error',
+            note: 'Report generated without AI due to quota limitations'
         };
     }
 
@@ -283,54 +281,8 @@ class AIService {
             jsErrors: context.jsErrors || []
         };
 
-        const prompt = `Você é um especialista em debugging web. Analise este erro HTTP e gere um bug report estruturado em português.
-
-**DADOS DO ERRO:**
-- URL: ${sanitizedData.url}
-- Método HTTP: ${sanitizedData.method}
-- Status Code: ${sanitizedData.status}
-- Status Text: ${sanitizedData.statusText}
-- Timestamp: ${sanitizedData.timestamp}
-- Headers: ${JSON.stringify(sanitizedData.headers, null, 2)}
-- Response Body: ${sanitizedData.responseBody}
-- User Agent: ${sanitizedData.userAgent}
-- Referrer: ${sanitizedData.referrer}
-
-**CONTEXTO ADICIONAL:**
-- Console Logs: ${JSON.stringify(sanitizedData.consoleLogs, null, 2)}
-- Network Requests: ${JSON.stringify(sanitizedData.networkRequests, null, 2)}
-- JavaScript Errors: ${JSON.stringify(sanitizedData.jsErrors, null, 2)}
-
-**FORMATO DE RESPOSTA (JSON válido):**
-{
-  "title": "Título conciso do bug (max 80 chars)",
-  "description": "Descrição técnica detalhada em português",
-  "priority": "high|medium|low",
-  "category": "Network Error|API Error|Server Error|Client Error",
-  "steps": [
-    "Passo 1 para reproduzir",
-    "Passo 2 para reproduzir",
-    "Passo 3 para reproduzir"
-  ],
-  "expectedBehavior": "O que deveria acontecer",
-  "actualBehavior": "O que realmente aconteceu",
-  "technicalDetails": {
-    "errorType": "HTTP Error",
-    "statusCode": "${sanitizedData.status}",
-    "endpoint": "${sanitizedData.url}",
-    "method": "${sanitizedData.method}"
-  },
-  "suggestedFix": "Sugestão de correção em português",
-  "impact": "Impacto no usuário/sistema"
-}
-
-**INSTRUÇÕES:**
-1. Seja conciso mas informativo
-2. Use linguagem técnica apropriada em português
-3. Priorize com base na severidade do erro (4xx = medium, 5xx = high)
-4. Inclua detalhes suficientes para reprodução
-5. Responda APENAS com o JSON válido, sem markdown ou texto adicional
-6. NUNCA use valores 'undefined' no JSON - sempre use strings ou números válidos`;
+        const prompt = `You are a web debugging expert. Analyze this HTTP error and generate a structured bug report in English.\n\n**ERROR DATA:**\n${JSON.stringify(sanitizedData, null, 2)}\n\nOutput ONLY a valid JSON object with fields:\n{\n  "title": "Short, clear title summarizing the issue",\n  "description": "Detailed description of what happened",\n  "category": "Network Error|API Error|Server Error|Client Error",\n  "stepsToReproduce": ["Step 1", "Step 2", "Step 3"],\n  "expectedBehavior": "What should have happened",\n  "actualBehavior": "What actually happened",\n  "errorType": "HTTP Error",\n  "severity": "low|medium|high",\n  "details": { "url": "...", "method": "...", "status": "...", "statusText": "...", "responseBody": "..." }
+            }`;
 
         return prompt;
     }
@@ -338,7 +290,7 @@ class AIService {
     /**
      * Chama a API do Google Gemini
      */
-    async callGeminiAPI(prompt, retryCount = 0) {
+    async callGeminiAPI(prompt, retryCount = 0, modelOverride = null) {
         // Validar apiKey antes de construir URL
         if (!this.apiKey || typeof this.apiKey !== 'string' || this.apiKey.trim() === '') {
             throw new Error('API Key não configurada ou inválida');
@@ -349,7 +301,9 @@ class AIService {
             throw new Error('Base URL não configurada');
         }
         
-        const url = `${this.baseUrl}?key=${encodeURIComponent(this.apiKey)}`;
+        const candidateModels = ['gemini-2.5-flash', 'gemini-2.0-flash'];
+        const modelToUse = modelOverride || this.model || candidateModels[0];
+        const url = `${this.baseUrl}/${modelToUse}:generateContent?key=${encodeURIComponent(this.apiKey)}`;
         
         const requestBody = {
             contents: [{
@@ -361,7 +315,8 @@ class AIService {
                 temperature: 0.1, // Baixa criatividade para consistência
                 topK: 1,
                 topP: 1,
-                maxOutputTokens: 1000
+                maxOutputTokens: 1000,
+                responseMimeType: 'application/json'
             },
             safetySettings: [
                 {
@@ -398,7 +353,7 @@ class AIService {
                     // Reset do rate limiter para dar uma chance
                     this.rateLimiter.requests = Math.max(0, this.rateLimiter.requests - 1);
                     
-                    return this.callGeminiAPI(prompt, retryCount + 1);
+                    return this.callGeminiAPI(prompt, retryCount + 1, modelToUse);
                 }
                 
                 // Se for erro 503 (overloaded) e ainda temos tentativas
@@ -407,7 +362,19 @@ class AIService {
                     console.warn(`[AIService] Modelo sobrecarregado (503). Tentativa ${retryCount + 1}/${this.retryConfig.maxRetries}. Aguardando ${delay}ms...`);
                     
                     await this.sleep(delay);
-                    return this.callGeminiAPI(prompt, retryCount + 1);
+                    return this.callGeminiAPI(prompt, retryCount + 1, modelToUse);
+                }
+                
+                // Se for erro 404 (modelo não encontrado ou não suportado), tentar modelos alternativos
+                if (response.status === 404) {
+                    const allModels = [modelToUse, ...candidateModels.filter(m => m !== modelToUse)];
+                    const nextIndex = retryCount + 1;
+                    if (nextIndex < allModels.length) {
+                        const nextModel = allModels[nextIndex];
+                        console.warn(`[AIService] Modelo não encontrado ou não suportado: ${modelToUse}. Tentando alternativo: ${nextModel}`);
+                        return this.callGeminiAPI(prompt, retryCount + 1, nextModel);
+                    }
+                    throw new Error(`Gemini API Error: 404 - Model not found or unsupported: ${modelToUse}`);
                 }
                 
                 throw new Error(`Gemini API Error: ${response.status} - ${errorData.error?.message || response.statusText}`);
@@ -429,7 +396,7 @@ class AIService {
                 console.warn(`[AIService] Erro de rede. Tentativa ${retryCount + 1}/${this.retryConfig.maxRetries}. Aguardando ${delay}ms...`);
                 
                 await this.sleep(delay);
-                return this.callGeminiAPI(prompt, retryCount + 1);
+                return this.callGeminiAPI(prompt, retryCount + 1, modelToUse);
             }
             
             throw error;
@@ -547,26 +514,25 @@ class AIService {
      */
     createFallbackReport(originalResponse) {
         return {
-            title: "Erro HTTP Detectado",
-            description: "Um erro HTTP foi detectado automaticamente pelo BugSpotter. A AI não conseguiu processar completamente os dados.",
-            priority: "medium",
+            title: "HTTP Error Detected",
+            description: "An HTTP error was automatically detected by BugSpotter. The AI could not fully process the data.",
             category: "Network Error",
-            steps: [
-                "Navegar para a página onde o erro ocorreu",
-                "Reproduzir a ação que causou o erro",
-                "Verificar console do navegador"
+            stepsToReproduce: [
+                "Navigate to the page where the error occurred",
+                "Reproduce the action that caused the error",
+                "Observe the error in network/console"
             ],
-            expectedBehavior: "Requisição deveria ser processada com sucesso",
-            actualBehavior: "Requisição falhou com erro HTTP",
-            technicalDetails: {
-                errorType: "HTTP Error",
-                statusCode: "Unknown",
-                endpoint: "Unknown",
-                method: "Unknown"
-            },
-            suggestedFix: "Verificar logs do servidor e conectividade de rede",
-            impact: "Funcionalidade pode estar indisponível para usuários",
-            aiResponse: originalResponse // Preserva resposta original para debug
+            expectedBehavior: "Request should be processed successfully",
+            actualBehavior: "Request failed with an HTTP error",
+            errorType: "HTTP Error",
+            severity: "medium",
+            details: {
+                url: 'Unknown',
+                method: 'GET',
+                status: 'Unknown',
+                statusText: 'Unknown',
+                rawAIResponse: typeof originalResponse === 'string' ? originalResponse.slice(0, 200) : 'N/A'
+            }
         };
     }
 
@@ -579,14 +545,14 @@ class AIService {
         }
 
         try {
-            const testPrompt = "Responda apenas com: {\"status\": \"ok\", \"message\": \"Conexão funcionando\"}";
+            const testPrompt = "Respond only with: {\"status\": \"ok\", \"message\": \"Connection working\"}";
             const response = await this.callGeminiAPI(testPrompt);
             
             // Teste de conexão bem-sucedido - silenciado
-            return { success: true, message: 'Conexão com Gemini AI estabelecida' };
+            return { success: true, message: 'Connection to Gemini AI established' };
             
         } catch (error) {
-            console.error('[AIService] Teste de conexão falhou:', error);
+            console.error('[AIService] Connection test failed:', error);
             return { success: false, message: error.message };
         }
     }
@@ -603,6 +569,9 @@ class AIService {
         }
         if (settings.aiProvider !== undefined) {
             this.provider = settings.aiProvider;
+        }
+        if (settings.aiModel !== undefined) {
+            this.model = settings.aiModel;
         }
         
         // Configurações atualizadas - silenciado

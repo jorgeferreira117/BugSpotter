@@ -86,7 +86,7 @@
             
             <div class="form-group">
               <label for="jiraProjectKey">Project Key:</label>
-              <input type="text" id="jiraProjectKey" value="BUG" placeholder="Ex: PROJ, BUG, DEV">
+              <input type="text" id="jiraProjectKey" value="BUG" placeholder="e.g., PROJ, BUG, DEV">
             </div>
             
             <div class="form-group">
@@ -201,6 +201,12 @@
               <small class="help-text">Display browser notifications when HTTP errors are automatically analyzed</small>
             </div>
             
+            <div class="form-group">
+              <label for="aiAllowedDomains">Allowed domains (one per line):</label>
+              <textarea id="aiAllowedDomains" placeholder="https://pp.daloop.app/" rows="4"></textarea>
+              <small class="help-text">Only requests matching these domains will be analyzed by AI</small>
+            </div>
+
             <div class="form-group">
               <label for="aiMinStatus">Minimum HTTP status to analyze:</label>
               <select id="aiMinStatus">

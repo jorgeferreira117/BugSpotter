@@ -45,7 +45,10 @@ class RecordingOverlay {
         this.maxDuration = config.maxDuration || 30;
         this.timeRemaining = this.maxDuration;
         this.updateDisplay();
-        console.log('Overlay inicializado com configurações:', config);
+        console.log('Overlay initialized with settings:', config);
+      } else if (event.data.type === 'RESTORE_RECORDING_STATE') {
+        // Restaurar estado de gravação após navegação
+        this.restoreRecordingState(event.data.state);
       }
     });
   }
@@ -92,13 +95,13 @@ class RecordingOverlay {
       // Solicitar configurações da extensão
       window.postMessage({ type: 'GET_RECORDING_CONFIG' }, '*');
     } catch (error) {
-      console.error('Erro ao obter configurações:', error);
+      console.error('Error fetching settings:', error);
     }
   }
 
   async startRecording() {
     try {
-      this.updateStatus('Iniciando gravação...');
+      this.updateStatus('Starting recording...');
       
       // Obter stream de captura de tela
       this.stream = await navigator.mediaDevices.getDisplayMedia({
@@ -147,7 +150,7 @@ class RecordingOverlay {
 
       this.mediaRecorder.onerror = (event) => {
         console.error('MediaRecorder error:', event.error);
-        this.updateStatus('Erro na gravação');
+        this.updateStatus('Recording error');
         this.resetRecording();
       };
 
@@ -172,15 +175,15 @@ class RecordingOverlay {
       this.notifyExtension('RECORDING_STARTED');
       
     } catch (error) {
-      console.error('Erro ao iniciar gravação:', error);
+      console.error('Error starting recording:', error);
       
-      let errorMessage = 'Erro ao iniciar gravação';
+      let errorMessage = 'Failed to start recording';
       if (error.name === 'NotAllowedError') {
-        errorMessage = 'Permissão negada';
+        errorMessage = 'Permission denied';
       } else if (error.name === 'NotSupportedError') {
-        errorMessage = 'Não suportado neste navegador';
+        errorMessage = 'Not supported in this browser';
       } else if (error.name === 'NotFoundError') {
-        errorMessage = 'Nenhuma tela disponível';
+        errorMessage = 'No screen available';
       }
       
       this.updateStatus(errorMessage);
@@ -196,7 +199,7 @@ class RecordingOverlay {
       this.isPaused = true;
       this.stopTimer();
       this.updateButtons();
-      this.updateStatus('Pausado');
+      this.updateStatus('Paused');
       
       this.notifyExtension('RECORDING_PAUSED');
     }
@@ -263,7 +266,7 @@ class RecordingOverlay {
         
         // Enviar para extensão
         this.notifyExtension('RECORDING_COMPLETE', videoData);
-        this.updateStatus('Gravação salva!');
+        this.updateStatus('Recording saved!');
         
         // Fechar overlay após 2 segundos
         setTimeout(() => {
@@ -272,15 +275,15 @@ class RecordingOverlay {
       };
       
       reader.onerror = () => {
-        this.updateStatus('Erro ao processar gravação');
+        this.updateStatus('Error processing recording');
         this.notifyExtension('RECORDING_ERROR', { error: 'Processing failed' });
       };
       
       reader.readAsDataURL(blob);
       
     } catch (error) {
-      console.error('Erro ao processar gravação:', error);
-      this.updateStatus('Erro ao processar');
+      console.error('Error processing recording:', error);
+      this.updateStatus('Error processing');
       this.notifyExtension('RECORDING_ERROR', { error: error.message });
     }
   }
@@ -372,6 +375,35 @@ class RecordingOverlay {
     
     // Notificar extensão que overlay foi fechado
     this.notifyExtension('OVERLAY_CLOSED');
+  }
+  
+  restoreRecordingState(state) {
+    console.log('[RecordingOverlay] Restoring recording state:', state);
+    
+    try {
+      // Restaurar configurações
+      this.maxDuration = state.maxDuration || 30;
+      this.timeRemaining = state.timeRemaining || this.maxDuration;
+      this.isRecording = state.isRecording || false;
+      this.isPaused = state.isPaused || false;
+      
+      // Atualizar interface visual
+      this.updateDisplay();
+      this.updateButtons();
+      
+      // Se estava gravando, continuar o timer
+      if (this.isRecording && !this.isPaused) {
+        this.startTimer();
+        this.updateStatus('Recording restored after navigation');
+      } else if (this.isPaused) {
+        this.updateStatus('Recording paused - click to continue');
+      }
+      
+      console.log('[RecordingOverlay] State restored successfully');
+    } catch (error) {
+      console.error('[RecordingOverlay] Error restoring state:', error);
+      this.updateStatus('Error restoring recording');
+    }
   }
 }
 

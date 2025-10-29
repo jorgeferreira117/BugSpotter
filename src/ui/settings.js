@@ -32,7 +32,8 @@ class BugSpotterSettings {
         provider: 'gemini',
         apiKey: '',
         autoNotify: true,
-        minStatus: 400
+        minStatus: 400,
+        allowedDomains: ['https://pp.daloop.app/']
       },
       notifications: {
         enabled: true,
@@ -203,7 +204,7 @@ class BugSpotterSettings {
       }
       
     } catch (error) {
-      console.error('Erro ao carregar configurações:', error);
+      console.error('Error loading settings:', error);
       this.settings = { ...this.defaultSettings };
     }
   }
@@ -238,6 +239,10 @@ class BugSpotterSettings {
     document.getElementById('aiApiKey').value = this.settings.ai.apiKey;
     document.getElementById('aiAutoNotify').checked = this.settings.ai.autoNotify;
     document.getElementById('aiMinStatus').value = this.settings.ai.minStatus;
+    const aiAllowedDomainsEl = document.getElementById('aiAllowedDomains');
+    if (aiAllowedDomainsEl) {
+      aiAllowedDomainsEl.value = (this.settings.ai.allowedDomains || []).join('\n');
+    }
 
     // Notifications settings
     document.getElementById('notificationsEnabled').checked = this.settings.notifications.enabled;
@@ -325,19 +330,19 @@ class BugSpotterSettings {
       // Validação básica como fallback
       if (formData.enabled) {
         if (!formData.baseUrl || !formData.baseUrl.match(/^https?:\/\/.+/)) {
-          this.showStatus('❌ URL do Jira deve ser uma URL válida (http/https)', 'error');
+          this.showStatus('❌ Jira URL must be a valid http/https URL', 'error');
           return;
         }
         if (!formData.email || !formData.email.match(/^[^\s@]+@[^\s@]+\.[^\s@]+$/)) {
-          this.showStatus('❌ Email deve ter um formato válido', 'error');
+          this.showStatus('❌ Email must be a valid email address', 'error');
           return;
         }
         if (!formData.apiToken || formData.apiToken.length < 10) {
-          this.showStatus('❌ API Token deve ter pelo menos 10 caracteres', 'error');
+          this.showStatus('❌ API token must be at least 10 characters long', 'error');
           return;
         }
         if (!formData.projectKey || !formData.projectKey.match(/^[A-Z][A-Z0-9]*$/)) {
-          this.showStatus('❌ Project Key deve começar com letra maiúscula e conter apenas letras e números', 'error');
+          this.showStatus('❌ Project Key must start with an uppercase letter and contain only letters and numbers', 'error');
           return;
         }
       }
@@ -361,7 +366,7 @@ class BugSpotterSettings {
       this.showStatus('✅ Jira settings saved successfully!', 'success');
       
     } catch (error) {
-      console.error('Erro ao salvar configurações do Jira:', error);
+      console.error('Error saving Jira settings:', error);
       this.showStatus('❌ Error saving Jira settings', 'error');
     } finally {
       setTimeout(() => {
@@ -424,10 +429,10 @@ class BugSpotterSettings {
       
       this.settings.capture = captureData;
       await this.saveSettings();
-      this.showStatus('✅ Configurações de captura salvas!', 'success');
+      this.showStatus('✅ Capture settings saved!', 'success');
     } catch (error) {
-      console.error('Erro ao salvar configurações de captura:', error);
-      this.showStatus('❌ Erro ao salvar configurações de captura', 'error');
+      console.error('Error saving capture settings:', error);
+      this.showStatus('❌ Error saving capture settings', 'error');
     }
   }
 
@@ -468,10 +473,10 @@ class BugSpotterSettings {
       
       this.settings.security = securityData;
       await this.saveSettings();
-      this.showStatus('✅ Configurações de segurança salvas!', 'success');
+      this.showStatus('✅ Security settings saved!', 'success');
     } catch (error) {
-      console.error('Erro ao salvar configurações de segurança:', error);
-      this.showStatus('❌ Erro ao salvar configurações de segurança', 'error');
+      console.error('Error saving security settings:', error);
+      this.showStatus('❌ Error saving security settings', 'error');
     }
   }
 
@@ -483,7 +488,7 @@ class BugSpotterSettings {
         // Modo de desenvolvimento - silenciado
       }
     } catch (error) {
-      console.error('Erro ao salvar configurações:', error);
+      console.error('Error saving settings:', error);
       throw error; // Re-throw para ser capturado pelos métodos específicos
     }
   }
@@ -579,7 +584,7 @@ class BugSpotterSettings {
 
       this.showStatus('✅ Data exported successfully!', 'success');
     } catch (error) {
-      console.error('Erro ao exportar dados:', error);
+      console.error('Error exporting data:', error);
       this.showStatus('❌ Error exporting data', 'error');
     }
   }
@@ -621,7 +626,7 @@ class BugSpotterSettings {
         this.updateUI();
         this.showStatus('✅ Data imported successfully!', 'success');
       } catch (error) {
-        console.error('Erro ao importar dados:', error);
+        console.error('Error importing data:', error);
         if (error instanceof SyntaxError) {
           this.showStatus('❌ Invalid JSON file', 'error');
         } else {
@@ -653,7 +658,7 @@ class BugSpotterSettings {
         this.updateUI();
         this.showStatus('✅ All data has been cleared!', 'info');
       } catch (error) {
-        console.error('Erro ao limpar dados:', error);
+        console.error('Error clearing data:', error);
         this.showStatus('❌ Error clearing data', 'error');
       } finally {
         setTimeout(() => {
@@ -823,9 +828,9 @@ class BugSpotterSettings {
       }
       
     } catch (error) {
-      console.error('❌ Erro ao salvar configurações de prioridade:', error);
+      console.error('❌ Error saving priority settings:', error);
       if (showMessage) {
-        this.showStatus('Erro ao salvar configurações de prioridade', 'error');
+        this.showStatus('❌ Error saving priority settings', 'error');
       }
     }
   }
@@ -884,7 +889,7 @@ class BugSpotterSettings {
       
       // Prioridades atualizadas do Jira - silenciado
     } catch (error) {
-      console.error('Erro ao atualizar prioridades do Jira:', error);
+      console.error('Error updating Jira priorities:', error);
       this.showStatus(`❌ Error updating priorities: ${error.message}`, 'error');
     }
   }
@@ -1024,6 +1029,15 @@ class BugSpotterSettings {
         autoNotify: document.getElementById('aiAutoNotify').checked,
         minStatus: parseInt(document.getElementById('aiMinStatus').value)
       };
+      // Collect allowed domains (one per line)
+      const allowedDomainsStr = (document.getElementById('aiAllowedDomains')?.value || '').trim();
+      const allowedDomains = allowedDomainsStr
+        .split(/\n|,/) // support newline or comma
+        .map(s => s.trim())
+        .filter(Boolean);
+      aiSettings.allowedDomains = allowedDomains;
+      // Legacy fallback: if single domain, set domainFilter for backward compatibility
+      aiSettings.domainFilter = allowedDomains.length === 1 ? allowedDomains[0] : '';
       
       // Update settings object
       this.settings.ai = { ...this.settings.ai, ...aiSettings };
@@ -1060,11 +1074,11 @@ class BugSpotterSettings {
       // Update UI
       this.updateAIStatus();
       
-      this.showStatus('Configurações de AI salvas com sucesso!', 'success');
+      this.showStatus('AI settings saved successfully!', 'success');
       
     } catch (error) {
-      console.error('Erro ao salvar configurações de AI:', error);
-      this.showStatus('Erro ao salvar configurações de AI: ' + error.message, 'error');
+      console.error('Error saving AI settings:', error);
+      this.showStatus('Error saving AI settings', 'error');
     }
   }
   
@@ -1129,24 +1143,30 @@ class BugSpotterSettings {
     }
   }
   
-  async testGeminiConnection(apiKey, testData, retryCount = 0) {
+  async testGeminiConnection(apiKey, testData, retryCount = 0, modelOverride = null) {
     const maxRetries = 3;
     const baseDelay = 2000; // 2 seconds
-    
-    const url = `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
-    
+  
+    const candidateModels = ['gemini-2.5-flash', 'gemini-2.0-flash'];
+    const modelToUse = modelOverride || 'gemini-2.0-flash';
+  
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelToUse}:generateContent?key=${apiKey}`;
+  
     const prompt = `Test connection. Respond with valid JSON: {"status": "ok", "message": "Connection successful"}`;
-    
+  
     const requestBody = {
       contents: [{
         parts: [{ text: prompt }]
       }],
       generationConfig: {
         temperature: 0.1,
-        maxOutputTokens: 100
+        topK: 1,
+        topP: 1,
+        maxOutputTokens: 100,
+        responseMimeType: 'application/json'
       }
     };
-    
+  
     try {
       const response = await fetch(url, {
         method: 'POST',
@@ -1155,22 +1175,34 @@ class BugSpotterSettings {
         },
         body: JSON.stringify(requestBody)
       });
-      
+  
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
-        
+  
+        // Handle model not found/unsupported
+        if (response.status === 404) {
+          const allModels = [modelToUse, ...candidateModels.filter(m => m !== modelToUse)];
+          const nextIndex = retryCount + 1;
+          if (nextIndex < allModels.length) {
+            const nextModel = allModels[nextIndex];
+            this.showStatus(`Model not available: ${modelToUse}. Trying alternative: ${nextModel}`, 'warning');
+            return this.testGeminiConnection(apiKey, testData, retryCount + 1, nextModel);
+          }
+          throw new Error(`Model not found or unsupported for generateContent: ${modelToUse}`);
+        }
+  
         // For 503 and 429 errors, try to retry
         if ((response.status === 503 || response.status === 429) && retryCount < maxRetries) {
           const delay = baseDelay * Math.pow(2, retryCount); // Exponential backoff
           // Retrying connection - silenciado
-          
+  
           // Update UI to show retry status
           this.showStatus(`Service overloaded. Retrying in ${delay/1000} seconds... (${retryCount + 1}/${maxRetries})`, 'warning');
-          
+  
           await new Promise(resolve => setTimeout(resolve, delay));
-          return this.testGeminiConnection(apiKey, testData, retryCount + 1);
+          return this.testGeminiConnection(apiKey, testData, retryCount + 1, modelToUse);
         }
-        
+  
         let errorMessage;
         switch (response.status) {
           case 400:
@@ -1195,30 +1227,30 @@ class BugSpotterSettings {
           default:
             errorMessage = errorData.error?.message || `API Error: ${response.status} - ${response.statusText}`;
         }
-        
+  
         throw new Error(errorMessage);
       }
-      
+  
       const data = await response.json();
-      
+  
       if (!data.candidates || !data.candidates[0] || !data.candidates[0].content) {
         throw new Error('Invalid response from AI service');
       }
-      
+  
       return data.candidates[0].content.parts[0].text;
-      
+  
     } catch (error) {
       // If it's a network error and we haven't exceeded retries, try again
       if (error.name === 'TypeError' && retryCount < maxRetries) {
         const delay = baseDelay * Math.pow(2, retryCount);
         // Network error retrying - silenciado
-        
+  
         this.showStatus(`Network error. Retrying in ${delay/1000} seconds... (${retryCount + 1}/${maxRetries})`, 'warning');
-        
+  
         await new Promise(resolve => setTimeout(resolve, delay));
-        return this.testGeminiConnection(apiKey, testData, retryCount + 1);
+        return this.testGeminiConnection(apiKey, testData, retryCount + 1, modelToUse);
       }
-      
+  
       throw error;
     }
   }
@@ -1243,10 +1275,10 @@ class BugSpotterSettings {
       };
 
       await this.saveSettings();
-      this.showStatus('Configurações de notificação salvas com sucesso!', 'success');
+      this.showStatus('Notification settings saved successfully!', 'success');
     } catch (error) {
-      console.error('Erro ao salvar configurações de notificação:', error);
-      this.showStatus('Erro ao salvar configurações de notificação', 'error');
+      console.error('Error saving notification settings:', error);
+      this.showStatus('Error saving notification settings', 'error');
     }
   }
 }

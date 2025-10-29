@@ -126,7 +126,7 @@ section.with-icon:not(:last-child)::after {
 
 /* Efeito de sombra sutil nas seções */
 section {
-  background: rgba(255, 255, 255, 0.5);
+  background: rgba(255, 255, 255, 0.75);
   border-radius: 12px;
   padding: 16px;
   backdrop-filter: blur(10px);
@@ -146,21 +146,21 @@ section:hover {
   flex: 1;
 }
 
-/* Gradiente sutil no fundo das seções */
+/* Gradiente mais acentuado no fundo das seções */
 .capture-section {
-  background: linear-gradient(135deg, rgba(59, 130, 246, 0.02), rgba(147, 197, 253, 0.05));
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.08), rgba(147, 197, 253, 0.12));
 }
 
 .report-section {
-  background: linear-gradient(135deg, rgba(16, 185, 129, 0.02), rgba(134, 239, 172, 0.05));
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.08), rgba(147, 197, 253, 0.12));
 }
 
 .history-section {
-  background: linear-gradient(135deg, rgba(245, 158, 11, 0.02), rgba(252, 211, 77, 0.05));
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.08), rgba(252, 211, 77, 0.12));
 }
 
 .settings-section {
-  background: linear-gradient(135deg, rgba(139, 92, 246, 0.02), rgba(196, 181, 253, 0.05));
+  background: linear-gradient(135deg, rgba(139, 92, 246, 0.08), rgba(196, 181, 253, 0.12));
 }
 .section-header {
   margin-bottom: 12px;
@@ -1083,7 +1083,7 @@ section:hover {
   color: #4b5563;
   line-height: 1.4;
   margin-bottom: 8px;
-  background: rgba(255, 255, 255, 0.6);
+  background: rgba(255, 255, 255, 0.9);
   padding: 8px;
   border-radius: 4px;
   border-left: 2px solid #7c3aed;
@@ -1567,6 +1567,21 @@ section:hover {
   background: #f8fafc;
   border-radius: 8px;
   border: 1px solid #e2e8f0;
+}
+
+
+.headers-pre,
+.response-pre {
+  background: #0b1021;
+  color: #e5e7eb;
+  padding: 10px;
+  border-radius: 6px;
+  border: 1px solid #111827;
+  max-height: 240px;
+  overflow: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .error-details {
