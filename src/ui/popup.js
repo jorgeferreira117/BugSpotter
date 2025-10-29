@@ -520,7 +520,7 @@ class BugSpotter {
       const detailsList = [];
       for (const req of requests) {
         const res = await chrome.runtime.sendMessage({
-          type: 'GET_NETWORK_DETAILS',
+          action: 'GET_NETWORK_DETAILS',
           tabId: tab.id,
           url: req.url,
           timestamp: req.timestamp
