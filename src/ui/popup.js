@@ -71,7 +71,6 @@ class BugSpotter {
       // Menu items
       const itemConsole = document.getElementById('menuConsole');
       const itemNetwork = document.getElementById('menuNetwork');
-      const itemBoth = document.getElementById('menuBoth');
       itemConsole?.addEventListener('click', async (e) => {
         e.stopPropagation();
         await this.setLastCaptureMode('console');
@@ -88,14 +87,7 @@ class BugSpotter {
         menu.setAttribute('aria-hidden', 'true');
         await this.captureNetworkDetails();
       });
-      itemBoth?.addEventListener('click', async (e) => {
-        e.stopPropagation();
-        await this.setLastCaptureMode('both');
-        menu.classList.remove('open');
-        caretBtn.setAttribute('aria-expanded', 'false');
-        menu.setAttribute('aria-hidden', 'true');
-        await this.captureConsoleAndNetwork();
-      });
+      // Removida opção 'Console + Network'
 
       // Fechar ao clicar fora
       document.addEventListener('click', (ev) => {
@@ -239,16 +231,14 @@ class BugSpotter {
     if (last === 'network') {
       return this.captureNetworkDetails();
     }
-    if (last === 'both') {
-      return this.captureConsoleAndNetwork();
-    }
     return this.captureLogs(); // default console
   }
 
   async getLastCaptureMode() {
     try {
       const { lastCaptureMode } = await chrome.storage.local.get(['lastCaptureMode']);
-      return lastCaptureMode || 'console';
+      // aceitar apenas 'console' ou 'network'
+      return lastCaptureMode === 'network' ? 'network' : 'console';
     } catch (_) {
       return 'console';
     }
@@ -256,7 +246,8 @@ class BugSpotter {
 
   async setLastCaptureMode(mode) {
     try {
-      await chrome.storage.local.set({ lastCaptureMode: mode });
+      const sanitized = mode === 'network' ? 'network' : 'console';
+      await chrome.storage.local.set({ lastCaptureMode: sanitized });
     } catch (_) {}
   }
   
@@ -448,7 +439,7 @@ class BugSpotter {
     button.disabled = true;
     btnText.textContent = 'Capturing...';
     
-    this.updateCaptureStatus('Capturing logs...', 'loading');
+    this.updateCaptureStatus('Capturing console logs...', 'loading');
     
     try {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -473,14 +464,14 @@ class BugSpotter {
         const added = this.addAttachment(attachment);
         
         if (added) {
-          this.updateCaptureStatus('Logs captured successfully!', 'success');
+          this.updateCaptureStatus('Console logs captured successfully!', 'success');
         }
       } else {
-        this.updateCaptureStatus('No logs found', 'warning');
+        this.updateCaptureStatus('No console logs found', 'warning');
       }
     } catch (error) {
       console.error('Error capturing logs:', error);
-      this.updateCaptureStatus('Error capturing logs', 'error');
+      this.updateCaptureStatus('Error capturing console logs', 'error');
     } finally {
       button.disabled = false;
       btnText.textContent = 'Logs';
@@ -496,7 +487,7 @@ class BugSpotter {
     }
     if (button) button.disabled = true;
     if (btnText) btnText.textContent = 'Capturing...';
-    this.updateCaptureStatus('Capturing network details...', 'loading');
+    this.updateCaptureStatus('Capturing network logs...', 'loading');
 
     try {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -556,11 +547,11 @@ class BugSpotter {
       };
       const added = this.addAttachment(attachment);
       if (added) {
-        this.updateCaptureStatus('Network details captured!', 'success');
+        this.updateCaptureStatus('Network logs captured successfully!', 'success');
       }
     } catch (error) {
       console.error('Error capturing network details:', error);
-      this.updateCaptureStatus('Error capturing network details', 'error');
+      this.updateCaptureStatus('Error capturing network logs', 'error');
     } finally {
       if (button) button.disabled = false;
       if (btnText) btnText.textContent = 'Logs';
@@ -589,11 +580,7 @@ class BugSpotter {
     } catch (_) { return headers; }
   }
 
-  async captureConsoleAndNetwork() {
-    // Capturar ambos, sequencialmente
-    await this.captureLogs();
-    await this.captureNetworkDetails();
-  }
+  // Removido modo combinado 'Console + Network'
 
   // Novo método para capturar logs usando Chrome Debugger API
   async captureLogsWithDebugger(tabId) {
