@@ -658,56 +658,7 @@ class BugSpotter {
         });
       }
       
-      // 🆕 CORREÇÃO: Incluir logs de erro HTTP com corpo da resposta (com limite)
-      if (logsResult.data.logs && formattedLogs.length < maxLogs) {
-        logsResult.data.logs.forEach(log => {
-          if (formattedLogs.length >= maxLogs) return; // Parar se atingir o limite
-          
-          const timestamp = log.timestamp || new Date().toISOString();
-          
-          // Incluir apenas erros HTTP (mais relevantes para debugging)
-          if (log.type === 'http-error-with-body' || log.type === 'http-error') {
-            // Log de erro HTTP com detalhes completos
-            let errorText = `${timestamp}: ${log.text}`;
-            
-            // Adicionar corpo da resposta se disponível (limitado)
-            if (log.decodedBody) {
-              const body = log.decodedBody.length > 500 ? log.decodedBody.substring(0, 500) + '...' : log.decodedBody;
-              errorText += `\nResponse Body: ${body}`;
-            } else if (log.responseBody) {
-              const body = log.responseBody.length > 500 ? log.responseBody.substring(0, 500) + '...' : log.responseBody;
-              errorText += `\nResponse Body: ${body}`;
-            }
-            
-            formattedLogs.push(errorText);
-          } else if (log.text && (log.text.includes('error') || log.text.includes('Error') || log.text.includes('failed'))) {
-            // Outros logs apenas se contiverem palavras-chave de erro
-            formattedLogs.push(`${timestamp}: ${log.text}`);
-          }
-        });
-      }
-      
-      // Incluir apenas erros de rede (status >= 400)
-      if (logsResult.data.networkRequests && formattedLogs.length < maxLogs) {
-        logsResult.data.networkRequests.forEach(req => {
-          if (formattedLogs.length >= maxLogs) return; // Parar se atingir o limite
-          
-          const timestamp = new Date(req.timestamp).toISOString();
-          
-          // Só adicionar se for um erro HTTP (status >= 400)
-          if (req.status && req.status >= 400) {
-            let method = req.method || 'Unknown';
-            let status = req.status || 'Unknown';
-            let url = req.url || 'Unknown URL';
-            
-            if (req.text) {
-              formattedLogs.push(`${timestamp}: ${req.text}`);
-            } else {
-              formattedLogs.push(`${timestamp}: [NETWORK ERROR] ${method} ${status} - ${url}`);
-            }
-          }
-        });
-      }
+      // Removido: não incluir eventos/erros de rede aqui. Console logs apenas.
       
       // Logs formatados - silenciado
       
