@@ -50,12 +50,72 @@ class BugSpotter {
   setupEventListeners() {
     // Event listeners for main buttons
     document.getElementById('captureScreenshot').addEventListener('click', () => this.captureScreenshot());
-    document.getElementById('captureLogs').addEventListener('click', () => this.captureLogs());
+    // Split-button: ação principal usa preferência
+    document.getElementById('captureLogs').addEventListener('click', () => this.captureByPreferredMode());
     document.getElementById('captureDOM').addEventListener('click', () => this.captureDOM());
     document.getElementById('startRecording').addEventListener('click', () => this.startRecording());
     document.getElementById('clearHistory').addEventListener('click', () => this.clearHistory());
     document.getElementById('openSettings').addEventListener('click', () => this.openSettings());
-    
+
+    // Split-button: toggle e menu
+    const caretBtn = document.getElementById('captureLogsToggle');
+    const menu = document.getElementById('captureLogsMenu');
+    if (caretBtn && menu) {
+      caretBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const isOpen = menu.classList.toggle('open');
+        caretBtn.setAttribute('aria-expanded', String(isOpen));
+        menu.setAttribute('aria-hidden', String(!isOpen));
+      });
+
+      // Menu items
+      const itemConsole = document.getElementById('menuConsole');
+      const itemNetwork = document.getElementById('menuNetwork');
+      const itemBoth = document.getElementById('menuBoth');
+      itemConsole?.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        await this.setLastCaptureMode('console');
+        menu.classList.remove('open');
+        caretBtn.setAttribute('aria-expanded', 'false');
+        menu.setAttribute('aria-hidden', 'true');
+        await this.captureLogs();
+      });
+      itemNetwork?.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        await this.setLastCaptureMode('network');
+        menu.classList.remove('open');
+        caretBtn.setAttribute('aria-expanded', 'false');
+        menu.setAttribute('aria-hidden', 'true');
+        await this.captureNetworkDetails();
+      });
+      itemBoth?.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        await this.setLastCaptureMode('both');
+        menu.classList.remove('open');
+        caretBtn.setAttribute('aria-expanded', 'false');
+        menu.setAttribute('aria-hidden', 'true');
+        await this.captureConsoleAndNetwork();
+      });
+
+      // Fechar ao clicar fora
+      document.addEventListener('click', (ev) => {
+        if (!menu.classList.contains('open')) return;
+        const wrapper = caretBtn.closest('.split-button');
+        if (wrapper && !wrapper.contains(ev.target)) {
+          menu.classList.remove('open');
+          caretBtn.setAttribute('aria-expanded', 'false');
+          menu.setAttribute('aria-hidden', 'true');
+        }
+      });
+      // Fechar com ESC
+      window.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Escape' && menu.classList.contains('open')) {
+          menu.classList.remove('open');
+          caretBtn.setAttribute('aria-expanded', 'false');
+          menu.setAttribute('aria-hidden', 'true');
+        }
+      });
+    }
 
     
     // Event listener for bug form
@@ -172,6 +232,32 @@ class BugSpotter {
         this.deleteAIReport(parseInt(index));
       }
     });
+  }
+
+  async captureByPreferredMode() {
+    const last = await this.getLastCaptureMode();
+    if (last === 'network') {
+      return this.captureNetworkDetails();
+    }
+    if (last === 'both') {
+      return this.captureConsoleAndNetwork();
+    }
+    return this.captureLogs(); // default console
+  }
+
+  async getLastCaptureMode() {
+    try {
+      const { lastCaptureMode } = await chrome.storage.local.get(['lastCaptureMode']);
+      return lastCaptureMode || 'console';
+    } catch (_) {
+      return 'console';
+    }
+  }
+
+  async setLastCaptureMode(mode) {
+    try {
+      await chrome.storage.local.set({ lastCaptureMode: mode });
+    } catch (_) {}
   }
   
   filterHistory() {
@@ -399,6 +485,114 @@ class BugSpotter {
       button.disabled = false;
       btnText.textContent = 'Logs';
     }
+  }
+
+  async captureNetworkDetails() {
+    const button = document.getElementById('captureLogs');
+    const btnText = button?.querySelector('.btn-text');
+
+    if (button && button.disabled) {
+      return;
+    }
+    if (button) button.disabled = true;
+    if (btnText) btnText.textContent = 'Capturing...';
+    this.updateCaptureStatus('Capturing network details...', 'loading');
+
+    try {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (!tab) throw new Error('No active tab');
+
+      const domain = (() => {
+        try { return new URL(tab.url).hostname; } catch (_) { return null; }
+      })();
+
+      const logsResult = await chrome.runtime.sendMessage({
+        action: 'GET_DEBUGGER_LOGS',
+        tabId: tab.id,
+        domainFilter: domain || null
+      });
+
+      if (!logsResult?.success) {
+        throw new Error(logsResult?.error || 'Failed to get logs');
+      }
+
+      const requests = (logsResult.data?.networkRequests || [])
+        .filter(r => (typeof r.status === 'number' ? r.status >= 400 : false))
+        .sort((a, b) => new Date(b.timestamp || 0) - new Date(a.timestamp || 0))
+        .slice(0, 3);
+
+      if (!requests.length) {
+        this.updateCaptureStatus('No recent network errors found', 'warning');
+        return;
+      }
+
+      const detailsList = [];
+      for (const req of requests) {
+        const res = await chrome.runtime.sendMessage({
+          type: 'GET_NETWORK_DETAILS',
+          tabId: tab.id,
+          url: req.url,
+          timestamp: req.timestamp
+        });
+        if (res?.success) {
+          const d = res.data || {};
+          // Redact sensitive headers
+          d.requestHeaders = this.redactHeaders(d.requestHeaders || {});
+          d.responseHeaders = this.redactHeaders(d.responseHeaders || {});
+          // Truncate response body
+          if (typeof d.responseBody === 'string') {
+            d.responseBody = this.truncateBody(d.responseBody, 5000);
+          }
+          detailsList.push(d);
+        }
+      }
+
+      const json = JSON.stringify({ collectedAt: new Date().toISOString(), items: detailsList }, null, 2);
+      const attachment = {
+        type: 'network',
+        name: `network-details_${Date.now()}.json`,
+        data: json,
+        size: new Blob([json]).size
+      };
+      const added = this.addAttachment(attachment);
+      if (added) {
+        this.updateCaptureStatus('Network details captured!', 'success');
+      }
+    } catch (error) {
+      console.error('Error capturing network details:', error);
+      this.updateCaptureStatus('Error capturing network details', 'error');
+    } finally {
+      if (button) button.disabled = false;
+      if (btnText) btnText.textContent = 'Logs';
+    }
+  }
+
+  truncateBody(text, maxLen) {
+    try {
+      if (typeof text !== 'string') return text;
+      if (text.length <= maxLen) return text;
+      return text.slice(0, maxLen) + '...';
+    } catch (_) { return text; }
+  }
+
+  redactHeaders(headers) {
+    try {
+      const redacted = { ...headers };
+      const keys = Object.keys(redacted);
+      for (const k of keys) {
+        const lower = k.toLowerCase();
+        if (lower === 'authorization' || lower === 'cookie' || lower === 'set-cookie' || lower.includes('token')) {
+          redacted[k] = '[REDACTED]';
+        }
+      }
+      return redacted;
+    } catch (_) { return headers; }
+  }
+
+  async captureConsoleAndNetwork() {
+    // Capturar ambos, sequencialmente
+    await this.captureLogs();
+    await this.captureNetworkDetails();
   }
 
   // Novo método para capturar logs usando Chrome Debugger API

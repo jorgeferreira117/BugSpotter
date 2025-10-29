@@ -33,10 +33,29 @@
             <span class="btn-text">Screenshot</span>
           </button>
           
-          <button id="captureLogs" class="capture-btn secondary">
-            <span class="material-icons">description</span>
-            <span class="btn-text">Console</span>
-          </button>
+          <div class="split-button capture-split">
+            <button id="captureLogs" class="capture-btn secondary split-main" aria-label="Capture Logs">
+              <span class="material-icons">description</span>
+              <span class="btn-text">Logs</span>
+            </button>
+            <button id="captureLogsToggle" class="capture-btn secondary split-caret" aria-haspopup="menu" aria-expanded="false" aria-label="More log options">
+              <span class="material-icons">expand_more</span>
+            </button>
+            <div id="captureLogsMenu" class="split-menu" role="menu" aria-hidden="true">
+              <button class="split-menu-item" id="menuConsole" role="menuitem">
+                <span class="material-icons">article</span>
+                <span>Console</span>
+              </button>
+              <button class="split-menu-item" id="menuNetwork" role="menuitem">
+                <span class="material-icons">wifi</span>
+                <span>Network (Headers + Response)</span>
+              </button>
+              <button class="split-menu-item" id="menuBoth" role="menuitem">
+                <span class="material-icons">library_add</span>
+                <span>Console + Network</span>
+              </button>
+            </div>
+          </div>
           
           <button id="captureDOM" class="capture-btn secondary">
             <span class="material-icons">code</span>

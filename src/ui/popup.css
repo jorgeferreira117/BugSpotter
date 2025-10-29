@@ -244,6 +244,71 @@ section:hover {
   font-size: 20px;
 }
 
+/* Split button container */
+.split-button.capture-split {
+  display: grid;
+  grid-template-columns: 1fr 40px;
+  gap: 6px;
+  align-items: stretch;
+  position: relative; /* posicionar menu relativo ao container */
+}
+
+.split-main {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.split-caret {
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Dropdown menu */
+.split-menu {
+  position: absolute;
+  z-index: 10000; /* garantir sobreposição acima de outras seções */
+  top: calc(100% + 4px);
+  right: 0;
+  background: white;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+  padding: 6px;
+  display: none;
+  min-width: 220px;
+}
+
+.split-menu.open {
+  display: block;
+}
+
+.split-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  background: transparent;
+  border-radius: 6px;
+  cursor: pointer;
+  color: #374151;
+  font-size: 12px;
+}
+
+.split-menu-item .material-icons {
+  font-size: 18px;
+  color: #6b7280;
+}
+
+.split-menu-item:hover {
+  background: #f3f4f6;
+}
+
 /* Status de captura */
 .capture-status {
   padding: 8px 12px;
@@ -1623,4 +1688,18 @@ section:hover {
   position: absolute;
   left: 8px;
   top: 8px;
+}
+.capture-grid {
+  overflow: visible; /* permitir dropdown sair do grid */
+}
+
+/* Garantir que a seção de captura fique acima do report para dropdown */
+.capture-section {
+  position: relative;
+  z-index: 2;
+}
+
+.report-section {
+  position: relative;
+  z-index: 1;
 }
