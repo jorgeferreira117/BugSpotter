@@ -17,11 +17,15 @@ class BugSpotter {
       const response = await chrome.runtime.sendMessage({ action: 'POPUP_OPENED' });
       console.log('[Popup] Resposta do background:', response);
     } catch (error) {
-      console.error('[Popup] Erro ao enviar mensagem POPUP_OPENED:', error);
+      console.error('[Popup] Error sending POPUP_OPENED message:', error);
     }
     
     // Verificar se há gravação em andamento
-    await this.checkRecordingState();
+    try {
+      await this.checkRecordingState();
+    } catch (err) {
+      console.warn('[Popup] checkRecordingState failed, continuing:', err);
+    }
     
     // Carregar configurações no cache
     this.cachedSettings = await this.getSettings();
@@ -73,28 +77,50 @@ class BugSpotter {
           return;
         }
         
+        // Desabilitar o botão para evitar cliques duplicados
+        const sendBtn = e.target.closest('.send-btn');
+        if (sendBtn) sendBtn.disabled = true;
+        
         // Verificar se é um relatório AI ou manual
         const historyItem = e.target.closest('.history-item');
         if (historyItem && historyItem.classList.contains('ai-report-item')) {
+          // Feedback imediato
+          this.updateHistoryStatus('Sending to Jira...', 'loading');
           // É um relatório AI - buscar o relatório pelo índice
           this.loadAIReports().then(aiReports => {
             const report = aiReports[index];
             if (report) {
               this.sendAIReportToJira(index, report).catch(error => {
                 console.error('Error sending AI report to Jira:', error);
-                this.updateHistoryStatus(`Erro ao enviar para Jira: ${error.message}`, 'error');
+                // Reabilitar o botão em caso de erro
+                const btn = document.querySelector(`.ai-report-item .send-btn[data-index="${index}"]`);
+                if (btn) btn.disabled = false;
+                this.updateHistoryStatus(`Error sending to Jira: ${error.message}`, 'error');
               });
             } else {
               console.error('AI report not found at index:', index);
-              this.updateHistoryStatus('Relatório AI não encontrado', 'error');
+              // Reabilitar o botão se o relatório não for encontrado
+              const btn = document.querySelector(`.ai-report-item .send-btn[data-index="${index}"]`);
+              if (btn) btn.disabled = false;
+              this.updateHistoryStatus('AI report not found', 'error');
             }
           }).catch(error => {
             console.error('Error loading AI reports:', error);
-            this.updateHistoryStatus('Erro ao carregar relatórios AI', 'error');
+            // Reabilitar o botão em caso de erro ao carregar relatórios
+            const btn = document.querySelector(`.ai-report-item .send-btn[data-index="${index}"]`);
+            if (btn) btn.disabled = false;
+            this.updateHistoryStatus('Error loading AI reports', 'error');
           });
         } else {
           // É um relatório manual
-          this.retryJiraSubmission(index);
+          this.updateHistoryStatus('Resending to Jira...', 'loading');
+          this.retryJiraSubmission(index).catch(err => {
+            console.error('Error resending manual report:', err);
+            // Reabilitar o botão manual em caso de erro
+            const btn = document.querySelector(`.history-item .send-btn[data-index="${index}"]`);
+            if (btn) btn.disabled = false;
+            this.updateHistoryStatus('Error resending: ' + err.message, 'error');
+          });
         }
       }
       
@@ -176,7 +202,7 @@ class BugSpotter {
   updateCaptureStatus(message, type = 'info') {
     const statusElement = document.getElementById('captureStatus');
     if (!statusElement) {
-      console.warn('[Popup] Elemento captureStatus não encontrado');
+      console.warn('[Popup] captureStatus element not found');
       return;
     }
     
@@ -184,12 +210,12 @@ class BugSpotter {
     const statusIcon = statusElement.querySelector('.status-icon');
     
     if (!statusText) {
-      console.warn('[Popup] Elemento .status-text não encontrado');
+      console.warn('[Popup] Element .status-text not found');
       return;
     }
     
     if (!statusIcon) {
-      console.warn('[Popup] Elemento .status-icon não encontrado');
+      console.warn('[Popup] Element .status-icon not found');
       return;
     }
     
@@ -309,7 +335,7 @@ class BugSpotter {
     } catch (error) {
       // ✅ Tratar especificamente o erro 'No tab with given id'
       if (error.message && error.message.includes('No tab with given id')) {
-        console.log('[Popup] Aba não existe mais, pulando captura de screenshot');
+        console.log('[Popup] Tab no longer exists, skipping screenshot capture');
         this.updateCaptureStatus('Tab no longer exists', 'warning');
       } else {
         console.error('Error capturing screenshot:', error);
@@ -390,7 +416,7 @@ class BugSpotter {
       // Resultado do attach - silenciado
       
       if (!attachResult.success) {
-        console.error('[DEBUG] Falha ao anexar debugger:', attachResult.error);
+        console.error('[DEBUG] Failed to attach debugger:', attachResult.error);
         throw new Error(attachResult.error || 'Failed to attach debugger');
       }
       
@@ -409,7 +435,7 @@ class BugSpotter {
       // Resultado dos logs - silenciado
       
       if (!logsResult.success) {
-        console.error('[DEBUG] Falha ao obter logs:', logsResult.error);
+        console.error('[DEBUG] Failed to get logs:', logsResult.error);
         throw new Error(logsResult.error || 'Failed to get debugger logs');
       }
       
@@ -512,7 +538,7 @@ class BugSpotter {
         });
         // Debugger desanexado com sucesso - silenciado
       } catch (detachError) {
-        console.warn('[DEBUG] Erro ao desanexar debugger:', detachError);
+        console.warn('[DEBUG] Error detaching debugger:', detachError);
       }
       
       return formattedLogs;
@@ -528,7 +554,7 @@ class BugSpotter {
           tabId: tabId
         });
       } catch (detachError) {
-        console.warn('[DEBUG] Erro ao desanexar debugger após falha:', detachError);
+        console.warn('[DEBUG] Error detaching debugger after failure:', detachError);
       }
       
       return null;
@@ -624,7 +650,7 @@ class BugSpotter {
     } catch (error) {
       // ✅ Tratar especificamente o erro 'No tab with given id'
       if (error.message && error.message.includes('No tab with given id')) {
-        console.log('[Popup] Aba não existe mais, pulando captura tradicional de logs');
+        console.log('[Popup] Tab no longer exists, skipping traditional log capture');
         return null;
       }
       console.error('Traditional capture failed:', error);
@@ -677,7 +703,7 @@ class BugSpotter {
     } catch (error) {
       // ✅ Tratar especificamente o erro 'No tab with given id'
       if (error.message && error.message.includes('No tab with given id')) {
-        console.log('[Popup] Aba não existe mais, pulando captura de DOM');
+        console.log('[Popup] Tab no longer exists, skipping DOM capture');
         this.updateCaptureStatus('Tab no longer exists', 'warning');
       } else {
         console.error('Error capturing DOM:', error);
@@ -695,14 +721,14 @@ class BugSpotter {
       const settings = await this.getSettings();
       const maxDuration = (settings.capture?.maxVideoLength || 30); // Em segundos
       
-      this.updateCaptureStatus('Preparando gravação...', 'loading');
+      this.updateCaptureStatus('Preparing recording...', 'loading');
       
       // Obter aba ativa
       const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
       const activeTab = tabs[0];
       
       if (!activeTab) {
-        throw new Error('Nenhuma aba ativa encontrada');
+        throw new Error('No active tab found');
       }
       
       // Verificar se a URL é acessível para content scripts
@@ -733,7 +759,7 @@ class BugSpotter {
       // Notificar background script sobre início da gravação
       await this.notifyRecordingStart(maxDuration * 1000);
       
-      this.updateCaptureStatus('Overlay de gravação injetado!', 'success');
+      this.updateCaptureStatus('Recording overlay injected!', 'success');
       
       // Fechar popup após 1 segundo
       setTimeout(() => {
@@ -743,11 +769,11 @@ class BugSpotter {
     } catch (error) {
       console.error('Error starting recording:', error);
       
-      let errorMessage = 'Erro ao iniciar gravação';
+      let errorMessage = 'Error starting recording';
       if (error.message.includes('Cannot access')) {
-        errorMessage = 'Não é possível gravar nesta página. Tente em uma página web normal (http/https).';
-      } else if (error.message.includes('Nenhuma aba')) {
-        errorMessage = 'Nenhuma aba ativa encontrada';
+        errorMessage = 'Cannot record on this page. Try a normal web page (http/https).';
+      } else if (error.message.includes('No active tab')) {
+        errorMessage = 'No active tab found';
       }
       
       this.updateCaptureStatus(errorMessage, 'error');
@@ -787,13 +813,13 @@ class BugSpotter {
   resetRecordingButton() {
     const button = document.getElementById('startRecording');
     if (!button) {
-      console.warn('[Popup] Botão startRecording não encontrado');
+      console.warn('[Popup] startRecording button not found');
       return;
     }
     
     const btnText = button.querySelector('.btn-text');
     if (!btnText) {
-      console.warn('[Popup] Elemento .btn-text não encontrado');
+      console.warn('[Popup] Element .btn-text not found');
       return;
     }
     
@@ -1200,11 +1226,11 @@ class BugSpotter {
           bugData.jiraAttempted = true;
           const jiraResponse = await this.sendToJira(bugData);
           // Jira response - silenciado
-          
-          if (jiraResponse && jiraResponse.key) {
+          const ticketKey = jiraResponse?.key || jiraResponse?.issueKey || jiraResponse?.data?.key || jiraResponse?.data?.issueKey;
+          if (ticketKey) {
             // Add Jira key to report before saving
-            bugData.jiraKey = jiraResponse.key;
-            this.updateReportStatus(`Report sent successfully! Ticket: ${jiraResponse.key}`, 'success');
+            bugData.jiraKey = ticketKey;
+            this.updateReportStatus(`Report sent successfully! Ticket: ${ticketKey}`, 'success');
           } else {
             this.updateReportStatus('Saved locally. Error sending to Jira: Invalid response', 'warning');
           }
@@ -1267,9 +1293,9 @@ class BugSpotter {
         },
         jira: {
           enabled: settings.jira?.enabled ?? false,
-          url: settings.jira?.url || '',
-          username: settings.jira?.username || '',
-          token: settings.jira?.token || '',
+          baseUrl: settings.jira?.baseUrl || '',
+          email: settings.jira?.email || '',
+          apiToken: settings.jira?.apiToken || '',
           projectKey: settings.jira?.projectKey || '',
           priorities: settings.jira?.priorities || defaultPriorities
         }
@@ -1279,7 +1305,7 @@ class BugSpotter {
       return finalSettings;
       
     } catch (error) {
-      console.error('❌ Erro ao carregar configurações:', error);
+      console.error('❌ Error loading settings:', error);
       return {
         autoCapture: true,
         includeConsole: true,
@@ -1292,9 +1318,9 @@ class BugSpotter {
         },
         jira: {
           enabled: false,
-          url: '',
-          username: '',
-          token: '',
+          baseUrl: '',
+          email: '',
+          apiToken: '',
           projectKey: '',
           priorities: {
             'highest': 'Highest',
@@ -1320,17 +1346,24 @@ class BugSpotter {
           return;
         }
         
-        // Check if response exists and has expected structure
+        // Check if response exists
         if (!response) {
           reject(new Error('No response received from background script'));
           return;
         }
         
-        if (response.success) {
-          resolve(response.data);
-        } else {
+        // Respect explicit failure from background
+        if (response.success === false) {
           reject(new Error(response.error || 'Unknown error'));
+          return;
         }
+
+        // Support both response shapes from background:
+        // - { success: true, data: { key: 'PROJ-1', ... } }
+        // - { success: true, issueKey: 'PROJ-1', ... }
+        // - Raw Jira payload { key: 'PROJ-1', ... }
+        const payload = response.data != null ? response.data : response;
+        resolve(payload);
       });
     });
   }
@@ -1429,7 +1462,7 @@ class BugSpotter {
         this.displayBugHistory(manualReports, aiReports);
         resolve();
       }).catch(error => {
-        console.error('Erro ao carregar histórico:', error);
+        console.error('Error loading history:', error);
         this.displayBugHistory([], []);
         resolve();
       });
@@ -1458,8 +1491,15 @@ class BugSpotter {
         
         chrome.storage.local.get([key], (result) => {
           const aiReports = result[key] || [];
-          // Ordenar por data de criação (mais recentes primeiro)
-          aiReports.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+          // Ordenar por data de criação (mais recentes primeiro) com robustez
+          aiReports.sort((a, b) => {
+            const getTs = (r) => {
+              if (!r || !r.createdAt) return 0;
+              const d = new Date(r.createdAt);
+              return isNaN(d.getTime()) ? 0 : d.getTime();
+            };
+            return getTs(b) - getTs(a);
+          });
           resolve(aiReports);
         });
       });
@@ -1545,10 +1585,10 @@ class BugSpotter {
         <div class="history-item-header-inline">
           <div class="history-title-inline">${truncatedTitle}</div>
           <div class="history-actions-inline">
-            <button class="view-btn" title="Ver relatório completo" data-index="${index}">
+            <button class="view-btn" title="View full report" data-index="${index}">
               <span class="material-icons">visibility</span>
             </button>
-            <button class="delete-btn" title="Deletar" data-index="${index}">
+            <button class="delete-btn" title="Delete" data-index="${index}">
               <span class="material-icons">delete</span>
             </button>
           </div>
@@ -1564,10 +1604,10 @@ class BugSpotter {
         <div class="history-item-header-inline">
           <div class="history-title-inline">${truncatedTitle}</div>
           <div class="history-actions-inline">
-            <button class="send-btn" title="Enviar para Jira" data-index="${index}">
+            <button class="send-btn" title="Send to Jira" data-index="${index}">
               <span class="material-icons">send</span>
             </button>
-            <button class="view-btn" title="Ver relatório completo" data-index="${index}">
+            <button class="view-btn" title="View full report" data-index="${index}">
               <span class="material-icons">visibility</span>
             </button>
             <button class="delete-btn" title="Deletar" data-index="${index}">
@@ -1621,7 +1661,7 @@ class BugSpotter {
               <a href="${jiraUrl}" target="_blank" class="jira-link-full">${truncatedTitle}</a>
             </div>
             <div class="history-actions-inline">
-              <button class="delete-btn" title="Deletar" data-index="${index}">
+              <button class="delete-btn" title="Delete" data-index="${index}">
                 <span class="material-icons">delete</span>
               </button>
             </div>
@@ -1640,13 +1680,13 @@ class BugSpotter {
           <div class="history-item-header-inline">
             <div class="history-title-inline">${truncatedTitle}</div>
             <div class="history-actions-inline">
-              <button class="send-btn" title="Enviar para Jira" data-index="${index}">
+              <button class="send-btn" title="Send to Jira" data-index="${index}">
                 <span class="material-icons">send</span>
               </button>
-              <button class="view-btn" title="Ver detalhes" data-index="${index}">
+              <button class="view-btn" title="View details" data-index="${index}">
                 <span class="material-icons">visibility</span>
               </button>
-              <button class="delete-btn" title="Deletar" data-index="${index}">
+              <button class="delete-btn" title="Delete" data-index="${index}">
                 <span class="material-icons">delete</span>
               </button>
             </div>
@@ -1665,13 +1705,13 @@ class BugSpotter {
           <div class="history-item-header-inline">
             <div class="history-title-inline">${truncatedTitle}</div>
             <div class="history-actions-inline">
-              <button class="send-btn" title="Enviar para Jira" data-index="${index}">
+              <button class="send-btn" title="Send to Jira" data-index="${index}">
                 <span class="material-icons">send</span>
               </button>
-              <button class="view-btn" title="Ver detalhes" data-index="${index}">
+              <button class="view-btn" title="View details" data-index="${index}">
                 <span class="material-icons">visibility</span>
               </button>
-              <button class="delete-btn" title="Deletar" data-index="${index}">
+              <button class="delete-btn" title="Delete" data-index="${index}">
                 <span class="material-icons">delete</span>
               </button>
             </div>
@@ -1692,7 +1732,7 @@ class BugSpotter {
       // Verificar se a integração Jira está habilitada
       const settings = await this.getSettings();
       if (!settings.jira || !settings.jira.enabled) {
-        this.updateHistoryStatus('Integração com Jira não está habilitada. Configure nas configurações.', 'error');
+        this.updateHistoryStatus('Jira integration is not enabled. Configure it in Settings.', 'error');
         return;
       }
 
@@ -1717,6 +1757,10 @@ class BugSpotter {
       }
       
       const jiraResponse = await this.sendToJira(report);
+      const ticketKey = jiraResponse?.key || jiraResponse?.issueKey || jiraResponse?.data?.key || jiraResponse?.data?.issueKey;
+      if (!ticketKey) {
+        throw new Error('Invalid Jira response: missing ticket key');
+      }
       
       // Update report with jiraKey using chrome.storage.local
       // Recarregar os dados para garantir que temos a versão mais atual
@@ -1737,12 +1781,12 @@ class BugSpotter {
         throw new Error('Report not found in updated storage');
       }
       
-      updatedReports[reportIndex].jiraKey = jiraResponse.key;
+      updatedReports[reportIndex].jiraKey = ticketKey;
       updatedReports[reportIndex].jiraAttempted = true;
       updatedReports[reportIndex].jiraSuccess = true;
       
       chrome.storage.local.set({ bugReports: updatedReports }, () => {
-        this.updateHistoryStatus(`Sent successfully! Ticket: ${jiraResponse.key}`, 'success');
+        this.updateHistoryStatus(`Sent successfully! Ticket: ${ticketKey}`, 'success');
         
         // Recarregar o histórico para mostrar as mudanças
         this.loadBugHistory();
@@ -1815,7 +1859,7 @@ class BugSpotter {
       this.showAIReportModal(report);
       
     } catch (error) {
-      console.error('Erro ao visualizar relatório AI:', error);
+      console.error('Error viewing AI report:', error);
     }
   }
   
@@ -1847,12 +1891,12 @@ class BugSpotter {
           </div>
           
           <div class="report-section">
-            <h4>Descrição</h4>
+            <h4>Description</h4>
             <p>${report.description}</p>
           </div>
           
           <div class="report-section">
-            <h4>Erro Original</h4>
+            <h4>Original Error</h4>
             <div class="error-details">
               <p><strong>Status:</strong> ${report.originalError.status} ${report.originalError.statusText}</p>
               <p><strong>URL:</strong> ${report.originalError.url}</p>
@@ -1862,7 +1906,7 @@ class BugSpotter {
           
           ${report.suggestions && report.suggestions.length > 0 ? `
             <div class="report-section">
-              <h4>Sugestões</h4>
+              <h4>Suggestions</h4>
               <ul class="suggestions-list">
                 ${report.suggestions.map(suggestion => `<li>${suggestion}</li>`).join('')}
               </ul>
@@ -1898,6 +1942,12 @@ class BugSpotter {
    */
   async deleteAIReport(index) {
     try {
+      // Confirmar deleção com o usuário
+      const confirmed = window.confirm('Are you sure you want to delete this AI report?');
+      if (!confirmed) {
+        return;
+      }
+      
       // Obter aba atual
       const tabs = await new Promise((resolve) => {
         chrome.tabs.query({active: true, currentWindow: true}, resolve);
@@ -1927,10 +1977,11 @@ class BugSpotter {
       // Recarregar histórico
       await this.loadBugHistory();
       
-      // Relatório AI deletado com sucesso - silenciado
+      // Feedback de deleção
+      this.updateHistoryStatus('AI report deleted', 'success');
       
     } catch (error) {
-      console.error('Erro ao deletar relatório AI:', error);
+      console.error('Error deleting AI report:', error);
     }
   }
 
@@ -2037,27 +2088,27 @@ class BugSpotter {
         </div>
         <div class="manual-report-modal-body">
           <div class="report-section">
-            <h4><span class="material-icons">description</span> Descrição</h4>
-            <p>${report.description || 'Nenhuma descrição fornecida.'}</p>
+            <h4><span class="material-icons">description</span> Description</h4>
+            <p>${report.description || 'No description provided.'}</p>
           </div>
           
           ${report.steps ? `
             <div class="report-section">
-              <h4><span class="material-icons">list</span> Passos para Reproduzir</h4>
+              <h4><span class="material-icons">list</span> Steps to Reproduce</h4>
               <p>${report.steps}</p>
             </div>
           ` : ''}
           
           ${report.expectedBehavior ? `
             <div class="report-section">
-              <h4><span class="material-icons">check_circle</span> Comportamento Esperado</h4>
+              <h4><span class="material-icons">check_circle</span> Expected Behavior</h4>
               <p>${report.expectedBehavior}</p>
             </div>
           ` : ''}
           
           ${report.actualBehavior ? `
             <div class="report-section">
-              <h4><span class="material-icons">error</span> Comportamento Atual</h4>
+              <h4><span class="material-icons">error</span> Current Behavior</h4>
               <p>${report.actualBehavior}</p>
             </div>
           ` : ''}
@@ -2065,32 +2116,32 @@ class BugSpotter {
           <div class="report-meta">
             <div class="meta-item">
               <span class="material-icons">flag</span>
-              <span>Prioridade: ${report.priority || 'Não definida'}</span>
+              <span>Priority: ${report.priority || 'Not defined'}</span>
             </div>
             ${report.environment ? `
               <div class="meta-item">
                 <span class="material-icons">computer</span>
-                <span>Ambiente: ${report.environment}</span>
+                <span>Environment: ${report.environment}</span>
               </div>
             ` : ''}
             <div class="meta-item">
               <span class="material-icons">schedule</span>
-              <span>Criado em: ${new Date(report.createdAt || report.timestamp || Date.now()).toLocaleString()}</span>
+              <span>Created at: ${new Date(report.createdAt || report.timestamp || Date.now()).toLocaleString()}</span>
             </div>
             <div class="meta-item">
               <span class="material-icons">link</span>
-              <span>URL: ${report.url || 'Não disponível'}</span>
+              <span>URL: ${report.url || 'Not available'}</span>
             </div>
           </div>
 
           ${report.attachments && report.attachments.length > 0 ? `
             <div class="report-section">
-              <h4><span class="material-icons">attach_file</span> Anexos (${report.attachments.length})</h4>
+              <h4><span class="material-icons">attach_file</span> Attachments (${report.attachments.length})</h4>
               <div class="attachments-list">
                 ${report.attachments.map((attachment, index) => `
                   <div class="attachment-item">
                     <span class="material-icons">insert_drive_file</span>
-                    <span>${attachment.name || `Anexo ${index + 1}`}</span>
+                    <span>${attachment.name || `Attachment ${index + 1}`}</span>
                     <span class="attachment-size">${this.formatFileSize(attachment.size || 0)}</span>
                   </div>
                 `).join('')}
@@ -2107,9 +2158,9 @@ class BugSpotter {
 
           ${report.logs && report.logs.length > 0 ? `
             <div class="report-section">
-              <h4><span class="material-icons">bug_report</span> Logs de Console</h4>
+              <h4><span class="material-icons">bug_report</span> Console Logs</h4>
               <pre class="report-logs">${report.logs.slice(0, 10).map(log => `[${log.level}] ${log.message}`).join('\n')}</pre>
-              ${report.logs.length > 10 ? `<p class="logs-truncated">... e mais ${report.logs.length - 10} entradas</p>` : ''}
+              ${report.logs.length > 10 ? `<p class="logs-truncated">... and ${report.logs.length - 10} more entries</p>` : ''}
             </div>
           ` : ''}
         </div>
@@ -2142,34 +2193,73 @@ class BugSpotter {
       // Verificar se a integração Jira está habilitada
       const settings = await this.getSettings();
       if (!settings.jira || !settings.jira.enabled) {
-        throw new Error('Integração com Jira não está habilitada');
+        throw new Error('Jira integration is not enabled');
       }
 
       // Preparar dados do relatório AI para envio ao Jira
       const bugData = {
         title: report.title,
-        description: report.analysis || report.description || 'Relatório gerado por AI',
+        description: report.description || report.analysis || 'AI-generated report',
+        // Mapear steps do relatório de IA
+        steps: report.stepsToReproduce || [],
+        expectedBehavior: report.expectedBehavior,
+        actualBehavior: report.actualBehavior,
+        // Usar severity do relatório de IA, apenas para descrição (não define prioridade Jira em AI)
         priority: report.severity || 'Medium',
-        url: report.url || '',
+        // Garantir URL correta (usar originalError.url se disponível)
+        url: (report.originalError && report.originalError.url) || report.url || '',
         screenshot: report.screenshot || null,
         logs: report.logs || [],
         attachments: report.attachments || [],
-        createdAt: report.createdAt || new Date().toISOString(),
+        // Enviar timestamp esperado pelo template
+        timestamp: report.createdAt || (report.originalError && report.originalError.timestamp) || new Date().toISOString(),
+        // Incluir erro original para descrição detalhada no Jira
+        originalError: report.originalError || null,
         isAIReport: true
       };
 
+      // 🆕 Anexar detalhes completos de rede (headers + body) como arquivo JSON
+      try {
+        const tabs = await new Promise((resolve) => {
+          chrome.tabs.query({active: true, currentWindow: true}, resolve);
+        });
+        if (tabs && tabs.length > 0) {
+          const tabId = tabs[0].id;
+          const netDetailsResp = await new Promise((resolve) => {
+            chrome.runtime.sendMessage({
+              action: 'GET_NETWORK_DETAILS',
+              tabId,
+              url: bugData.url,
+              timestamp: bugData.timestamp
+            }, resolve);
+          });
+          if (netDetailsResp && netDetailsResp.success && netDetailsResp.data) {
+            const jsonContent = JSON.stringify(netDetailsResp.data, null, 2);
+            bugData.attachments = bugData.attachments || [];
+            bugData.attachments.push({
+              type: 'text',
+              name: 'network-details.json',
+              data: jsonContent
+            });
+          }
+        }
+      } catch (_) {
+        // Silenciar falhas ao obter detalhes de rede; envio ao Jira continua
+      }
+
       // Enviar para Jira usando a função existente
       const jiraResponse = await this.sendToJira(bugData);
+      const ticketKey = jiraResponse?.key || jiraResponse?.issueKey || jiraResponse?.data?.key || jiraResponse?.data?.issueKey;
       
-      if (jiraResponse && jiraResponse.key) {
+      if (ticketKey) {
         // Obter aba atual para usar a chave correta
         const tabs = await new Promise((resolve) => {
           chrome.tabs.query({active: true, currentWindow: true}, resolve);
         });
         
         if (tabs.length === 0) {
-          throw new Error('Não foi possível obter a aba atual');
-        }
+            throw new Error('Could not get the current tab');
+          }
         
         const tabId = tabs[0].id;
         const key = `ai-reports-${tabId}`;
@@ -2181,7 +2271,7 @@ class BugSpotter {
           const reportIndex = aiReports.findIndex(r => r.createdAt === report.createdAt);
           
           if (reportIndex !== -1) {
-            aiReports[reportIndex].jiraKey = jiraResponse.key;
+            aiReports[reportIndex].jiraKey = ticketKey;
             aiReports[reportIndex].jiraAttempted = true;
             aiReports[reportIndex].jiraSuccess = true;
             aiReports[reportIndex].jiraSentAt = new Date().toISOString();
@@ -2189,17 +2279,17 @@ class BugSpotter {
             chrome.storage.local.set({ [key]: aiReports }, () => {
               // Recarregar o histórico para mostrar as mudanças
               this.loadBugHistory();
-              this.updateHistoryStatus(`Relatório AI enviado para Jira: ${jiraResponse.key}`, 'success');
+              this.updateHistoryStatus(`AI report sent to Jira: ${ticketKey}`, 'success');
             });
           } else {
-            throw new Error('Relatório não encontrado no storage');
-          }
+              throw new Error('Report not found in storage');
+            }
         });
       } else {
-        throw new Error('Falha ao obter ID do ticket Jira');
+        throw new Error('Failed to get Jira ticket ID');
       }
     } catch (error) {
-      console.error('Erro ao enviar relatório AI para Jira:', error);
+      console.error('Error sending AI report to Jira:', error);
       
       // Obter aba atual para usar a chave correta
       const tabs = await new Promise((resolve) => {
@@ -2223,7 +2313,7 @@ class BugSpotter {
             
             chrome.storage.local.set({ [key]: aiReports }, () => {
               // Não recarregar o histórico em caso de erro para evitar conflitos de mensagem
-              this.updateHistoryStatus(`Erro ao enviar para Jira: ${error.message}`, 'error');
+              this.updateHistoryStatus(`Error sending to Jira: ${error.message}`, 'error');
             });
           }
         });
@@ -2273,7 +2363,7 @@ class BugSpotter {
       // Configurações do popup salvas - silenciado
       
     } catch (error) {
-      console.error('❌ Erro ao salvar configurações do popup:', error);
+      console.error('❌ Error saving popup settings:', error);
     }
   }
 
@@ -2373,7 +2463,7 @@ class BugSpotter {
       
       // Dropdown atualizada com sucesso - silenciado
     } catch (error) {
-      console.error('❌ Erro ao carregar prioridades:', error);
+      console.error('❌ Error loading priorities:', error);
     }
   }
 
@@ -2382,7 +2472,7 @@ class BugSpotter {
     try {
       const response = await chrome.runtime.sendMessage({ action: 'GET_RECORDING_STATE' });
       if (response && response.success && response.state && response.state.isRecording) {
-        console.log('[Popup] Gravação em andamento detectada, restaurando estado...');
+        console.log('[Popup] Ongoing recording detected, restoring state...');
         
         // Calcular tempo decorrido e restante
         const elapsed = Date.now() - response.state.startTime;
@@ -2393,12 +2483,12 @@ class BugSpotter {
           await this.attemptRecordingRecovery(remaining);
         } else {
           // Gravação deve ter terminado, limpar estado
-          console.log('[Popup] Gravação expirou, limpando estado...');
+          console.log('[Popup] Recording expired, clearing state...');
           await this.handleExpiredRecording();
         }
       }
     } catch (error) {
-      console.error('[Popup] Erro ao verificar estado de gravação:', error);
+      console.error('[Popup] Error checking recording state:', error);
     }
   }
 
@@ -2406,7 +2496,7 @@ class BugSpotter {
     try {
       // Verificar se ainda temos acesso ao stream de mídia
       if (this.mediaRecorder && this.mediaRecorder.state === 'recording') {
-        console.log('[Popup] MediaRecorder ainda ativo, continuando gravação...');
+        console.log('[Popup] MediaRecorder still active, continuing recording...');
         await this.restoreRecordingUI(remainingTime);
         return;
       }
@@ -2415,7 +2505,7 @@ class BugSpotter {
       this.showRecoveryOptions(remainingTime);
       
     } catch (error) {
-      console.error('[Popup] Erro na recuperação da gravação:', error);
+      console.error('[Popup] Error recovering recording:', error);
       this.showRecoveryOptions(remainingTime);
     }
   }
@@ -2425,13 +2515,13 @@ class BugSpotter {
     
     const button = document.getElementById('startRecording');
     if (!button) {
-      console.warn('[Popup] Botão startRecording não encontrado ao restaurar UI');
+      console.warn('[Popup] startRecording button not found when restoring UI');
       return;
     }
     
     const btnText = button.querySelector('.btn-text');
     if (!btnText) {
-      console.warn('[Popup] Elemento .btn-text não encontrado ao restaurar UI');
+      console.warn('[Popup] Element .btn-text not found when restoring UI');
       return;
     }
     
@@ -2441,7 +2531,7 @@ class BugSpotter {
     const totalSeconds = Math.ceil(remainingTime/1000);
       const minutes = Math.floor(totalSeconds / 60);
       const seconds = totalSeconds % 60;
-      this.updateCaptureStatus(`Gravação restaurada... (${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')} restantes)`, 'success');
+      this.updateCaptureStatus(`Recording restored... (${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')} remaining)`, 'success');
     
     // Calcular tempo total baseado nas configurações
     const settings = await this.getSettings();
@@ -2454,29 +2544,29 @@ class BugSpotter {
   showRecoveryOptions(remainingTime) {
     const statusDiv = document.getElementById('captureStatus');
     if (!statusDiv) {
-      console.warn('[Popup] Elemento captureStatus não encontrado para mostrar opções de recuperação');
+      console.warn('[Popup] captureStatus element not found to show recovery options');
       return;
     }
     
     statusDiv.innerHTML = `
       <div class="recovery-options" style="background: #fff3cd; border: 1px solid #ffeaa7; border-radius: 4px; padding: 12px; margin: 8px 0;">
         <div style="color: #856404; font-weight: bold; margin-bottom: 8px;">
-          🔄 Gravação Interrompida Detectada
+          🔄 Interrupted Recording Detected
         </div>
         <div style="color: #856404; margin-bottom: 12px; font-size: 14px;">
-          Uma gravação estava em andamento (${(() => {
+          A recording was in progress (${(() => {
             const totalSeconds = Math.ceil(remainingTime/1000);
             const minutes = Math.floor(totalSeconds / 60);
             const seconds = totalSeconds % 60;
             return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
-          })()} restantes). O que deseja fazer?
+          })()} remaining). What would you like to do?
         </div>
         <div style="display: flex; gap: 8px; flex-wrap: wrap;">
           <button id="continueRecording" class="btn btn-primary" style="font-size: 12px; padding: 6px 12px;">
-            ▶️ Continuar Gravação
+            ▶️ Continue Recording
           </button>
           <button id="cancelRecording" class="btn btn-secondary" style="font-size: 12px; padding: 6px 12px;">
-            ❌ Cancelar
+            ❌ Cancel
           </button>
         </div>
       </div>
@@ -2491,7 +2581,7 @@ class BugSpotter {
         this.continueRecording(remainingTime);
       });
     } else {
-      console.warn('[Popup] Botão continueRecording não encontrado');
+      console.warn('[Popup] continueRecording button not found');
     }
     
     if (cancelBtn) {
@@ -2499,7 +2589,7 @@ class BugSpotter {
         this.cancelRecording();
       });
     } else {
-      console.warn('[Popup] Botão cancelRecording não encontrado');
+      console.warn('[Popup] cancelRecording button not found');
     }
   }
 
@@ -2544,7 +2634,7 @@ class BugSpotter {
       // Configurar timeout para o tempo restante
       this.recordingTimeout = setTimeout(() => {
         if (this.isRecording) {
-          this.updateCaptureStatus('Gravação finalizada automaticamente', 'warning');
+          this.updateCaptureStatus('Recording automatically finished', 'warning');
           this.stopRecording();
         }
       }, remainingTime);
@@ -2569,7 +2659,7 @@ class BugSpotter {
         
         const maxSize = 50 * 1024 * 1024;
         if (blob.size > maxSize) {
-          this.updateCaptureStatus('Gravação muito grande (>50MB)', 'error');
+          this.updateCaptureStatus('Recording too large (>50MB)', 'error');
           return;
         }
         
@@ -2582,14 +2672,14 @@ class BugSpotter {
             size: blob.size,
             duration: Math.round(duration)
           });
-          this.updateCaptureStatus(`Gravação recuperada com sucesso! (${Math.round(duration)}s)`, 'success');
+          this.updateCaptureStatus(`Recording recovered successfully! (${Math.round(duration)}s)`, 'success');
         };
         reader.readAsDataURL(blob);
       };
       
       stream.getVideoTracks()[0].addEventListener('ended', () => {
         if (this.isRecording) {
-          this.updateCaptureStatus('Compartilhamento de tela encerrado', 'info');
+          this.updateCaptureStatus('Screen sharing ended', 'info');
           this.stopRecording();
         }
       });
@@ -2599,8 +2689,8 @@ class BugSpotter {
       await this.restoreRecordingUI(remainingTime);
       
     } catch (error) {
-      console.error('[Popup] Erro ao continuar gravação:', error);
-      this.updateCaptureStatus('Erro ao continuar gravação', 'error');
+      console.error('[Popup] Error continuing recording:', error);
+      this.updateCaptureStatus('Error continuing recording', 'error');
       this.cancelRecording();
     }
   }
@@ -2608,20 +2698,20 @@ class BugSpotter {
   async cancelRecording() {
     try {
       await chrome.runtime.sendMessage({ action: 'STOP_RECORDING' });
-      this.updateCaptureStatus('Gravação cancelada', 'info');
+      this.updateCaptureStatus('Recording canceled', 'info');
       this.resetRecordingButton();
     } catch (error) {
-      console.error('[Popup] Erro ao cancelar gravação:', error);
+      console.error('[Popup] Error canceling recording:', error);
     }
   }
 
   async handleExpiredRecording() {
     try {
       await chrome.runtime.sendMessage({ action: 'STOP_RECORDING' });
-      this.updateCaptureStatus('Gravação anterior expirou', 'warning');
+      this.updateCaptureStatus('Previous recording expired', 'warning');
       this.resetRecordingButton();
     } catch (error) {
-      console.error('[Popup] Erro ao limpar gravação expirada:', error);
+      console.error('[Popup] Error clearing expired recording:', error);
     }
   }
 
@@ -2631,30 +2721,30 @@ class BugSpotter {
         action: 'START_RECORDING',
         maxDuration: maxDuration
       });
-      console.log('[Popup] Background notificado sobre início da gravação');
+      console.log('[Popup] Background notified about recording start');
     } catch (error) {
-      console.error('[Popup] Erro ao notificar início da gravação:', error);
+      console.error('[Popup] Error notifying recording start:', error);
     }
   }
 
   async notifyRecordingStop() {
     try {
       await chrome.runtime.sendMessage({ action: 'STOP_RECORDING' });
-      console.log('[Popup] Background notificado sobre parada da gravação');
+      console.log('[Popup] Background notified about recording stop');
     } catch (error) {
-      console.error('[Popup] Erro ao notificar parada da gravação:', error);
+      console.error('[Popup] Error notifying recording stop:', error);
     }
   }
 
   handleBackgroundMessage(message, sender, sendResponse) {
-    console.log('[Popup] Mensagem recebida do background:', message);
+    console.log('[Popup] Message received from background:', message);
     
     switch (message.type) {
       case 'VIDEO_ATTACHED':
         this.handleVideoAttached(message);
         break;
       default:
-        console.log('[Popup] Tipo de mensagem desconhecido:', message.type);
+        console.log('[Popup] Unknown message type:', message.type);
     }
     
     sendResponse({ success: true });
@@ -2664,14 +2754,66 @@ class BugSpotter {
     try {
       if (message.success && message.videoKey) {
         // Sucesso - carregar o vídeo e adicionar aos anexos
-        console.log('[Popup] Vídeo anexado com sucesso:', message.videoKey);
+        console.log('[Popup] Video attached successfully:', message.videoKey);
         
-        // Recuperar dados do vídeo do storage
-        const videoData = await chrome.storage.local.get(message.videoKey);
-        if (videoData[message.videoKey]) {
-          const storedItem = videoData[message.videoKey];
+        let videoData = null;
+        let storedItem = null;
+        
+        // Tentar recuperar dados do vídeo do storage com múltiplas abordagens
+        try {
+          // Primeira tentativa: chrome.storage.local direto
+          const chromeStorageData = await chrome.storage.local.get(message.videoKey);
+          if (chromeStorageData[message.videoKey]) {
+            videoData = chromeStorageData;
+            storedItem = chromeStorageData[message.videoKey];
+            console.log('[Popup] Video found in chrome.storage.local');
+          }
+        } catch (chromeError) {
+          console.warn('[Popup] Error accessing chrome.storage.local:', chromeError.message);
+        }
+        
+        // Segunda tentativa: usar StorageManager se disponível
+        if (!storedItem && typeof StorageManager !== 'undefined') {
+          try {
+            console.log('[Popup] Trying to retrieve video via StorageManager...');
+            const storageManager = new StorageManager();
+            const retrievedData = await storageManager.retrieve(message.videoKey, 'chrome');
+            if (retrievedData) {
+              storedItem = retrievedData;
+              console.log('[Popup] Video found via StorageManager');
+            }
+          } catch (storageManagerError) {
+            console.warn('[Popup] Error using StorageManager:', storageManagerError.message);
+          }
+        }
+        
+        // Terceira tentativa: buscar por padrão de chave similar
+        if (!storedItem) {
+          try {
+            console.log('[Popup] Trying to find video by key pattern...');
+            const allData = await chrome.storage.local.get(null);
+            const videoKeys = Object.keys(allData).filter(key => 
+              key.includes('video_') && key.includes(message.videoKey.split('_')[1])
+            );
+            
+            if (videoKeys.length > 0) {
+              const foundKey = videoKeys[0];
+              storedItem = allData[foundKey];
+              console.log(`[Popup] Video found with alternative key: ${foundKey}`);
+            }
+          } catch (searchError) {
+            console.warn('[Popup] Error searching by pattern:', searchError.message);
+          }
+        }
+        
+        if (storedItem) {
           // O StorageManager armazena dados com metadados
           const video = storedItem.data || storedItem;
+          
+          // Validar se os dados do vídeo são válidos
+          if (!video || (!video.data && typeof video !== 'string')) {
+            throw new Error('Video data is corrupted or invalid');
+          }
           
           // Criar anexo de vídeo
           const attachment = {
@@ -2686,22 +2828,50 @@ class BugSpotter {
           this.addAttachment(attachment);
           
           // Exibir mensagem de sucesso
-          this.updateCaptureStatus('Gravação de vídeo concluída com sucesso!', 'success');
+          this.updateCaptureStatus('Video recording completed successfully!', 'success');
           
           // Limpar dados temporários do storage
-          await chrome.storage.local.remove(message.videoKey);
+          try {
+            await chrome.storage.local.remove(message.videoKey);
+          } catch (cleanupError) {
+            console.warn('[Popup] Error clearing temporary data:', cleanupError.message);
+          }
         } else {
-          throw new Error('Dados do vídeo não encontrados no storage');
+          // Dados não encontrados após todas as tentativas
+          console.error('[Popup] Video data not found after multiple attempts');
+          console.error('[Popup] Searched key:', message.videoKey);
+          
+          // List available keys for debugging
+          try {
+            const allKeys = await chrome.storage.local.get(null);
+            const videoKeys = Object.keys(allKeys).filter(key => key.includes('video_'));
+            console.error('[Popup] Available video keys:', videoKeys);
+          } catch (debugError) {
+            console.error('[Popup] Error listing keys for debug:', debugError.message);
+          }
+          
+          throw new Error(`Video data not found in storage (key: ${message.videoKey})`);
         }
       } else {
-        // Erro na gravação
-        const errorMsg = message.error || 'Erro desconhecido na gravação';
-        console.error('[Popup] Erro na gravação:', errorMsg);
-        this.updateCaptureStatus(`❌ Falha na gravação: ${errorMsg}`, 'error');
+        // Recording error
+        const errorMsg = message.error || 'Unknown recording error';
+        console.error('[Popup] Recording error:', errorMsg);
+        this.updateCaptureStatus(`❌ Recording failed: ${errorMsg}`, 'error');
       }
     } catch (error) {
-      console.error('[Popup] Erro ao processar vídeo anexado:', error);
-      this.updateCaptureStatus('❌ Erro ao processar gravação de vídeo', 'error');
+      console.error('[Popup] Error processing attached video:', error);
+      
+      // Mensagem de erro mais específica
+      let errorMessage = '❌ Error processing video recording';
+      if (error.message.includes('not found')) {
+        errorMessage = '❌ Video not found - it may have expired or been removed';
+      } else if (error.message.includes('corrupted')) {
+        errorMessage = '❌ Video data is corrupted';
+      } else if (error.message.includes('quota exceeded')) {
+        errorMessage = '❌ Storage full - clear old data and try again';
+      }
+      
+      this.updateCaptureStatus(errorMessage, 'error');
     }
   }
 }
@@ -2712,7 +2882,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     window.bugSpotter = new BugSpotter();
     await window.bugSpotter.init();
   } catch (error) {
-    console.error('[Popup] Erro na inicialização:', error);
+    console.error('[Popup] Error during initialization:', error);
   }
 });
 

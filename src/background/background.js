@@ -1,7 +1,11 @@
 // Importar módulos - Manifest V3 compatível
 importScripts('../modules/SecurityManager.js');
 importScripts('../modules/ErrorHandler.js');
+importScripts('../modules/IndexedDBManager.js');
+importScripts('../modules/VideoCompressor.js');
+importScripts('../modules/StorageBuckets.js');
 importScripts('../modules/StorageManager.js');
+importScripts('../modules/StorageMonitor.js');
 importScripts('../modules/AIService.js');
 importScripts('../utils/RateLimiter.js');
 importScripts('../utils/PerformanceMonitor.js');
@@ -49,6 +53,76 @@ class BugSpotterBackground {
     });
   }
 
+  /**
+   * Configura o monitoramento de storage
+   */
+  initStorageMonitoring() {
+    // Configurar callbacks para alertas
+    this.storageMonitor.onAlert('warning', (usage, level, message) => {
+      console.warn(`📊 [Storage Monitor] ${message}`);
+    });
+    
+    this.storageMonitor.onAlert('critical', (usage, level, message) => {
+      console.error(`🚨 [Storage Monitor] ${message}`);
+      // Enviar notificação para o usuário
+      this.sendStorageAlert(level, message, usage);
+    });
+    
+    this.storageMonitor.onAlert('emergency', (usage, level, message) => {
+      console.error(`🆘 [Storage Monitor] ${message}`);
+      // Enviar notificação crítica para o usuário
+      this.sendStorageAlert(level, message, usage);
+    });
+    
+    // Configurar callback para estatísticas
+    this.storageMonitor.onStatsUpdate((usage, stats) => {
+      // Log periódico das estatísticas (apenas a cada 10 verificações para não poluir)
+      if (stats.totalChecks % 10 === 0) {
+        console.log(`📊 [Storage Monitor] Stats: ${stats.totalChecks} checks, ${stats.alertsTriggered} alerts, ${stats.cleanupEvents} cleanups`);
+      }
+    });
+    
+    // Iniciar monitoramento
+    this.storageMonitor.startMonitoring();
+    console.log('✅ [Background] StorageMonitor inicializado e ativo');
+  }
+
+  /**
+   * Envia alerta de storage para o usuário
+   */
+  async sendStorageAlert(level, message, usage) {
+    try {
+      const iconMap = {
+        warning: '⚠️',
+        critical: '🚨',
+        emergency: '🆘'
+      };
+      
+      const notification = {
+        type: 'basic',
+        iconUrl: 'icons/icon48.png',
+        title: `${iconMap[level]} BugSpotter - Alerta de Armazenamento`,
+        message: message,
+        priority: level === 'emergency' ? 2 : (level === 'critical' ? 1 : 0)
+      };
+      
+      // Criar notificação
+      chrome.notifications.create(`storage-alert-${Date.now()}`, notification);
+      
+      // Armazenar notificação no histórico
+      await this.storeNotification({
+        ...notification,
+        timestamp: Date.now(),
+        category: 'storage',
+        level: level,
+        usage: usage
+      });
+      
+    } catch (error) {
+      console.error('❌ [Background] Erro ao enviar alerta de storage:', error);
+    }
+  }
+
   initializeModules() {
     // Inicializar módulos diretamente
     this.securityManager = new SecurityManager();
@@ -56,6 +130,10 @@ class BugSpotterBackground {
     this.storageManager = new StorageManager();
     this.aiService = new AIService();
     this.performanceMonitor = new PerformanceMonitor();
+    
+    // Inicializar StorageMonitor
+    this.storageMonitor = new StorageMonitor(this.storageManager);
+    this.initStorageMonitoring();
     
     // Flag para controlar se AIService está pronto
     this.aiServiceReady = false;
@@ -141,6 +219,68 @@ class BugSpotterBackground {
       this.cleanupOldLogs();
       this.optimizeStorage();
     }, 5 * 60 * 1000); // A cada 5 minutos
+    
+    // 🆕 Listeners para navegação - preservar estado de gravação
+    this.setupNavigationListeners();
+  }
+  
+  setupNavigationListeners() {
+    if (chrome.webNavigation) {
+      // Detectar quando navegação começa
+      chrome.webNavigation.onBeforeNavigate.addListener((details) => {
+        if (details.frameId === 0) { // Apenas frame principal
+          this.handleBeforeNavigate(details.tabId, details.url);
+        }
+      });
+      
+      // Detectar quando navegação é completada
+      chrome.webNavigation.onCompleted.addListener((details) => {
+        if (details.frameId === 0) { // Apenas frame principal
+          this.handleNavigationCompleted(details.tabId, details.url);
+        }
+      });
+    }
+  }
+  
+  async handleBeforeNavigate(tabId, url) {
+    // Verificar se há gravação ativa nesta aba
+    const recordingState = await this.getRecordingState(tabId);
+    if (recordingState && recordingState.isRecording) {
+      console.log(`[Background] Navegação detectada durante gravação na aba ${tabId}`);
+      
+      // Salvar estado de gravação antes da navegação
+      await this.saveRecordingStatesToStorage();
+      
+      // Notificar content script para preservar overlay
+      try {
+        await chrome.tabs.sendMessage(tabId, {
+          action: 'PRESERVE_RECORDING_STATE',
+          recordingState: recordingState
+        });
+      } catch (error) {
+        console.debug('[Background] Erro ao notificar content script sobre navegação:', error);
+      }
+    }
+  }
+  
+  async handleNavigationCompleted(tabId, url) {
+    // Verificar se há estado de gravação preservado para esta aba
+    const recordingState = await this.getRecordingState(tabId);
+    if (recordingState && recordingState.isRecording) {
+      console.log(`[Background] Restaurando estado de gravação após navegação na aba ${tabId}`);
+      
+      // Aguardar um pouco para o content script carregar
+      setTimeout(async () => {
+        try {
+          await chrome.tabs.sendMessage(tabId, {
+            action: 'RESTORE_RECORDING_STATE',
+            recordingState: recordingState
+          });
+        } catch (error) {
+          console.debug('[Background] Erro ao restaurar estado de gravação:', error);
+        }
+      }, 1000);
+    }
   }
   
   cleanupTabData(tabId) {
@@ -438,6 +578,8 @@ class BugSpotterBackground {
           timestamp: new Date(timestamp).toISOString(),
           requestId: params.requestId,
           headers: params.request.headers,
+          // Preserve request headers explicitly
+          requestHeaders: params.request.headers,
           postData: params.request.postData,
           initiator: params.initiator,
           // 🆕 Adicionar log formatado para exibição
@@ -463,6 +605,8 @@ class BugSpotterBackground {
           timestamp: new Date(timestamp).toISOString(),
           requestId: params.requestId,
           headers: params.response.headers,
+          // Preserve response headers explicitly
+          responseHeaders: params.response.headers,
           mimeType: params.response.mimeType
         };
         
@@ -502,6 +646,7 @@ class BugSpotterBackground {
                 url: params.response.url,
                 status: params.response.status,
                 statusText: params.response.statusText,
+                requestId: params.requestId,
                 responseBody: responseBody.body,
                 base64Encoded: responseBody.base64Encoded
               };
@@ -523,6 +668,15 @@ class BugSpotterBackground {
                 text: `[HTTP ERROR] ${params.response.status} ${params.response.statusText} - ${params.response.url}\nResponse Body: ${errorWithBody.decodedBody}`
               };
               
+              // Try to enrich with request headers if available
+              try {
+                const originalReq = (session?.networkRequests || []).find(req => req.requestId === params.requestId)
+                  || (persistentData?.networkRequests || []).find(req => req.requestId === params.requestId);
+                if (originalReq) {
+                  detailedErrorLog.requestHeaders = originalReq.requestHeaders || originalReq.headers || {};
+                }
+              } catch (_) {}
+
               // HTTP Error com corpo capturado - silenciado
               
               // Adicionar aos logs de erro
@@ -605,6 +759,10 @@ class BugSpotterBackground {
             text: `[NETWORK] ${originalRequest.method} ${params.response.status} ${params.response.statusText} - ${params.response.url}`,
             level: params.response.status >= 400 ? 'error' : 'info'
           };
+
+          // Preserve both request and response headers
+          combinedEntry.requestHeaders = originalRequest.requestHeaders || originalRequest.headers || {};
+          combinedEntry.responseHeaders = responseEntry.responseHeaders || responseEntry.headers || {};
           
           session.networkRequests[requestIndex] = combinedEntry;
           
@@ -623,6 +781,10 @@ class BugSpotterBackground {
             text: `[NETWORK] ${originalRequest.method} ${params.response.status} ${params.response.statusText} - ${params.response.url}`,
             level: params.response.status >= 400 ? 'error' : 'info'
           };
+
+          // Preserve both request and response headers
+          combinedEntry.requestHeaders = originalRequest.requestHeaders || originalRequest.headers || {};
+          combinedEntry.responseHeaders = responseEntry.responseHeaders || responseEntry.headers || {};
           
           persistentData.networkRequests[persistentIndex] = combinedEntry;
           
@@ -949,8 +1111,103 @@ class BugSpotterBackground {
     };
   }
 
+  async getNetworkDetailsForError(tabId, url, timestamp) {
+    try {
+      const session = this.debuggerSessions.get(tabId) || {};
+      const persistent = this.getPersistentLogs(tabId) || {};
+      const allRequests = []
+        .concat(session.networkRequests || [])
+        .concat(persistent.networkRequests || []);
+
+      // Try exact URL match first, then fallback to substring match
+      let candidates = allRequests.filter(r => r.url === url);
+      if (candidates.length === 0) {
+        candidates = allRequests.filter(r => typeof r.url === 'string' && r.url.includes(url));
+      }
+
+      // Choose best candidate by nearest timestamp if provided, otherwise most recent
+      let chosen = null;
+      if (candidates.length > 0) {
+        if (timestamp) {
+          const target = new Date(timestamp).getTime();
+          chosen = candidates.reduce((best, cur) => {
+            const curTime = new Date(cur.timestamp || 0).getTime();
+            const bestTime = new Date(best?.timestamp || 0).getTime();
+            const curDiff = Math.abs(curTime - target);
+            const bestDiff = Math.abs(bestTime - target);
+            return (best === null || curDiff < bestDiff) ? cur : best;
+          }, null);
+        } else {
+          chosen = candidates.sort((a, b) => new Date(b.timestamp || 0) - new Date(a.timestamp || 0))[0];
+        }
+      }
+
+      const details = {
+        url,
+        method: chosen?.method || 'GET',
+        status: chosen?.status || null,
+        statusText: chosen?.statusText || '',
+        timestamp: chosen?.timestamp || timestamp || new Date().toISOString(),
+        requestId: chosen?.requestId || null,
+        mimeType: chosen?.mimeType || null,
+        requestHeaders: chosen?.requestHeaders || chosen?.headers || {},
+        responseHeaders: chosen?.responseHeaders || {},
+        postData: chosen?.postData || null
+      };
+
+      // Try to find a corresponding error log with body to attach
+      const allErrors = []
+        .concat(persistent.errors || [])
+        .concat(session.logs || [])
+        .filter(e => e && (e.type === 'http-error-with-body' || e.type === 'http-error'));
+
+      const byRequestId = allErrors.find(e => chosen?.requestId && e.requestId === chosen.requestId);
+      const byUrl = allErrors.find(e => e.url === url);
+      const errorLog = byRequestId || byUrl || null;
+
+      if (errorLog) {
+        const body = errorLog.decodedBody || errorLog.responseBody || null;
+        details.responseBody = body;
+        details.base64Encoded = !!errorLog.base64Encoded;
+        if (!details.status && typeof errorLog.status === 'number') {
+          details.status = errorLog.status;
+          details.statusText = errorLog.statusText || details.statusText;
+        }
+      }
+
+      return details;
+    } catch (err) {
+      return {
+        url,
+        method: 'GET',
+        status: null,
+        statusText: '',
+        timestamp: timestamp || new Date().toISOString(),
+        error: 'Failed to collect network details'
+      };
+    }
+  }
+
   async handleMessage(message, sender, sendResponse) {
     try {
+      // Aplicar atualizações de configuração da AI imediatamente
+      if (message.type === 'AI_SETTINGS_UPDATED') {
+        const ai = message.settings || {};
+        if (this.aiService) {
+          await this.aiService.updateSettings({
+            aiApiKey: ai.apiKey,
+            aiEnabled: ai.enabled,
+            aiProvider: ai.provider,
+            aiModel: ai.model
+          });
+          // Reavaliar prontidão com base na configuração atual
+          this.aiServiceReady = this.aiService.isConfigured();
+        }
+        if (typeof sendResponse === 'function') {
+          sendResponse({ success: true });
+        }
+        return;
+      }
       // Processar mensagens de erro HTTP do content script
       if (message.type === 'HTTP_ERROR' || message.type === 'NETWORK_ERROR') {
         const tabId = sender.tab?.id;
@@ -1106,12 +1363,12 @@ class BugSpotterBackground {
           }
           break;
 
-        case 'GET_DEBUGGER_LOGS':
-          try {
-            const tabId = message.tabId || sender.tab?.id;
-            if (!tabId) {
-              throw new Error('No tab ID provided');
-            }
+      case 'GET_DEBUGGER_LOGS':
+        try {
+          const tabId = message.tabId || sender.tab?.id;
+          if (!tabId) {
+            throw new Error('No tab ID provided');
+          }
             
             // ✅ VALIDAR se a tab ainda existe (opcional para logs)
             const tabExists = await this.tabExists(tabId);
@@ -1158,6 +1415,20 @@ class BugSpotterBackground {
             sendResponse({ success: true, data: combinedLogs });
           } catch (error) {
             // Get debugger logs failed - silenciado
+            sendResponse({ success: false, error: error.message });
+          }
+          break;
+
+        case 'GET_NETWORK_DETAILS':
+          try {
+            const tabId = message.tabId || sender.tab?.id;
+            const url = message.url;
+            const timestamp = message.timestamp;
+            if (!tabId) throw new Error('No tab ID provided');
+            if (!url) throw new Error('No URL provided');
+            const details = await this.getNetworkDetailsForError(tabId, url, timestamp);
+            sendResponse({ success: true, data: details });
+          } catch (error) {
             sendResponse({ success: false, error: error.message });
           }
           break;
@@ -1216,8 +1487,19 @@ class BugSpotterBackground {
         case 'POPUP_OPENED':
           try {
             console.log('[Background] Recebida mensagem POPUP_OPENED - iniciando limpeza do badge');
-            // 🆕 Marcar relatórios AI como lidos quando popup é aberto
-            await this.markAIReportsAsRead();
+            // 🆕 Marcar relatórios AI como lidos apenas para a aba do popup
+            const tabId = sender.tab?.id;
+            if (typeof tabId === 'number') {
+              await this.markAIReportsAsReadForTab(tabId);
+            } else {
+              console.warn('[Background] POPUP_OPENED sem tabId, tentando obter aba ativa');
+              const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+              if (tabs && tabs.length && typeof tabs[0].id === 'number') {
+                await this.markAIReportsAsReadForTab(tabs[0].id);
+              } else {
+                console.warn('[Background] Não foi possível determinar a aba ativa para limpeza do badge');
+              }
+            }
             console.log('[Background] Limpeza do badge concluída com sucesso');
             sendResponse({ success: true });
           } catch (error) {
@@ -1229,10 +1511,18 @@ class BugSpotterBackground {
         case 'UPDATE_BADGE':
           try {
             console.log('[Background] Recebida mensagem UPDATE_BADGE - atualizando badge');
-            await this.updateBadge();
-            const count = await this.getUnreadAIReportsCount();
-            console.log(`[Background] Badge atualizado com contador: ${count}`);
-            sendResponse({ success: true, count: count });
+            const tabId = sender.tab?.id;
+            if (typeof tabId === 'number') {
+              await this.updateBadgeForTab(tabId);
+              const count = await this.getUnreadAIReportsCount(tabId);
+              console.log(`[Background] [Tab ${tabId}] Badge atualizado com contador: ${count}`);
+              sendResponse({ success: true, count });
+            } else {
+              await this.updateBadge();
+              const count = await this.getUnreadAIReportsCount();
+              console.log(`[Background] Badge (fallback) atualizado com contador total: ${count}`);
+              sendResponse({ success: true, count });
+            }
           } catch (error) {
             console.error('[Background] Erro ao atualizar badge:', error);
             sendResponse({ success: false, error: error.message });
@@ -1349,12 +1639,46 @@ class BugSpotterBackground {
             // Armazenar o vídeo gravado
             if (message.videoData) {
               const videoKey = `video_${tabId}_${Date.now()}`;
-              await this.storageManager.store(videoKey, {
+              
+              // Verificar uso do storage antes de armazenar vídeo
+              const storageUsage = await this.storageManager.getStorageUsage('chrome');
+              console.log(`[Background] Uso atual do storage: ${storageUsage.usagePercentage.toFixed(1)}%`);
+              
+              // Se uso > 70%, fazer limpeza preventiva
+              if (storageUsage.usagePercentage > 70) {
+                console.log('[Background] Storage quase cheio, fazendo limpeza preventiva...');
+                await this.storageManager.performEmergencyCleanup('chrome');
+              }
+              
+              // Armazenar vídeo com configurações otimizadas
+              const success = await this.storageManager.store(videoKey, {
                 data: message.videoData,
                 timestamp: Date.now(),
                 tabId: tabId,
                 size: message.videoSize || 0
+              }, {
+                compress: false, // Vídeos já são comprimidos
+                ttl: 24 * 60 * 60 * 1000, // 24 horas (menor que padrão)
+                storage: 'chrome'
               });
+              
+              if (!success) {
+                console.error('[Background] Falha ao armazenar vídeo - storage pode estar cheio');
+                // Notificar popup sobre falha no armazenamento
+                setTimeout(async () => {
+                  try {
+                    await chrome.runtime.sendMessage({
+                      type: 'VIDEO_ATTACHED',
+                      success: false,
+                      error: 'Falha ao armazenar vídeo - storage cheio'
+                    });
+                  } catch (e) {
+                    console.log('[Background] Popup não está aberto para receber notificação de erro');
+                  }
+                }, 500);
+                sendResponse({ success: false, error: 'Storage cheio - não foi possível salvar vídeo' });
+                return;
+              }
               
               // Tentar abrir popup (pode falhar se não houver janela ativa)
               try {
@@ -1606,15 +1930,22 @@ class BugSpotterBackground {
       }
   
       // Primeiro, criar o issue
-      const jiraIssue = {
-        fields: {
-          project: { key: settings.jira.projectKey },
-          summary: bugData.title,
-          description: this.formatJiraDescription(bugData),
-          issuetype: { id: settings.jira.issueTypeId || '10035' },
-          priority: { name: await this.mapPriorityToJira(bugData.priority) }
-        }
+      const baseFields = {
+        project: { key: settings.jira.projectKey },
+        summary: bugData.title,
+        description: this.formatJiraDescription(bugData),
+        issuetype: { id: settings.jira.issueTypeId || '10035' }
       };
+
+      // Para relatórios AI, não enviar prioridade para permitir o default do Jira
+      // Para relatórios manuais (ou quando explicitamente definido), enviar prioridade normalizada
+      const shouldIncludePriority = !bugData.isAIReport && !!bugData.priority;
+      const fields = { ...baseFields };
+      if (shouldIncludePriority) {
+        fields.priority = { name: await this.mapPriorityToJira(bugData.priority) };
+      }
+
+      const jiraIssue = { fields };
   
       const response = await fetch(`${settings.jira.baseUrl}/rest/api/2/issue`, {
         method: 'POST',
@@ -1635,6 +1966,16 @@ class BugSpotterBackground {
       let attachmentResult = null;
       if (bugData.attachments && bugData.attachments.length > 0) {
         attachmentResult = await this.attachFilesToJiraIssue(result.key, bugData.attachments, settings);
+      }
+
+      // Auto-delete local bug if enabled and submission was successful
+      if (settings.security && settings.security.autoDelete && result.key) {
+        try {
+          await this.deleteLocalBugAfterJiraSubmission(bugData, result.key);
+        } catch (deleteError) {
+          console.warn('Erro ao deletar bug local após envio para Jira:', deleteError);
+          // Não falhar o envio por causa do erro de deleção
+        }
       }
 
       // Notifica sucesso (usando caminho absoluto para o ícone)
@@ -1670,6 +2011,38 @@ class BugSpotterBackground {
   }
   
   // Novo método para anexar arquivos
+  /**
+   * Remove bug local após envio bem-sucedido para o Jira
+   */
+  async deleteLocalBugAfterJiraSubmission(bugData, jiraKey) {
+    try {
+      // Obter relatórios atuais do storage
+      const result = await chrome.storage.local.get(['bugReports']);
+      const reports = result.bugReports || [];
+      
+      // Encontrar o índice do relatório baseado no timestamp e título
+      const reportIndex = reports.findIndex(report => 
+        report.timestamp === bugData.timestamp && 
+        report.title === bugData.title
+      );
+      
+      if (reportIndex !== -1) {
+        // Remover o relatório da lista
+        reports.splice(reportIndex, 1);
+        
+        // Salvar a lista atualizada
+        await chrome.storage.local.set({ bugReports: reports });
+        
+        console.log(`Bug local removido após envio para Jira: ${jiraKey}`);
+      } else {
+        console.warn('Bug local não encontrado para remoção após envio para Jira');
+      }
+    } catch (error) {
+      console.error('Erro ao remover bug local após envio para Jira:', error);
+      throw error;
+    }
+  }
+
   async attachFilesToJiraIssue(issueKey, attachments, settings) {
     // Iniciando envio de anexos - silenciado
     
@@ -1687,11 +2060,14 @@ class BugSpotterBackground {
         
         let blob;
         
-        // Verificar se é base64 (screenshot) ou texto puro (DOM/console)
+        // Verificar se é base64 (screenshot/video) ou texto puro (DOM/console)
         if (attachment.data.startsWith('data:')) {
-          // É base64 (screenshot)
+          // É base64 (screenshot ou vídeo)
           // Processando anexo base64 - silenciado
           try {
+            const mimeMatch = attachment.data.match(/data:([^;]+);base64,/);
+            const detectedMimeType = mimeMatch ? mimeMatch[1] : this.getMimeType(attachment.type);
+            
             const base64Data = attachment.data.split(',')[1];
             const byteCharacters = atob(base64Data);
             const byteNumbers = new Array(byteCharacters.length);
@@ -1701,7 +2077,14 @@ class BugSpotterBackground {
             }
             
             const byteArray = new Uint8Array(byteNumbers);
-            blob = new Blob([byteArray], { type: this.getMimeType(attachment.type) });
+            blob = new Blob([byteArray], { type: detectedMimeType });
+            
+            // Para vídeos, garantir que o nome do arquivo tenha a extensão correta
+            if (attachment.type === 'recording' || detectedMimeType.startsWith('video/')) {
+              if (!attachment.name.endsWith('.webm')) {
+                attachment.name = attachment.name.replace(/\.[^.]*$/, '') + '.webm';
+              }
+            }
           } catch (base64Error) {
             console.error(`Erro ao processar base64 do anexo ${attachment.name}:`, base64Error);
             failedAttachments.push({ name: attachment.name, error: 'Erro no processamento base64' });
@@ -1769,18 +2152,26 @@ class BugSpotterBackground {
       'screenshot': 'image/png',
       'logs': 'application/json',  // Corrigido: logs são JSON
       'dom': 'text/html',
-      'recording': 'video/webm'
+      'recording': 'video/webm',
+      'video': 'video/webm'  // Adicionado suporte para tipo 'video'
     };
     return mimeTypes[attachmentType] || 'application/octet-stream';
   }
 
   formatJiraDescription(bugData) {
-    return `
+    const stepsBlock = Array.isArray(bugData.steps)
+      ? (bugData.steps.length ? bugData.steps.map((s, i) => `${i + 1}. ${s}`).join('\n') : 'N/A')
+      : (bugData.steps || 'N/A');
+
+    const url = bugData.url || bugData.originalError?.url || 'N/A';
+    const timestamp = bugData.timestamp || bugData.originalError?.timestamp || new Date().toISOString();
+
+    let description = `
 *Description:*
-${bugData.description}
+${bugData.description || 'N/A'}
 
 *Steps to Reproduce:*
-${bugData.steps}
+${stepsBlock}
 
 *Expected Behavior:*
 ${bugData.expectedBehavior || 'N/A'}
@@ -1788,13 +2179,30 @@ ${bugData.expectedBehavior || 'N/A'}
 *Actual Behavior:*
 ${bugData.actualBehavior || 'N/A'}
 
-*URL:* ${bugData.url}
+*URL:* ${url}
 *Component:* ${bugData.component || 'N/A'}
 *Environment:* ${bugData.environment || 'N/A'}
 *Priority:* ${bugData.priority || 'Medium'}
-*Timestamp:* ${bugData.timestamp}
+*Timestamp:* ${timestamp}
 *Evidence:* ${bugData.attachments?.length || 0} file(s) attached to this ticket
   `;
+
+    if (bugData.originalError) {
+      const statusLine = [bugData.originalError.status, bugData.originalError.statusText].filter(Boolean).join(' ');
+      const originalTimestamp = bugData.originalError.timestamp
+        ? new Date(bugData.originalError.timestamp).toLocaleString()
+        : 'N/A';
+      description += `
+
+*Original Error:*
+Status: ${statusLine || 'N/A'}
+
+URL: ${bugData.originalError.url || 'N/A'}
+
+Timestamp: ${originalTimestamp}`;
+    }
+
+    return description;
   }
 
   // Remover este método obsoleto:
@@ -1806,16 +2214,42 @@ ${bugData.actualBehavior || 'N/A'}
       const priorities = result.settings?.jira?.priorities || {
         'highest': 'Highest',
         'high': 'High',
-        'medium': 'Medium', 
+        'medium': 'Medium',
         'low': 'Low',
         'lowest': 'Lowest'
       };
-      
-      // Mapear tanto por chave quanto por valor
-      const priorityValue = priorities[priority] || priority;
-      
-      // Se não encontrar, usar Medium como padrão
-      return priorityValue || priorities['medium'] || 'Medium';
+
+      let input = priority;
+      if (input && typeof input === 'object') {
+        if (typeof input.name === 'string' && input.name.trim() !== '') {
+          input = input.name;
+        } else if (typeof input.value === 'string' && input.value.trim() !== '') {
+          input = input.value;
+        } else {
+          input = undefined;
+        }
+      }
+
+      if (typeof input !== 'string' || input.trim() === '') {
+        input = 'Medium';
+      }
+
+      const normalized = String(input).toLowerCase().replace(/\s+/g, '');
+
+      const synonyms = {
+        critical: 'highest',
+        blocker: 'highest',
+        urgent: 'highest',
+        major: 'high',
+        normal: 'medium',
+        minor: 'low',
+        trivial: 'lowest'
+      };
+
+      const key = priorities[normalized] ? normalized : (synonyms[normalized] || 'medium');
+      const mapped = priorities[key] || 'Medium';
+
+      return mapped;
     } catch (error) {
       console.error('Erro ao carregar configurações de prioridade:', error);
       return 'Medium';
@@ -2066,6 +2500,8 @@ ${bugData.actualBehavior || 'N/A'}
   onTabActivated(activeInfo) {
     // ✅ Atualizar aba atual quando usuário muda de aba
     this.setCurrentTab(activeInfo.tabId);
+    // 🆕 Atualizar badge apenas para a aba ativa
+    this.updateBadgeForTab(activeInfo.tabId);
   }
 
   onFirstInstall() {
@@ -2244,9 +2680,22 @@ ${bugData.actualBehavior || 'N/A'}
         return;
       }
       
-      // 🆕 Filtrar apenas erros do domínio pp.daloop.app
-      if (!errorLog.url || !errorLog.url.includes('pp.daloop.app')) {
-        return;
+      // Filtrar por domínio usando allowlist (suporta múltiplos domínios)
+      const allowedDomains = settings.ai?.allowedDomains;
+      if (Array.isArray(allowedDomains) && allowedDomains.length > 0) {
+        const urlStr = errorLog.url || '';
+        const matches = allowedDomains.some(d => typeof d === 'string' && d.trim() !== '' && urlStr.includes(d.trim()));
+        if (!matches) {
+          return;
+        }
+      } else {
+        // Fallback para configuração antiga de string única
+        const domainFilter = settings.ai?.domainFilter;
+        if (domainFilter && typeof domainFilter === 'string' && domainFilter.trim() !== '') {
+          if (!errorLog.url || !errorLog.url.includes(domainFilter)) {
+            return;
+          }
+        }
       }
       
       // Verificar se o status do erro atende ao mínimo configurado
@@ -2271,8 +2720,8 @@ ${bugData.actualBehavior || 'N/A'}
       // 🆕 Marcar erro como processado ANTES de enviar para IA
       this.markErrorAsProcessed(errorHash);
       
-      // 🆕 Incrementar contador APENAS para novos erros (não deduplicated)
-      await this.incrementUnreadAIReports();
+      // 🆕 Incrementar contador APENAS para novos erros (não deduplicated) por aba
+      await this.incrementUnreadAIReports(tabId);
       
       console.log(`[Background] Processando erro com IA: ${errorLog.url} (${errorLog.status})`);
       
@@ -2748,93 +3197,121 @@ ${bugData.actualBehavior || 'N/A'}
   // 🆕 Sistema de Badge para Relatórios AI
   async updateBadge() {
     try {
-      const count = await this.getUnreadAIReportsCount();
-      const badgeText = count > 0 ? count.toString() : '';
-      
-      await chrome.action.setBadgeText({ text: badgeText });
-      await chrome.action.setBadgeBackgroundColor({ color: '#FF4444' });
-      
-      console.log(`[Background] Badge atualizado: ${badgeText}`);
+      // 🆕 Atualizar badge para a aba atual (fallback global se não houver)
+      const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+      const activeTabId = tabs && tabs.length ? tabs[0].id : undefined;
+      if (activeTabId !== undefined) {
+        await this.updateBadgeForTab(activeTabId);
+      } else {
+        // Fallback: limpa badge global
+        await chrome.action.setBadgeText({ text: '' });
+      }
     } catch (error) {
       console.error('[Background] Erro ao atualizar badge:', error);
     }
   }
 
-  async getUnreadAIReportsCount() {
+  async getUnreadAIReportsCount(tabId) {
     try {
-      const result = await chrome.storage.local.get(['unreadAIReports']);
-      return result.unreadAIReports || 0;
+      const result = await chrome.storage.local.get(['unreadAIReportsByTab', 'unreadAIReports']);
+      const byTab = result.unreadAIReportsByTab || {};
+      if (typeof tabId === 'number') {
+        return byTab[tabId] || 0;
+      }
+      // Fallback: retorna soma total se nenhum tabId for fornecido
+      const total = Object.values(byTab).reduce((acc, n) => acc + (Number(n) || 0), 0);
+      if (total === 0 && typeof result.unreadAIReports === 'number') {
+        return result.unreadAIReports;
+      }
+      return total;
     } catch (error) {
       console.error('[Background] Erro ao obter contador de relatórios não lidos:', error);
       return 0;
     }
   }
 
-  async incrementUnreadAIReports() {
+  async incrementUnreadAIReports(tabId) {
     try {
       // Adicionar stack trace para debug
       const stack = new Error().stack;
       console.log('[Background] incrementUnreadAIReports chamado de:', stack.split('\n')[2]?.trim());
-      
-      const currentCount = await this.getUnreadAIReportsCount();
-      const newCount = currentCount + 1;
-      
-      await chrome.storage.local.set({ unreadAIReports: newCount });
-      await this.updateBadge();
-      
-      console.log(`[Background] Relatórios AI não lidos: ${currentCount} → ${newCount}`);
-      
-      // Verificar se o incremento foi persistido corretamente
-      const verifyCount = await this.getUnreadAIReportsCount();
-      if (verifyCount !== newCount) {
-        console.warn(`[Background] PROBLEMA: Contador esperado ${newCount}, mas storage tem ${verifyCount}`);
+      if (typeof tabId !== 'number') {
+        console.warn('[Background] incrementUnreadAIReports sem tabId válido');
+        return;
       }
+      const result = await chrome.storage.local.get(['unreadAIReportsByTab']);
+      const byTab = result.unreadAIReportsByTab || {};
+      const currentCount = Number(byTab[tabId]) || 0;
+      const newCount = currentCount + 1;
+      byTab[tabId] = newCount;
+      await chrome.storage.local.set({ unreadAIReportsByTab: byTab });
+      await this.updateBadgeForTab(tabId);
+      console.log(`[Background] [Tab ${tabId}] Relatórios AI não lidos: ${currentCount} → ${newCount}`);
     } catch (error) {
       console.error('[Background] Erro ao incrementar relatórios não lidos:', error);
     }
   }
 
-  async clearUnreadAIReports() {
+  async clearUnreadAIReports(tabId) {
     try {
-      await chrome.storage.local.set({ unreadAIReports: 0 });
-      await this.updateBadge();
-      
-      console.log('[Background] Badge limpo - relatórios marcados como lidos');
+      if (typeof tabId !== 'number') {
+        console.warn('[Background] clearUnreadAIReports sem tabId válido');
+        return;
+      }
+      const result = await chrome.storage.local.get(['unreadAIReportsByTab']);
+      const byTab = result.unreadAIReportsByTab || {};
+      byTab[tabId] = 0;
+      await chrome.storage.local.set({ unreadAIReportsByTab: byTab });
+      await this.updateBadgeForTab(tabId);
+      console.log(`[Background] [Tab ${tabId}] Badge limpo - relatórios marcados como lidos`);
     } catch (error) {
       console.error('[Background] Erro ao limpar relatórios não lidos:', error);
     }
   }
 
-  async markAIReportsAsRead() {
+  async markAIReportsAsReadForTab(tabId) {
     // Limpeza imediata do badge (removido debounce para teste)
-    console.log('[Background] markAIReportsAsRead chamado - limpando imediatamente');
+    console.log(`[Background] markAIReportsAsReadForTab chamado - limpando imediatamente [Tab ${tabId}]`);
     try {
       // Verificar contador atual antes de limpar
-      const currentCount = await this.getUnreadAIReportsCount();
-      console.log(`[Background] Contador atual antes da limpeza: ${currentCount}`);
+      const currentCount = await this.getUnreadAIReportsCount(tabId);
+      console.log(`[Background] [Tab ${tabId}] Contador atual antes da limpeza: ${currentCount}`);
       
       // Verificar badge atual
-      const currentBadge = await chrome.action.getBadgeText({});
-      console.log(`[Background] Badge atual antes da limpeza: '${currentBadge}'`);
+      const currentBadge = await chrome.action.getBadgeText({ tabId });
+      console.log(`[Background] [Tab ${tabId}] Badge atual antes da limpeza: '${currentBadge}'`);
       
-      await this.clearUnreadAIReports();
+      await this.clearUnreadAIReports(tabId);
       
       // Verificar se foi realmente limpo
-      const newCount = await this.getUnreadAIReportsCount();
-      const newBadge = await chrome.action.getBadgeText({});
-      console.log(`[Background] Contador após limpeza: ${newCount}`);
-      console.log(`[Background] Badge após limpeza: '${newBadge}'`);
+      const newCount = await this.getUnreadAIReportsCount(tabId);
+      const newBadge = await chrome.action.getBadgeText({ tabId });
+      console.log(`[Background] [Tab ${tabId}] Contador após limpeza: ${newCount}`);
+      console.log(`[Background] [Tab ${tabId}] Badge após limpeza: '${newBadge}'`);
       
       if (newCount === 0 && newBadge === '') {
-        console.log('[Background] Badge limpo com sucesso');
+        console.log(`[Background] [Tab ${tabId}] Badge limpo com sucesso`);
       } else {
-        console.warn(`[Background] Badge não foi limpo corretamente. Contador: ${newCount}, Badge: '${newBadge}'`);
+        console.warn(`[Background] [Tab ${tabId}] Badge não foi limpo corretamente. Contador: ${newCount}, Badge: '${newBadge}'`);
         // Forçar limpeza adicional
-        await chrome.action.setBadgeText({ text: '' });
+        await chrome.action.setBadgeText({ text: '', tabId });
         console.log('[Background] Limpeza forçada do badge executada');
       }
     } catch (error) {
       console.log('[Background] Erro ao limpar badge:', error);
+    }
+  }
+
+  // 🆕 Atualizar badge especificamente para a aba informada
+  async updateBadgeForTab(tabId) {
+    try {
+      const count = await this.getUnreadAIReportsCount(tabId);
+      const badgeText = count > 0 ? count.toString() : '';
+      await chrome.action.setBadgeText({ text: badgeText, tabId });
+      await chrome.action.setBadgeBackgroundColor({ color: '#FF4444', tabId });
+      console.log(`[Background] [Tab ${tabId}] Badge atualizado: ${badgeText}`);
+    } catch (error) {
+      console.error('[Background] Erro ao atualizar badge por aba:', error);
     }
   }
 

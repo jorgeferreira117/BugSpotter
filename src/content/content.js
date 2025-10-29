@@ -255,6 +255,12 @@ if (typeof window.bugSpotterContentInitialized === 'undefined') {
     
     // Método de cleanup centralizado
     cleanup() {
+      // Evitar cleanup múltiplo
+      if (this._cleanupInProgress) {
+        return;
+      }
+      this._cleanupInProgress = true;
+
       if (this.saveInterval) {
         clearInterval(this.saveInterval);
         this.saveInterval = null;
@@ -280,8 +286,12 @@ if (typeof window.bugSpotterContentInitialized === 'undefined') {
         this.visibilityChangeHandler = null;
       }
       
-      // Salvar logs finais antes do cleanup
-      this.saveLogsToStorage();
+      // Salvar logs finais antes do cleanup apenas se o contexto ainda for válido
+      if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.id) {
+        this.saveLogsToStorage().catch(error => {
+          console.warn('Erro ao salvar logs durante cleanup:', error.message);
+        });
+      }
     }
     
     // 🆕 NOVA: Capturar logs que já existem (apenas uma vez por sessão)
@@ -368,6 +378,12 @@ if (typeof window.bugSpotterContentInitialized === 'undefined') {
         // Evitar salvamentos muito frequentes (mínimo 5 segundos entre salvamentos)
         const now = Date.now();
         if (now - this.lastSaveTime < 5000) {
+          return;
+        }
+
+        // Verificar se o contexto da extensão ainda é válido
+        if (typeof chrome === 'undefined' || !chrome.runtime || !chrome.runtime.id) {
+          console.warn('⚠️ Contexto da extensão invalidado - salvamento cancelado');
           return;
         }
         

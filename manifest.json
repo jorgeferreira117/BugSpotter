@@ -5,6 +5,7 @@
   "description": "Extensão para identificar, registrar e analisar bugs diretamente no browser",
   "permissions": [
     "storage",
+    "unlimitedStorage",
     "scripting",
     "tabs",
     "activeTab",
@@ -12,7 +13,8 @@
     "tabCapture",
     "contextMenus",
     "notifications",
-    "debugger"
+    "debugger",
+    "webNavigation"
   ],
   "host_permissions": [
     "https://*/*",
@@ -22,7 +24,13 @@
   "content_scripts": [
     {
       "matches": ["https://*/*", "http://*/*", "file:///*/*"],
-      "js": ["src/modules/StorageManager.js", "src/content/content.js"],
+      "js": [
+        "src/modules/IndexedDBManager.js",
+        "src/modules/VideoCompressor.js",
+        "src/modules/StorageManager.js",
+        "src/modules/StorageBuckets.js",
+        "src/content/content.js"
+      ],
       "run_at": "document_start",
       "all_frames": true
     }

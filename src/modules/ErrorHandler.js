@@ -11,7 +11,7 @@ class ErrorHandler {
 
   handleError(error, context = '', severity = 'medium') {
     const errorInfo = {
-      message: error.message || 'Erro desconhecido',
+      message: error.message || 'Unknown error',
       stack: error.stack,
       context,
       severity,
@@ -57,6 +57,15 @@ class ErrorHandler {
     }
   }
 
+  safeExecuteSync(operation, context = '', defaultValue = null) {
+    try {
+      return operation();
+    } catch (error) {
+      this.handleError(error, context);
+      return defaultValue;
+    }
+  }
+
   /**
    * Executa operação com retry automático
    */
@@ -70,12 +79,12 @@ class ErrorHandler {
         lastError = error;
         
         if (attempt === maxRetries) {
-          this.handleError(error, `${context} (falhou após ${maxRetries} tentativas)`, 'high');
+          this.handleError(error, `${context} (failed after ${maxRetries} attempts)`, 'high');
           throw error;
         }
         
         // Log da tentativa
-        console.warn(`Tentativa ${attempt}/${maxRetries} falhou para ${context}:`, error.message);
+        console.warn(`Attempt ${attempt}/${maxRetries} failed for ${context}:`, error.message);
         
         // Aguardar antes da próxima tentativa
         await this.delay(this.retryDelay * attempt);
@@ -101,25 +110,25 @@ class ErrorHandler {
         const value = data[field];
         
         if (rules.required && (value === undefined || value === null || value === '')) {
-          errors.push(`${field} é obrigatório`);
+          errors.push(`Campo '${field}' é obrigatório`);
           continue;
         }
         
         if (value !== undefined && value !== null && value !== '') {
           if (rules.type && typeof value !== rules.type) {
-            errors.push(`${field} deve ser do tipo ${rules.type}`);
+            errors.push(`${field} must be of type ${rules.type}`);
           }
           
           if (rules.minLength && value.length < rules.minLength) {
-            errors.push(`${field} deve ter pelo menos ${rules.minLength} caracteres`);
+            errors.push(`${field} must be at least ${rules.minLength} characters long`);
           }
           
           if (rules.maxLength && value.length > rules.maxLength) {
-            errors.push(`${field} deve ter no máximo ${rules.maxLength} caracteres`);
+            errors.push(`${field} must be at most ${rules.maxLength} characters long`);
           }
           
           if (rules.pattern && !rules.pattern.test(value)) {
-            errors.push(`${field} não atende ao formato esperado`);
+            errors.push(`${field} does not match the expected format`);
           }
         }
       }
@@ -129,8 +138,8 @@ class ErrorHandler {
         errors
       };
     } catch (error) {
-      console.error('Erro na validação:', error);
-      return { isValid: false, errors: ['Erro interno de validação'] };
+      console.error('Validation error:', error);
+      return { isValid: false, errors: ['Internal validation error'] };
     }
   }
 
@@ -138,9 +147,9 @@ class ErrorHandler {
     if (typeof chrome !== 'undefined' && chrome.notifications) {
       chrome.notifications.create({
         type: 'basic',
-        iconUrl: chrome.runtime.getURL('icon48.png'),
-        title: 'BugSpotter - Erro Crítico',
-        message: `Erro em ${errorInfo.context}: ${errorInfo.message}`
+        iconUrl: 'icon.png',
+        title: 'BugSpotter - Critical Error',
+        message: `Error in ${errorInfo.context}: ${errorInfo.message}`
       });
     }
   }
