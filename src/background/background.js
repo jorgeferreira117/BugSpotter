@@ -2317,6 +2317,32 @@ URL: ${bugData.originalError.url || 'N/A'}
 Timestamp: ${originalTimestamp}`;
     }
 
+    // Cross-link to other system tickets if available
+    if (bugData.crossLink) {
+      const jiraKey = bugData.crossLink.jiraKey || null;
+      const jiraUrl = bugData.crossLink.jiraUrl || null;
+      const evId = bugData.crossLink.easyvistaId || null;
+      const evUrl = bugData.crossLink.easyvistaUrl || null;
+
+      const lines = [];
+      if (jiraUrl) {
+        lines.push(`Jira: ${jiraUrl}`);
+      } else if (jiraKey) {
+        lines.push(`Jira: ${jiraKey}`);
+      }
+      if (evUrl) {
+        lines.push(`EasyVista: ${evUrl}`);
+      } else if (evId) {
+        lines.push(`EasyVista ID: ${evId}`);
+      }
+      if (lines.length) {
+        description += `
+
+*Linked Tickets:*
+${lines.join('\n')}`;
+      }
+    }
+
     return description;
   }
 

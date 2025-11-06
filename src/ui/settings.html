@@ -463,13 +463,21 @@
           </div>
           
           <form id="submissionForm">
-            <div class="form-group">
+          <div class="form-group">
               <label for="preferredTarget">Preferred Target:</label>
               <select id="preferredTarget">
                 <option value="jira">Jira</option>
                 <option value="easyvista">EasyVista</option>
               </select>
               <small>This preference applies when both integrations are enabled.</small>
+            </div>
+            <div class="form-group">
+              <label for="postToBoth" class="checkbox-label">
+                <input type="checkbox" id="postToBoth">
+                <span class="checkmark"></span>
+                Also send to both when enabled
+              </label>
+              <small>If both integrations are enabled, send to both sequentially.</small>
             </div>
           </form>
         </section>

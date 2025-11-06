@@ -1466,7 +1466,50 @@ class BugSpotter {
         target = 'easyvista';
       }
 
-      if (target === 'jira') {
+      // Envio sequencial para ambos quando habilitado
+      if (jiraEnabled && evEnabled && settings.postToBoth) {
+        const order = target === 'easyvista' ? ['easyvista', 'jira'] : ['jira', 'easyvista'];
+        try {
+          for (const step of order) {
+            if (step === 'jira') {
+              bugData.jiraAttempted = true;
+              const jiraResponse = await this.sendToJira(bugData);
+              const ticketKey = jiraResponse?.key || jiraResponse?.issueKey || jiraResponse?.data?.key || jiraResponse?.data?.issueKey;
+              if (ticketKey) {
+                bugData.jiraKey = ticketKey;
+                // Preparar cross-link para o próximo envio
+                const jiraUrl = this.getJiraTicketUrl(ticketKey);
+                bugData.crossLink = { ...(bugData.crossLink || {}), jiraKey: ticketKey, jiraUrl };
+                this.updateReportStatus(`Jira criado: ${ticketKey}. Prosseguindo com EasyVista...`, 'loading');
+              } else {
+                this.updateReportStatus('Jira criado com resposta inválida; continuando com EasyVista', 'warning');
+              }
+            } else if (step === 'easyvista') {
+              bugData.easyvistaAttempted = true;
+              const evResp = await this.sendToEasyVista(bugData);
+              const evId = evResp?.ticketId || evResp?.data?.ticketId || evResp?.data?.id;
+              const evUrl = evResp?.ticketUrl || evResp?.data?.ticketUrl;
+              if (evId || evUrl) {
+                bugData.easyvistaId = evId || null;
+                bugData.easyvistaUrl = evUrl || null;
+                // Preparar cross-link para o próximo envio
+                bugData.crossLink = { ...(bugData.crossLink || {}), easyvistaId: evId || undefined, easyvistaUrl: evUrl || undefined };
+                this.updateReportStatus(`EasyVista criado${evId ? ': ' + evId : ''}. Prosseguindo com Jira...`, 'loading');
+              } else {
+                this.updateReportStatus('EasyVista criado com resposta inválida; continuando com Jira', 'warning');
+              }
+            }
+          }
+          const summary = [
+            bugData.jiraKey ? `Jira: ${bugData.jiraKey}` : null,
+            bugData.easyvistaId ? `EasyVista: ${bugData.easyvistaId}` : null
+          ].filter(Boolean).join(' | ');
+          this.updateReportStatus(`Report enviado para ambos. ${summary}`, 'success');
+        } catch (dualError) {
+          console.error('Erro no envio duplo:', dualError);
+          this.updateReportStatus('Erro ao enviar para ambos: ' + dualError.message, 'warning');
+        }
+      } else if (target === 'jira') {
         try {
           bugData.jiraAttempted = true;
           const jiraResponse = await this.sendToJira(bugData);
@@ -1551,6 +1594,7 @@ class BugSpotter {
         includeConsole: settings.popup?.includeConsole ?? true,
         maxFileSize: settings.popup?.maxFileSize ?? 5,
         preferredTarget: settings.preferredTarget || 'jira',
+        postToBoth: !!settings.postToBoth,
         capture: {
           autoCaptureLogs: settings.capture?.autoCaptureLogs ?? true,
           screenshotFormat: settings.capture?.screenshotFormat ?? 'png',
@@ -1584,6 +1628,7 @@ class BugSpotter {
         includeConsole: true,
         maxFileSize: 5,
         preferredTarget: 'jira',
+        postToBoth: false,
         capture: {
           autoCaptureLogs: true,
           screenshotFormat: 'png',

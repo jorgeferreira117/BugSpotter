@@ -2,6 +2,7 @@ class BugSpotterSettings {
   constructor() {
     this.defaultSettings = {
       preferredTarget: 'jira',
+      postToBoth: false,
       jira: {
         enabled: false,
         baseUrl: 'https://jorgealijo.atlassian.net',
@@ -181,6 +182,19 @@ class BugSpotterSettings {
         }
       });
     }
+
+    const postToBothEl = document.getElementById('postToBoth');
+    if (postToBothEl) {
+      postToBothEl.addEventListener('change', async (e) => {
+        this.settings.postToBoth = !!e.target.checked;
+        try {
+          await this.saveSettings();
+          this.showStatus('✅ "Send to both" preference saved!', 'success');
+        } catch (err) {
+          this.showStatus('❌ Error saving "Send to both"', 'error');
+        }
+      });
+    }
   }
 
   deepMerge(target, source) {
@@ -301,6 +315,10 @@ class BugSpotterSettings {
     const preferredTargetEl = document.getElementById('preferredTarget');
     if (preferredTargetEl) {
       preferredTargetEl.value = this.settings.preferredTarget || 'jira';
+    }
+    const postToBothEl = document.getElementById('postToBoth');
+    if (postToBothEl) {
+      postToBothEl.checked = !!this.settings.postToBoth;
     }
 
     // Update config visibility
