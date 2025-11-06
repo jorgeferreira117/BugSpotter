@@ -27,6 +27,10 @@
           <span class="material-icons">link</span>
           <span>Jira</span>
         </button>
+        <button class="tab-button" data-tab="easyvista">
+          <span class="material-icons">integration_instructions</span>
+          <span>EasyVista</span>
+        </button>
         <button class="tab-button" data-tab="ai">
           <span class="material-icons">smart_toy</span>
           <span>AI</span>
@@ -151,6 +155,50 @@
           </button>
         </form>
       </section>
+        </div>
+
+        <!-- EasyVista Tab -->
+        <div class="tab-content" id="easyvista-tab">
+          <section class="settings-section easyvista-section">
+            <div class="section-header">
+              <h2><span class="material-icons">integration_instructions</span>EasyVista Integration</h2>
+              <p class="section-description">Configure EasyVista connection for ticket submission</p>
+            </div>
+
+            <form id="easyvistaForm">
+              <div class="form-group">
+                <label for="easyvistaEnabled" class="checkbox-label">
+                  <input type="checkbox" id="easyvistaEnabled">
+                  <span class="checkmark"></span>
+                  Enable EasyVista integration
+                </label>
+              </div>
+
+              <div class="jira-config" id="easyvistaConfig">
+                <div class="form-group">
+                  <label for="easyvistaUrl">EasyVista Base URL:</label>
+                  <input type="url" id="easyvistaUrl" placeholder="https://your-host/api/v1/your-account/" />
+                  <small class="help-text">Use a URL completa incluindo <code>/api/v1/&lt;account&gt;/</code></small>
+                </div>
+
+                <div class="form-group">
+                  <label for="easyvistaApiKey">Access Token (Bearer):</label>
+                  <input type="password" id="easyvistaApiKey" placeholder="Your Access Token" />
+                  <small class="help-text">Gere o token em EasyVista: Administration → Access Management → Access Tokens</small>
+                </div>
+
+                <button type="button" id="testEasyVistaConnection" class="btn btn-secondary">
+                  <span class="material-icons">search</span>
+                  Test Connection
+                </button>
+              </div>
+
+              <button type="submit" class="btn btn-primary btn-save-config">
+                <span class="material-icons">save</span>
+                Save Settings
+              </button>
+            </form>
+          </section>
         </div>
 
         <!-- AI Tab -->
@@ -407,7 +455,25 @@
           </button>
         </div>
       </section>
-        </div>
+        
+        <section class="settings-section submission-section">
+          <div class="section-header">
+            <h2><span class="material-icons">send</span>Default Submission Target</h2>
+            <p class="section-description">Choose the default system to send bug reports to.</p>
+          </div>
+          
+          <form id="submissionForm">
+            <div class="form-group">
+              <label for="preferredTarget">Preferred Target:</label>
+              <select id="preferredTarget">
+                <option value="jira">Jira</option>
+                <option value="easyvista">EasyVista</option>
+              </select>
+              <small>This preference applies when both integrations are enabled.</small>
+            </div>
+          </form>
+        </section>
+      </div>
       </div>
     </main>
 

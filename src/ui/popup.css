@@ -178,6 +178,35 @@ section:hover {
   color: #6b7280;
 }
 
+/* Original Error - detalhes colapsáveis */
+.error-section-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.error-status-badge {
+  margin-left: 8px;
+  font-size: 12px;
+  background: #fee2e2; /* red-100 */
+  color: #991b1b;      /* red-800 */
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+
+.error-details-toggle {
+  margin-top: 6px;
+  background: transparent;
+  border: none;
+  color: #2563eb; /* blue-600 */
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.error-details-toggle:hover {
+  text-decoration: underline;
+}
+
 /* Grid de captura */
 .capture-grid {
   display: grid;
@@ -476,6 +505,19 @@ section:hover {
   border: 1px solid #e5e7eb;
   border-radius: 4px;
   margin-bottom: 4px;
+}
+
+.attachment-item[data-name] {
+  /* Ajuda na identificação de itens no DOM */
+}
+
+.attachment-pending {
+  opacity: 0.9;
+}
+
+.attachment-pending .attachment-size {
+  font-style: italic;
+  color: #6b7280;
 }
 
 .attachment-info {
@@ -1361,6 +1403,7 @@ section:hover {
   color: #555;
   word-wrap: break-word;
   overflow-wrap: break-word;
+  max-width: 100%;
 }
 
 .meta-item:last-child {
@@ -1371,6 +1414,7 @@ section:hover {
   font-size: 16px;
   margin-right: 8px;
   color: #666;
+  flex: 0 0 auto;
 }
 
 .report-screenshot {
@@ -1449,10 +1493,19 @@ section:hover {
 }
 
 /* Quebra de URLs longas */
-.ai-report-modal-body .error-details p strong + *,
-.manual-report-modal-body .meta-item span:last-child {
+.ai-report-modal-body .error-details p strong + * {
   word-break: break-all;
   overflow-wrap: break-word;
+}
+
+/* Garantir que valores de metadados não extravasem os quadros */
+.ai-report-modal-body .meta-item span:last-child,
+.manual-report-modal-body .meta-item span:last-child {
+  flex: 1 1 auto;
+  min-width: 0; /* necessário para permitir quebra dentro de flex */
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 /* Seção manual de relatórios */

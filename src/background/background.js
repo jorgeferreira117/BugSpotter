@@ -1537,10 +1537,29 @@ class BugSpotterBackground {
           sendResponse({ success: true, data: jiraResult });
           break;
 
+        case 'SEND_TO_EASYVISTA':
+          try {
+            const evResult = await this.sendToEasyVista(message.data);
+            sendResponse({ success: true, data: evResult });
+          } catch (error) {
+            sendResponse({ success: false, error: error.message });
+          }
+          break;
+
         case 'TEST_JIRA_CONNECTION':
           try {
             const jiraConfig = message.config;
             const testResult = await this.testJiraConnection(jiraConfig);
+            sendResponse({ success: true, data: testResult });
+          } catch (error) {
+            sendResponse({ success: false, error: error.message });
+          }
+          break;
+
+        case 'TEST_EASYVISTA_CONNECTION':
+          try {
+            const evConfig = message.config;
+            const testResult = await this.testEasyVistaConnection(evConfig);
             sendResponse({ success: true, data: testResult });
           } catch (error) {
             sendResponse({ success: false, error: error.message });
@@ -2244,7 +2263,9 @@ class BugSpotterBackground {
   getMimeType(attachmentType) {
     const mimeTypes = {
       'screenshot': 'image/png',
-      'logs': 'application/json',  // Corrigido: logs são JSON
+      'logs': 'application/json',
+      'json': 'application/json',
+      'text': 'text/plain',
       'dom': 'text/html',
       'recording': 'video/webm',
       'video': 'video/webm'  // Adicionado suporte para tipo 'video'
@@ -2557,6 +2578,128 @@ Timestamp: ${originalTimestamp}`;
       };
     } catch (error) {
       console.error('Erro ao buscar prioridades do Jira:', error);
+      throw error;
+    }
+  }
+
+  // EasyVista: Envio de ticket
+  async sendToEasyVista(bugData) {
+    const operationId = this.performanceMonitor.generateOperationId('easyvistaSubmission');
+    this.performanceMonitor.startOperation(operationId, 'easyvistaSubmission', {
+      title: bugData.title,
+      priority: bugData.priority || 'Medium'
+    });
+
+    try {
+      const settings = await this.getSettings();
+      if (!settings.easyvista || !settings.easyvista.enabled) {
+        throw new Error('EasyVista integration not configured');
+      }
+
+      const baseUrl = (settings.easyvista.baseUrl || '').replace(/\/$/, '');
+      const apiKey = settings.easyvista.apiKey;
+      if (!baseUrl || !apiKey) {
+        throw new Error('EasyVista base URL or API key missing');
+      }
+
+      const payload = {
+        subject: bugData.title,
+        description: this.formatJiraDescription(bugData),
+        priority: bugData.priority || 'Medium'
+      };
+
+      const commonHeaders = {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json'
+      };
+
+      // Tentativa 1: Authorization Bearer
+      let response = await fetch(`${baseUrl}/api/v1/tickets`, {
+        method: 'POST',
+        headers: { ...commonHeaders, 'Authorization': `Bearer ${apiKey}` },
+        body: JSON.stringify(payload)
+      });
+
+      // Tentativa 2: X-API-Key caso a primeira falhe
+      if (!response.ok) {
+        response = await fetch(`${baseUrl}/api/v1/tickets`, {
+          method: 'POST',
+          headers: { ...commonHeaders, 'X-API-Key': apiKey },
+          body: JSON.stringify(payload)
+        });
+      }
+
+      if (!response.ok) {
+        let details = '';
+        try { details = ` - ${await response.text()}`; } catch (_) {}
+        throw new Error(`EasyVista API error: HTTP ${response.status} ${response.statusText}${details.substring(0, 140)}`);
+      }
+
+      let data;
+      try { data = await response.json(); } catch (_) { data = { raw: await response.text() }; }
+      const ticketId = data.id || data.ticketNumber || data.number || data.key || data.reference || null;
+      const ticketUrl = ticketId ? `${baseUrl}/tickets/${ticketId}` : null;
+
+      this.performanceMonitor.endOperation(operationId, true, { ticketId });
+      return { ticketId, ticketUrl, response: data };
+    } catch (error) {
+      this.performanceMonitor.endOperation(operationId, false, { error: error.message });
+      throw error;
+    }
+  }
+
+  // EasyVista: Teste de conexão
+  async testEasyVistaConnection(config) {
+    try {
+      const baseUrl = (config.baseUrl || '').replace(/\/$/, '');
+      if (!/^https?:\/\//i.test(baseUrl)) {
+        throw new Error('Invalid EasyVista URL format');
+      }
+      if (!config.apiKey || config.apiKey.length < 8) {
+        throw new Error('Invalid API key');
+      }
+
+      const commonHeaders = { 'Accept': 'application/json' };
+
+      // Helper para tentar uma URL com diferentes cabeçalhos
+      const tryFetch = async (path) => {
+        // 1) Authorization Bearer
+        let resp = await fetch(`${baseUrl}${path}`, {
+          method: 'GET',
+          headers: { ...commonHeaders, 'Authorization': `Bearer ${config.apiKey}` }
+        });
+        if (resp.ok) return resp;
+        // 2) X-API-Key
+        resp = await fetch(`${baseUrl}${path}`, {
+          method: 'GET',
+          headers: { ...commonHeaders, 'X-API-Key': config.apiKey }
+        });
+        return resp;
+      };
+
+      // Rotas comuns de verificação
+      const candidates = ['/api/v1/users/me', '/api/v1/status'];
+      let lastResp = null;
+      for (const path of candidates) {
+        lastResp = await tryFetch(path);
+        if (lastResp.ok) {
+          let info = null;
+          try { info = await lastResp.json(); } catch (_) {}
+          return {
+            success: true,
+            message: info?.name ? `Connection successful! User: ${info.name}` : 'Connection successful!'
+          };
+        }
+      }
+
+      // Se chegou aqui, falhou
+      let details = '';
+      try { details = ` - ${await lastResp.text()}`; } catch (_) {}
+      throw new Error(`HTTP ${lastResp?.status || 'N/A'}: ${lastResp?.statusText || 'Unknown'}${details.substring(0, 140)}`);
+    } catch (error) {
+      if (error.name === 'TypeError' && error.message.includes('fetch')) {
+        throw new Error('Network error: Unable to connect to EasyVista. Check URL and connectivity.');
+      }
       throw error;
     }
   }
@@ -3143,6 +3286,17 @@ Timestamp: ${originalTimestamp}`;
       }
       
       await chrome.storage.local.set({ [key]: reports });
+      
+      // Notificar o popup que um relatório AI foi armazenado
+      try {
+        await chrome.runtime.sendMessage({
+          type: 'AI_REPORT_STORED',
+          tabId,
+          reportId: reportData.id
+        });
+      } catch (notifyErr) {
+        console.warn('[Background] Falha ao enviar mensagem AI_REPORT_STORED:', notifyErr);
+      }
       
       // Relatório AI armazenado - silenciado
     } catch (error) {

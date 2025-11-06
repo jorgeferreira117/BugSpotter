@@ -10,19 +10,36 @@ class BugSpotter {
     this.errorHandler = new ErrorHandler(); // Inicializar ErrorHandler
   }
   
+  isExtensionContext() {
+    try {
+      return typeof window !== 'undefined' &&
+        typeof window.chrome !== 'undefined' &&
+        typeof chrome.runtime !== 'undefined' &&
+        typeof chrome.storage !== 'undefined';
+    } catch (_) {
+      return false;
+    }
+  }
+  
   async init() {
     // 🆕 Notificar background que popup foi aberto (para limpar badge)
     try {
       console.log('[Popup] Enviando mensagem POPUP_OPENED para limpar badge...');
-      const response = await chrome.runtime.sendMessage({ action: 'POPUP_OPENED' });
-      console.log('[Popup] Resposta do background:', response);
+      if (this.isExtensionContext()) {
+        const response = await chrome.runtime.sendMessage({ action: 'POPUP_OPENED' });
+        console.log('[Popup] Resposta do background:', response);
+      } else {
+        console.log('[Popup] Contexto de preview detectado, pulando sendMessage');
+      }
     } catch (error) {
       console.error('[Popup] Error sending POPUP_OPENED message:', error);
     }
     
     // Verificar se há gravação em andamento
     try {
-      await this.checkRecordingState();
+      if (this.isExtensionContext()) {
+        await this.checkRecordingState();
+      }
     } catch (err) {
       console.warn('[Popup] checkRecordingState failed, continuing:', err);
     }
@@ -34,17 +51,29 @@ class BugSpotter {
     this.setupEventListeners();
     
     // Listener para mensagens do background script
-    chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-      this.handleBackgroundMessage(message, sender, sendResponse);
-    });
+    if (this.isExtensionContext()) {
+      chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+        this.handleBackgroundMessage(message, sender, sendResponse);
+      });
+    }
     
-    // ADICIONAR: Listener para mudanças nas configurações
-    chrome.storage.onChanged.addListener((changes, namespace) => {
-      if (namespace === 'local' && changes.settings) {
-        this.loadPriorityOptions(); // Recarregar prioridades quando settings mudam
-        this.cachedSettings = changes.settings.newValue; // Atualizar cache
-      }
-    });
+    // ADICIONAR: Listener para mudanças no storage (settings e ai-reports-*)
+    if (this.isExtensionContext() && chrome.storage && chrome.storage.onChanged) {
+      chrome.storage.onChanged.addListener((changes, namespace) => {
+        if (namespace !== 'local') return;
+        // Atualizar cache e prioridades se settings mudarem
+        if (changes.settings) {
+          this.loadPriorityOptions();
+          this.cachedSettings = changes.settings.newValue;
+        }
+        // Recarregar histórico quando houver mudanças em chaves ai-reports-*
+        const changedKeys = Object.keys(changes || {});
+        const aiReportsChanged = changedKeys.some(k => k.startsWith('ai-reports-'));
+        if (aiReportsChanged) {
+          this.loadBugHistory();
+        }
+      });
+    }
   }
 
   setupEventListeners() {
@@ -136,17 +165,17 @@ class BugSpotter {
         const historyItem = e.target.closest('.history-item');
         if (historyItem && historyItem.classList.contains('ai-report-item')) {
           // Feedback imediato
-          this.updateHistoryStatus('Sending to Jira...', 'loading');
+          this.updateHistoryStatus('Sending...', 'loading');
           // É um relatório AI - buscar o relatório pelo índice
           this.loadAIReports().then(aiReports => {
             const report = aiReports[index];
             if (report) {
-              this.sendAIReportToJira(index, report).catch(error => {
-                console.error('Error sending AI report to Jira:', error);
+              this.sendAIReport(index, report).catch(error => {
+                console.error('Error sending AI report:', error);
                 // Reabilitar o botão em caso de erro
                 const btn = document.querySelector(`.ai-report-item .send-btn[data-index="${index}"]`);
                 if (btn) btn.disabled = false;
-                this.updateHistoryStatus(`Error sending to Jira: ${error.message}`, 'error');
+                this.updateHistoryStatus(`Error sending: ${error.message}`, 'error');
               });
             } else {
               console.error('AI report not found at index:', index);
@@ -164,8 +193,8 @@ class BugSpotter {
           });
         } else {
           // É um relatório manual
-          this.updateHistoryStatus('Resending to Jira...', 'loading');
-          this.retryJiraSubmission(index).catch(err => {
+          this.updateHistoryStatus('Resending...', 'loading');
+          this.retrySubmission(index).catch(err => {
             console.error('Error resending manual report:', err);
             // Reabilitar o botão manual em caso de erro
             const btn = document.querySelector(`.history-item .send-btn[data-index="${index}"]`);
@@ -1420,27 +1449,54 @@ class BugSpotter {
     bugData.attachments = this.attachments;
     bugData.timestamp = new Date().toISOString();
     bugData.jiraAttempted = false;
+    bugData.easyvistaAttempted = false;
     bugData.status = 'open';
   
     try {
-      // Try to send to Jira if configured
+      // Try to send according to preferred target and enabled integrations
       const settings = await this.getSettings();
-      if (settings.jira && settings.jira.enabled) {
+      const jiraEnabled = !!(settings.jira && settings.jira.enabled);
+      const evEnabled = !!(settings.easyvista && settings.easyvista.enabled);
+      let target = null;
+      if (jiraEnabled && evEnabled) {
+        target = settings.preferredTarget === 'easyvista' ? 'easyvista' : 'jira';
+      } else if (jiraEnabled) {
+        target = 'jira';
+      } else if (evEnabled) {
+        target = 'easyvista';
+      }
+
+      if (target === 'jira') {
         try {
           bugData.jiraAttempted = true;
           const jiraResponse = await this.sendToJira(bugData);
-          // Jira response - silenciado
           const ticketKey = jiraResponse?.key || jiraResponse?.issueKey || jiraResponse?.data?.key || jiraResponse?.data?.issueKey;
           if (ticketKey) {
-            // Add Jira key to report before saving
             bugData.jiraKey = ticketKey;
-            this.updateReportStatus(`Report sent successfully! Ticket: ${ticketKey}`, 'success');
+            this.updateReportStatus(`Report sent successfully! Jira: ${ticketKey}`, 'success');
           } else {
             this.updateReportStatus('Saved locally. Error sending to Jira: Invalid response', 'warning');
           }
         } catch (jiraError) {
           console.error('Error sending to Jira:', jiraError);
           this.updateReportStatus('Saved locally. Error sending to Jira: ' + jiraError.message, 'warning');
+        }
+      } else if (target === 'easyvista') {
+        try {
+          bugData.easyvistaAttempted = true;
+          const evResp = await this.sendToEasyVista(bugData);
+          const evId = evResp?.ticketId || evResp?.data?.ticketId || evResp?.data?.id;
+          const evUrl = evResp?.ticketUrl || evResp?.data?.ticketUrl;
+          if (evId || evUrl) {
+            bugData.easyvistaId = evId || null;
+            bugData.easyvistaUrl = evUrl || null;
+            this.updateReportStatus(`Report sent successfully! EasyVista${evId ? ': ' + evId : ''}`, 'success');
+          } else {
+            this.updateReportStatus('Saved locally. Error sending to EasyVista: Invalid response', 'warning');
+          }
+        } catch (evError) {
+          console.error('Error sending to EasyVista:', evError);
+          this.updateReportStatus('Saved locally. Error sending to EasyVista: ' + evError.message, 'warning');
         }
       } else {
         this.updateReportStatus('Report saved locally!', 'success');
@@ -1472,8 +1528,13 @@ class BugSpotter {
 
   async getSettings() {
     try {
-      const result = await chrome.storage.local.get(['settings']);
-      const settings = result.settings || {};
+      let settings = {};
+      if (this.isExtensionContext()) {
+        const result = await chrome.storage.local.get(['settings']);
+        settings = result.settings || {};
+      } else {
+        console.log('[Popup] Preview sem chrome.storage; usando configurações padrão');
+      }
       // Storage carregado no popup - silenciado
       
       // Definir prioridades padrão
@@ -1489,6 +1550,7 @@ class BugSpotter {
         autoCapture: settings.popup?.autoCapture ?? true,
         includeConsole: settings.popup?.includeConsole ?? true,
         maxFileSize: settings.popup?.maxFileSize ?? 5,
+        preferredTarget: settings.preferredTarget || 'jira',
         capture: {
           autoCaptureLogs: settings.capture?.autoCaptureLogs ?? true,
           screenshotFormat: settings.capture?.screenshotFormat ?? 'png',
@@ -1504,6 +1566,11 @@ class BugSpotter {
           apiToken: settings.jira?.apiToken || '',
           projectKey: settings.jira?.projectKey || '',
           priorities: settings.jira?.priorities || defaultPriorities
+        },
+        easyvista: {
+          enabled: settings.easyvista?.enabled ?? false,
+          baseUrl: settings.easyvista?.baseUrl || '',
+          apiKey: settings.easyvista?.apiKey || ''
         }
       };
       
@@ -1516,6 +1583,7 @@ class BugSpotter {
         autoCapture: true,
         includeConsole: true,
         maxFileSize: 5,
+        preferredTarget: 'jira',
         capture: {
           autoCaptureLogs: true,
           screenshotFormat: 'png',
@@ -1535,6 +1603,11 @@ class BugSpotter {
             'low': 'Low',
             'lowest': 'Lowest'
           }
+        },
+        easyvista: {
+          enabled: false,
+          baseUrl: '',
+          apiKey: ''
         }
       };
     }
@@ -1604,6 +1677,30 @@ class BugSpotter {
         } else {
           this.saveReportAfterCleanup(bugData, resolve);
         }
+      });
+    });
+  }
+
+  async sendToEasyVista(bugData) {
+    return new Promise((resolve, reject) => {
+      chrome.runtime.sendMessage({
+        action: 'SEND_TO_EASYVISTA',
+        data: bugData
+      }, (response) => {
+        if (chrome.runtime.lastError) {
+          reject(new Error(`Communication error: ${chrome.runtime.lastError.message}`));
+          return;
+        }
+        if (!response) {
+          reject(new Error('No response received from background script'));
+          return;
+        }
+        if (response.success === false) {
+          reject(new Error(response.error || 'Unknown error'));
+          return;
+        }
+        const payload = response.data != null ? response.data : response;
+        resolve(payload);
       });
     });
   }
@@ -1677,38 +1774,53 @@ class BugSpotter {
   
   async loadManualReports() {
     return new Promise((resolve) => {
-      chrome.storage.local.get(['bugReports'], (result) => {
-        resolve(result.bugReports || []);
-      });
+      if (this.isExtensionContext()) {
+        chrome.storage.local.get(['bugReports'], (result) => {
+          resolve(result.bugReports || []);
+        });
+      } else {
+        resolve([]);
+      }
     });
   }
   
   async loadAIReports() {
     return new Promise((resolve) => {
       // Obter aba atual para carregar relatórios AI específicos
-      chrome.tabs.query({active: true, currentWindow: true}, (tabs) => {
-        if (tabs.length === 0) {
-          resolve([]);
-          return;
-        }
-        
-        const tabId = tabs[0].id;
-        const key = `ai-reports-${tabId}`;
-        
-        chrome.storage.local.get([key], (result) => {
-          const aiReports = result[key] || [];
-          // Ordenar por data de criação (mais recentes primeiro) com robustez
-          aiReports.sort((a, b) => {
-            const getTs = (r) => {
-              if (!r || !r.createdAt) return 0;
-              const d = new Date(r.createdAt);
-              return isNaN(d.getTime()) ? 0 : d.getTime();
-            };
-            return getTs(b) - getTs(a);
+      if (this.isExtensionContext()) {
+        chrome.tabs.query({active: true, currentWindow: true}, (tabs) => {
+          if (tabs.length === 0) {
+            resolve([]);
+            return;
+          }
+          
+          const tabId = tabs[0].id;
+          const key = `ai-reports-${tabId}`;
+          
+          chrome.storage.local.get([key], (result) => {
+            const aiReports = result[key] || [];
+            // Ordenar por data de criação (mais recentes primeiro) com robustez
+            aiReports.sort((a, b) => {
+              const getTs = (r) => {
+                if (!r || !r.createdAt) return 0;
+                const d = new Date(r.createdAt);
+                return isNaN(d.getTime()) ? 0 : d.getTime();
+              };
+              return getTs(b) - getTs(a);
+            });
+            // Persistir a ordem ordenada para manter consistência com os índices exibidos
+            try {
+              chrome.storage.local.set({ [key]: aiReports }, () => {
+                resolve(aiReports);
+              });
+            } catch (_) {
+              resolve(aiReports);
+            }
           });
-          resolve(aiReports);
         });
-      });
+      } else {
+        resolve([]);
+      }
     });
   }
 
@@ -1784,9 +1896,17 @@ class BugSpotter {
       ? report.title.substring(0, 45) + '...' 
       : report.title;
     
-    // Se o relatório foi enviado para Jira, mostrar o layout com link
-    if (report.jiraKey) {
-      const jiraUrl = this.getJiraTicketUrl(report.jiraKey);
+    // Se o relatório foi enviado, mostrar o layout com link (Jira ou EasyVista)
+    if (report.jiraKey || report.easyvistaUrl || report.easyvistaId) {
+      let linkHtml = '';
+      if (report.jiraKey) {
+        const jiraUrl = this.getJiraTicketUrl(report.jiraKey);
+        linkHtml = `<a href="${jiraUrl}" target="_blank" class="jira-link">${report.jiraKey}</a>`;
+      } else if (report.easyvistaUrl || report.easyvistaId) {
+        const text = report.easyvistaId ? `EV-${report.easyvistaId}` : 'EasyVista Ticket';
+        const href = report.easyvistaUrl || '#';
+        linkHtml = `<a href="${href}" target="_blank" class="jira-link">${text}</a>`;
+      }
       item.innerHTML = `
         <div class="history-item-header-inline">
           <div class="history-title-inline">${truncatedTitle}</div>
@@ -1800,7 +1920,7 @@ class BugSpotter {
           </div>
         </div>
         <div class="history-item-meta">
-          <a href="${jiraUrl}" target="_blank" class="jira-link">${report.jiraKey}</a>
+          ${linkHtml}
           <span class="timestamp">${new Date(report.jiraSentAt || report.createdAt).toLocaleString()}</span>
         </div>
       `;
@@ -1810,7 +1930,7 @@ class BugSpotter {
         <div class="history-item-header-inline">
           <div class="history-title-inline">${truncatedTitle}</div>
           <div class="history-actions-inline">
-            <button class="send-btn" title="Send to Jira" data-index="${index}">
+            <button class="send-btn" title="Send" data-index="${index}">
               <span class="material-icons">send</span>
             </button>
             <button class="view-btn" title="View full report" data-index="${index}">
@@ -1852,46 +1972,33 @@ class BugSpotter {
       const item = document.createElement('div');
       item.className = 'history-item';
       
-      if (report.jiraKey) {
-        const jiraUrl = this.getJiraTicketUrl(report.jiraKey);
+      if (report.jiraKey || report.easyvistaUrl || report.easyvistaId) {
         const maxTitleLength = 45;
-        const fullTitle = `${report.jiraKey} - ${report.title}`;
-        const truncatedTitle = fullTitle.length > maxTitleLength 
-          ? fullTitle.substring(0, maxTitleLength) + '...' 
-          : fullTitle;
+        let linkHtml = '';
+        let fullTitle = '';
+        if (report.jiraKey) {
+          const jiraUrl = this.getJiraTicketUrl(report.jiraKey);
+          fullTitle = `${report.jiraKey} - ${report.title}`;
+          const truncatedTitle = fullTitle.length > maxTitleLength 
+            ? fullTitle.substring(0, maxTitleLength) + '...' 
+            : fullTitle;
+          linkHtml = `<a href="${jiraUrl}" target="_blank" class="jira-link-full">${truncatedTitle}</a>`;
+        } else {
+          const text = report.easyvistaId ? `EV-${report.easyvistaId}` : 'EasyVista Ticket';
+          fullTitle = `${text} - ${report.title}`;
+          const href = report.easyvistaUrl || '#';
+          const truncatedTitle = fullTitle.length > maxTitleLength 
+            ? fullTitle.substring(0, maxTitleLength) + '...' 
+            : fullTitle;
+          linkHtml = `<a href="${href}" target="_blank" class="jira-link-full">${truncatedTitle}</a>`;
+        }
         
-        // Reports já enviados para Jira não têm botão de preview
         item.innerHTML = `
           <div class="history-item-header-inline">
             <div class="history-title-inline">
-              <a href="${jiraUrl}" target="_blank" class="jira-link-full">${truncatedTitle}</a>
+              ${linkHtml}
             </div>
             <div class="history-actions-inline">
-              <button class="delete-btn" title="Delete" data-index="${index}">
-                <span class="material-icons">delete</span>
-              </button>
-            </div>
-          </div>
-          <div class="history-item-meta">
-            <span class="timestamp">${new Date(report.createdAt || report.timestamp || Date.now()).toLocaleString()}</span>
-          </div>
-        `;
-      } else if (report.jiraAttempted === false) {
-        const maxTitleLength = 45;
-        const truncatedTitle = report.title.length > maxTitleLength 
-          ? report.title.substring(0, maxTitleLength) + '...' 
-          : report.title;
-        
-        item.innerHTML = `
-          <div class="history-item-header-inline">
-            <div class="history-title-inline">${truncatedTitle}</div>
-            <div class="history-actions-inline">
-              <button class="send-btn" title="Send to Jira" data-index="${index}">
-                <span class="material-icons">send</span>
-              </button>
-              <button class="view-btn" title="View details" data-index="${index}">
-                <span class="material-icons">visibility</span>
-              </button>
               <button class="delete-btn" title="Delete" data-index="${index}">
                 <span class="material-icons">delete</span>
               </button>
@@ -1911,7 +2018,7 @@ class BugSpotter {
           <div class="history-item-header-inline">
             <div class="history-title-inline">${truncatedTitle}</div>
             <div class="history-actions-inline">
-              <button class="send-btn" title="Send to Jira" data-index="${index}">
+              <button class="send-btn" title="Send" data-index="${index}">
                 <span class="material-icons">send</span>
               </button>
               <button class="view-btn" title="View details" data-index="${index}">
@@ -1932,74 +2039,85 @@ class BugSpotter {
     });
   }
 
-  // New method for Jira submission retry
-  async retryJiraSubmission(index) {
+  // New method for submission retry (routes to Jira or EasyVista)
+  async retrySubmission(index) {
     try {
-      // Verificar se a integração Jira está habilitada
       const settings = await this.getSettings();
-      if (!settings.jira || !settings.jira.enabled) {
-        this.updateHistoryStatus('Jira integration is not enabled. Configure it in Settings.', 'error');
+      const jiraEnabled = !!(settings.jira && settings.jira.enabled);
+      const evEnabled = !!(settings.easyvista && settings.easyvista.enabled);
+      if (!jiraEnabled && !evEnabled) {
+        this.updateHistoryStatus('No integration enabled. Configure in Settings.', 'error');
         return;
       }
 
-      this.updateHistoryStatus('Resending to Jira...', 'loading');
-      
-      // Use chrome.storage.local instead of localStorage
       const result = await new Promise((resolve) => {
         chrome.storage.local.get(['bugReports'], resolve);
       });
-      
       const reports = result.bugReports || [];
-      
-      // Verificar se o índice é válido
-      if (index < 0 || index >= reports.length) {
-        throw new Error(`Report index ${index} is out of bounds. Total reports: ${reports.length}`);
-      }
-      
+      if (index < 0 || index >= reports.length) throw new Error(`Report index ${index} is out of bounds. Total reports: ${reports.length}`);
       const report = reports[index];
-      
-      if (!report) {
-        throw new Error(`Report not found at index ${index}`);
+      if (!report) throw new Error(`Report not found at index ${index}`);
+
+      let target = null;
+      if (jiraEnabled && evEnabled) {
+        target = settings.preferredTarget === 'easyvista' ? 'easyvista' : 'jira';
+      } else if (jiraEnabled) {
+        target = 'jira';
+      } else if (evEnabled) {
+        target = 'easyvista';
       }
-      
-      const jiraResponse = await this.sendToJira(report);
-      const ticketKey = jiraResponse?.key || jiraResponse?.issueKey || jiraResponse?.data?.key || jiraResponse?.data?.issueKey;
-      if (!ticketKey) {
-        throw new Error('Invalid Jira response: missing ticket key');
+
+      if (target === 'jira') {
+        this.updateHistoryStatus('Resending to Jira...', 'loading');
+        const jiraResponse = await this.sendToJira(report);
+        const ticketKey = jiraResponse?.key || jiraResponse?.issueKey || jiraResponse?.data?.key || jiraResponse?.data?.issueKey;
+        if (!ticketKey) throw new Error('Invalid Jira response: missing ticket key');
+
+        const updatedResult = await new Promise((resolve) => {
+          chrome.storage.local.get(['bugReports'], resolve);
+        });
+        const updatedReports = updatedResult.bugReports || [];
+        const reportIndex = updatedReports.findIndex(r => 
+          (r.createdAt === report.createdAt) || 
+          (r.timestamp === report.timestamp) ||
+          (r.title === report.title && Math.abs(new Date(r.createdAt || r.timestamp) - new Date(report.createdAt || report.timestamp)) < 1000)
+        );
+        if (reportIndex === -1) throw new Error('Report not found in updated storage');
+        updatedReports[reportIndex].jiraKey = ticketKey;
+        updatedReports[reportIndex].jiraAttempted = true;
+        updatedReports[reportIndex].jiraSuccess = true;
+        chrome.storage.local.set({ bugReports: updatedReports }, () => {
+          this.updateHistoryStatus(`Sent successfully! Ticket: ${ticketKey}`, 'success');
+          this.loadBugHistory();
+        });
+      } else if (target === 'easyvista') {
+        this.updateHistoryStatus('Resending to EasyVista...', 'loading');
+        const evResp = await this.sendToEasyVista(report);
+        const evId = evResp?.ticketId || evResp?.data?.ticketId || evResp?.data?.id;
+        const evUrl = evResp?.ticketUrl || evResp?.data?.ticketUrl;
+        if (!evId && !evUrl) throw new Error('Invalid EasyVista response');
+
+        const updatedResult = await new Promise((resolve) => {
+          chrome.storage.local.get(['bugReports'], resolve);
+        });
+        const updatedReports = updatedResult.bugReports || [];
+        const reportIndex = updatedReports.findIndex(r => 
+          (r.createdAt === report.createdAt) || 
+          (r.timestamp === report.timestamp) ||
+          (r.title === report.title && Math.abs(new Date(r.createdAt || r.timestamp) - new Date(report.createdAt || report.timestamp)) < 1000)
+        );
+        if (reportIndex === -1) throw new Error('Report not found in updated storage');
+        updatedReports[reportIndex].easyvistaId = evId || null;
+        updatedReports[reportIndex].easyvistaUrl = evUrl || null;
+        updatedReports[reportIndex].easyvistaAttempted = true;
+        updatedReports[reportIndex].easyvistaSuccess = true;
+        chrome.storage.local.set({ bugReports: updatedReports }, () => {
+          this.updateHistoryStatus(`Sent successfully! EasyVista${evId ? ': ' + evId : ''}`, 'success');
+          this.loadBugHistory();
+        });
       }
-      
-      // Update report with jiraKey using chrome.storage.local
-      // Recarregar os dados para garantir que temos a versão mais atual
-      const updatedResult = await new Promise((resolve) => {
-        chrome.storage.local.get(['bugReports'], resolve);
-      });
-      
-      const updatedReports = updatedResult.bugReports || [];
-      
-      // Encontrar o relatório pelo timestamp para evitar problemas de índice
-      const reportIndex = updatedReports.findIndex(r => 
-        (r.createdAt === report.createdAt) || 
-        (r.timestamp === report.timestamp) ||
-        (r.title === report.title && Math.abs(new Date(r.createdAt || r.timestamp) - new Date(report.createdAt || report.timestamp)) < 1000)
-      );
-      
-      if (reportIndex === -1) {
-        throw new Error('Report not found in updated storage');
-      }
-      
-      updatedReports[reportIndex].jiraKey = ticketKey;
-      updatedReports[reportIndex].jiraAttempted = true;
-      updatedReports[reportIndex].jiraSuccess = true;
-      
-      chrome.storage.local.set({ bugReports: updatedReports }, () => {
-        this.updateHistoryStatus(`Sent successfully! Ticket: ${ticketKey}`, 'success');
-        
-        // Recarregar o histórico para mostrar as mudanças
-        this.loadBugHistory();
-      });
-      
     } catch (error) {
-      console.error('Error resending to Jira:', error);
+      console.error('Error resending report:', error);
       this.updateHistoryStatus('Error resending: ' + error.message, 'error');
     }
   }
@@ -2011,25 +2129,14 @@ class BugSpotter {
     
     if (cards[index]) {
       const card = cards[index];
-      
-      // Update Jira status
-      const jiraStatus = card.querySelector('.jira-status');
-      if (jiraStatus) {
-        if (report.jiraKey) {
-          jiraStatus.innerHTML = `
-            <span class="material-icons status-icon success">check_circle</span>
-            <span class="status-text">Sent: ${report.jiraKey}</span>
-          `;
-          jiraStatus.className = 'jira-status success';
-        }
-      }
-      
-      // Update action buttons
-      const actionButtons = card.querySelector('.action-buttons');
-      if (actionButtons && report.jiraKey) {
+      // Hide send button if already sent to any target
+      const actionButtons = card.querySelector('.action-buttons, .history-actions-inline');
+      const sentToJira = !!report.jiraKey;
+      const sentToEV = !!(report.easyvistaId || report.easyvistaUrl);
+      if (actionButtons && (sentToJira || sentToEV)) {
         const sendBtn = actionButtons.querySelector('.send-btn');
         if (sendBtn) {
-          sendBtn.style.display = 'none'; // Hide resend button
+          sendBtn.style.display = 'none';
         }
       }
     }
@@ -2041,22 +2148,8 @@ class BugSpotter {
    */
   async viewAIReport(index) {
     try {
-      // Obter aba atual
-      const tabs = await new Promise((resolve) => {
-        chrome.tabs.query({active: true, currentWindow: true}, resolve);
-      });
-      
-      if (tabs.length === 0) return;
-      
-      const tabId = tabs[0].id;
-      const key = `ai-reports-${tabId}`;
-      
-      // Carregar relatórios AI
-      const result = await new Promise((resolve) => {
-        chrome.storage.local.get([key], resolve);
-      });
-      
-      const aiReports = result[key] || [];
+      // Carregar relatórios AI já ordenados para manter consistência de índices
+      const aiReports = await this.loadAIReports();
       if (index >= aiReports.length) return;
       
       const report = aiReports[index];
@@ -2080,6 +2173,82 @@ class BugSpotter {
       existingModal.remove();
     }
     
+    // Preparar metadados padronizados
+    const createdAt = new Date(report.createdAt || report.timestamp || Date.now()).toLocaleString();
+    const pageUrlText = report.url || report.pageUrl || 'Not available';
+    const priorityText = report.severity || 'Not defined';
+    const categoryText = report.category || '';
+    const environmentText = report.environment || '';
+    const descriptionText = report.description || report.analysis || 'No description provided.';
+
+    // Construir lista de anexos para preview
+    let attachmentsHTML = '';
+    const attachments = Array.isArray(report.attachments) ? report.attachments : [];
+    const items = [];
+    if (attachments.length > 0) {
+      attachments.forEach((attachment, idx) => {
+        const name = attachment?.name || `Attachment ${idx + 1}`;
+        let sizeBytes = Number(attachment?.size || 0);
+        try {
+          if (!sizeBytes || sizeBytes <= 0) {
+            const data = attachment?.data;
+            if (typeof data === 'string' && data.startsWith('data:')) {
+              sizeBytes = this.calculateDataUrlSize(data);
+            } else if (typeof data === 'string') {
+              sizeBytes = new Blob([data]).size;
+            }
+          }
+        } catch (_) { /* ignore size estimation errors */ }
+        const sizeLabel = this.formatFileSize(sizeBytes || 0);
+        items.push({ name, sizeLabel, pending: false });
+      });
+    } else {
+      // Sem anexos persistidos em AI report: mostrar o que será enviado
+      // Screenshot (se existir) como anexo
+      if (report.screenshot) {
+        const sizeBytes = this.calculateDataUrlSize(report.screenshot);
+        items.push({ name: 'screenshot.png', sizeLabel: this.formatFileSize(sizeBytes), pending: false });
+      }
+      // Network details e console logs serão gerados no envio
+      items.push({ name: 'network-details.json', sizeLabel: 'to be generated', pending: true });
+      items.push({ name: 'console-logs-recent.txt', sizeLabel: 'to be generated', pending: true });
+    }
+
+    if (items.length > 0) {
+      attachmentsHTML = `
+        <div class="report-section">
+          <h4><span class="material-icons">attach_file</span> Attachments (${items.length})</h4>
+          <div class="attachments-list" id="aiAttachmentsList">
+            ${items.map(item => `
+              <div class="attachment-item${item.pending ? ' attachment-pending' : ''}" data-name="${item.name}">
+                <span class="material-icons">insert_drive_file</span>
+                <span>${item.name}</span>
+                <span class="attachment-size">${item.sizeLabel}</span>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      `;
+    }
+
+    // Screenshot (se houver)
+    const screenshotHTML = report.screenshot ? `
+      <div class="report-section">
+        <h4><span class="material-icons">image</span> Screenshot</h4>
+        <img src="${report.screenshot}" alt="Screenshot" class="report-screenshot" />
+      </div>
+    ` : '';
+
+    // Sugestões
+    const suggestionsHTML = (report.suggestions && report.suggestions.length > 0) ? `
+      <div class="report-section">
+        <h4><span class="material-icons">tips_and_updates</span> Suggestions</h4>
+        <ul class="suggestions-list">
+          ${report.suggestions.map(suggestion => `<li>${suggestion}</li>`).join('')}
+        </ul>
+      </div>
+    ` : '';
+
     // Criar modal
     const modal = document.createElement('div');
     modal.className = 'ai-report-modal';
@@ -2090,34 +2259,36 @@ class BugSpotter {
           <button class="ai-report-modal-close">&times;</button>
         </div>
         <div class="ai-report-modal-body">
+          <div class="report-section">
+            <h4><span class="material-icons">description</span> Description</h4>
+            <p>${descriptionText}</p>
+          </div>
+
           <div class="report-meta">
-            <span class="severity-badge severity-${report.severity}">${(report.severity || 'unknown').toUpperCase()}</span>
-            <span class="category-badge">${report.category}</span>
-            <span class="timestamp">${new Date(report.createdAt).toLocaleString()}</span>
+            <div class="meta-item"><span class="material-icons">flag</span><span>Priority: ${priorityText}</span></div>
+            ${categoryText ? `<div class="meta-item"><span class="material-icons">category</span><span>Category: ${categoryText}</span></div>` : ''}
+            ${environmentText ? `<div class="meta-item"><span class="material-icons">computer</span><span>Environment: ${environmentText}</span></div>` : ''}
+            <div class="meta-item"><span class="material-icons">schedule</span><span>Created at: ${createdAt}</span></div>
+            <div class="meta-item"><span class="material-icons">link</span><span>Page URL: ${pageUrlText}</span></div>
           </div>
           
-          <div class="report-section">
-            <h4>Description</h4>
-            <p>${report.description}</p>
-          </div>
-          
-          <div class="report-section">
-            <h4>Original Error</h4>
-            <div class="error-details">
-              <p><strong>Status:</strong> ${report.originalError.status} ${report.originalError.statusText}</p>
-              <p><strong>URL:</strong> ${report.originalError.url}</p>
-              <p><strong>Timestamp:</strong> ${new Date(report.originalError.timestamp).toLocaleString()}</p>
-            </div>
-          </div>
-          
-          ${report.suggestions && report.suggestions.length > 0 ? `
+          ${report.originalError ? `
             <div class="report-section">
-              <h4>Suggestions</h4>
-              <ul class="suggestions-list">
-                ${report.suggestions.map(suggestion => `<li>${suggestion}</li>`).join('')}
-              </ul>
+              <h4 class="error-section-header">
+                <span class="material-icons">error</span>
+                <span>Original Error</span>
+                <span class="error-status-badge">${[report.originalError.status, report.originalError.statusText].filter(Boolean).join(' ')}</span>
+              </h4>
+              <button class="error-details-toggle">Show details</button>
+              <div class="error-details" style="display: none;">
+                ${report.originalError.url && report.originalError.url !== pageUrlText ? `<p><strong>Request URL:</strong> ${report.originalError.url}</p>` : ''}
+              </div>
             </div>
           ` : ''}
+          
+          ${attachmentsHTML}
+          ${screenshotHTML}
+          ${suggestionsHTML}
         </div>
       </div>
     `;
@@ -2140,6 +2311,72 @@ class BugSpotter {
     };
     
     document.body.appendChild(modal);
+
+    // Tentar popular tamanhos de anexos gerados dinamicamente (apenas em contexto de extensão)
+    this.tryPopulateAIAttachmentSizes(report, modal).catch(() => {});
+
+    // Toggle de detalhes do erro original
+    try {
+      const toggleBtn = modal.querySelector('.error-details-toggle');
+      const detailsEl = modal.querySelector('.error-details');
+      if (toggleBtn && detailsEl) {
+        toggleBtn.addEventListener('click', () => {
+          const isHidden = detailsEl.style.display === 'none';
+          detailsEl.style.display = isHidden ? 'block' : 'none';
+          toggleBtn.textContent = isHidden ? 'Hide details' : 'Show details';
+        });
+      }
+    } catch (_) { /* ignore toggle errors */ }
+  }
+
+  async tryPopulateAIAttachmentSizes(report, modal) {
+    try {
+      if (!window.chrome || !chrome.runtime || !chrome.tabs) return;
+      const list = modal.querySelector('#aiAttachmentsList');
+      if (!list) return;
+
+      // Obter tabId atual
+      const tabs = await new Promise(resolve => chrome.tabs.query({ active: true, currentWindow: true }, resolve));
+      const tabId = tabs?.[0]?.id;
+      if (!tabId) return;
+
+      // Network details
+      if (report?.originalError?.url) {
+        const netResp = await new Promise(resolve => {
+          try {
+            chrome.runtime.sendMessage({ action: 'GET_NETWORK_DETAILS', tabId, url: report.originalError.url, timestamp: report.originalError.timestamp }, resolve);
+          } catch (_) { resolve(null); }
+        });
+        const details = netResp?.success ? netResp.data : null;
+        if (details) {
+          const json = JSON.stringify(details, null, 2);
+          const size = new Blob([json]).size;
+          const el = list.querySelector('[data-name="network-details.json"] .attachment-size');
+          if (el) el.textContent = this.formatFileSize(size);
+          const item = list.querySelector('[data-name="network-details.json"]');
+          if (item) item.classList.remove('attachment-pending');
+        }
+      }
+
+      // Console logs recentes
+      const logsResp = await new Promise(resolve => {
+        try {
+          chrome.runtime.sendMessage({ action: 'GET_RECENT_LOGS', tabId, windowMs: 30000, limit: 100 }, resolve);
+        } catch (_) { resolve(null); }
+      });
+      const logsData = logsResp?.success ? logsResp.data?.logs : null;
+      if (Array.isArray(logsData) && logsData.length > 0) {
+        const lines = logsData.map(l => `${new Date(l.timestamp || Date.now()).toLocaleTimeString()} [${l.level || 'log'}] ${l.message || l.text || ''}`);
+        const txt = lines.join('\n');
+        const size = new Blob([txt]).size;
+        const el = list.querySelector('[data-name="console-logs-recent.txt"] .attachment-size');
+        if (el) el.textContent = this.formatFileSize(size);
+        const item = list.querySelector('[data-name="console-logs-recent.txt"]');
+        if (item) item.classList.remove('attachment-pending');
+      }
+    } catch (_) {
+      // silencioso
+    }
   }
   
   /**
@@ -2154,22 +2391,14 @@ class BugSpotter {
         return;
       }
       
-      // Obter aba atual
+      // Carregar relatórios AI já ordenados para manter consistência de índices
       const tabs = await new Promise((resolve) => {
         chrome.tabs.query({active: true, currentWindow: true}, resolve);
       });
-      
       if (tabs.length === 0) return;
-      
       const tabId = tabs[0].id;
       const key = `ai-reports-${tabId}`;
-      
-      // Carregar relatórios AI
-      const result = await new Promise((resolve) => {
-        chrome.storage.local.get([key], resolve);
-      });
-      
-      const aiReports = result[key] || [];
+      const aiReports = await this.loadAIReports();
       if (index >= aiReports.length) return;
       
       // Remover relatório
@@ -2336,7 +2565,7 @@ class BugSpotter {
             </div>
             <div class="meta-item">
               <span class="material-icons">link</span>
-              <span>URL: ${report.url || 'Not available'}</span>
+              <span>Page URL: ${report.url || report.pageUrl || 'Not available'}</span>
             </div>
           </div>
 
@@ -2369,6 +2598,20 @@ class BugSpotter {
               ${report.logs.length > 10 ? `<p class="logs-truncated">... and ${report.logs.length - 10} more entries</p>` : ''}
             </div>
           ` : ''}
+
+          ${report.originalError ? `
+            <div class="report-section">
+              <h4 class="error-section-header">
+                <span class="material-icons">error</span>
+                <span>Original Error</span>
+                <span class="error-status-badge">${[report.originalError.status, report.originalError.statusText].filter(Boolean).join(' ')}</span>
+              </h4>
+              <button class="error-details-toggle">Show details</button>
+              <div class="error-details" style="display: none;">
+                ${report.originalError.url && report.originalError.url !== (report.url || report.pageUrl) ? `<p><strong>Request URL:</strong> ${report.originalError.url}</p>` : ''}
+              </div>
+            </div>
+          ` : ''}
         </div>
       </div>
     `;
@@ -2384,6 +2627,19 @@ class BugSpotter {
     });
 
     document.body.appendChild(modal);
+
+    // Toggle de detalhes do erro original (manual)
+    try {
+      const toggleBtn = modal.querySelector('.error-details-toggle');
+      const detailsEl = modal.querySelector('.error-details');
+      if (toggleBtn && detailsEl) {
+        toggleBtn.addEventListener('click', () => {
+          const isHidden = detailsEl.style.display === 'none';
+          detailsEl.style.display = isHidden ? 'block' : 'none';
+          toggleBtn.textContent = isHidden ? 'Hide details' : 'Show details';
+        });
+      }
+    } catch (_) { /* ignore toggle errors */ }
   }
 
   formatFileSize(bytes) {
@@ -2444,7 +2700,7 @@ class BugSpotter {
             const jsonContent = JSON.stringify(netDetailsResp.data, null, 2);
             bugData.attachments = bugData.attachments || [];
             bugData.attachments.push({
-              type: 'text',
+              type: 'json',
               name: 'network-details.json',
               data: jsonContent
             });
@@ -2569,6 +2825,153 @@ class BugSpotter {
     }
   }
 
+  async sendAIReport(index, report) {
+    const settings = await this.getSettings();
+    const jiraEnabled = !!(settings.jira && settings.jira.enabled);
+    const evEnabled = !!(settings.easyvista && settings.easyvista.enabled);
+    if (!jiraEnabled && !evEnabled) {
+      throw new Error('No integration enabled');
+    }
+    let target = null;
+    if (jiraEnabled && evEnabled) {
+      target = settings.preferredTarget === 'easyvista' ? 'easyvista' : 'jira';
+    } else if (jiraEnabled) {
+      target = 'jira';
+    } else if (evEnabled) {
+      target = 'easyvista';
+    }
+    if (target === 'jira') return this.sendAIReportToJira(index, report);
+    return this.sendAIReportToEasyVista(index, report);
+  }
+
+  async sendAIReportToEasyVista(index, report) {
+    try {
+      const settings = await this.getSettings();
+      if (!settings.easyvista || !settings.easyvista.enabled) {
+        throw new Error('EasyVista integration is not enabled');
+      }
+      const bugData = {
+        title: report.title,
+        description: report.description || report.analysis || 'AI-generated report',
+        steps: report.stepsToReproduce || [],
+        expectedBehavior: report.expectedBehavior,
+        actualBehavior: report.actualBehavior,
+        priority: report.severity || 'Medium',
+        url: (report.originalError && report.originalError.url) || report.url || '',
+        screenshot: report.screenshot || null,
+        logs: report.logs || [],
+        attachments: report.attachments || [],
+        timestamp: report.createdAt || (report.originalError && report.originalError.timestamp) || new Date().toISOString(),
+        originalError: report.originalError || null,
+        isAIReport: true
+      };
+
+      // Attach network details and recent console logs (same as Jira flow)
+      try {
+        const tabs = await new Promise((resolve) => {
+          chrome.tabs.query({active: true, currentWindow: true}, resolve);
+        });
+        if (tabs && tabs.length > 0) {
+          const tabId = tabs[0].id;
+          const netDetailsResp = await new Promise((resolve) => {
+            chrome.runtime.sendMessage({
+              action: 'GET_NETWORK_DETAILS',
+              tabId,
+              url: bugData.url,
+              timestamp: bugData.timestamp
+            }, resolve);
+          });
+          if (netDetailsResp && netDetailsResp.success && netDetailsResp.data) {
+            const jsonContent = JSON.stringify(netDetailsResp.data, null, 2);
+            bugData.attachments = bugData.attachments || [];
+            bugData.attachments.push({ type: 'json', name: 'network-details.json', data: jsonContent });
+          }
+
+          try {
+            let domainFilter = '';
+            try {
+              const useUrl = bugData.url && bugData.url.startsWith('http') ? bugData.url : (tabs[0].url || '');
+              domainFilter = new URL(useUrl).hostname || '';
+            } catch (_) { domainFilter = ''; }
+            const cfg = this.cachedSettings?.capture || {};
+            let winSec = Number(cfg.recentLogsWindowSeconds ?? 30);
+            let lim = Number(cfg.recentLogsLimit ?? 10);
+            winSec = isFinite(winSec) ? Math.max(30, Math.min(120, winSec)) : 30;
+            lim = isFinite(lim) ? Math.max(10, Math.min(50, lim)) : 10;
+            const windowMsCfg = winSec * 1000;
+            const recentResp = await new Promise((resolve) => {
+              chrome.runtime.sendMessage({
+                action: 'GET_RECENT_LOGS',
+                tabId,
+                windowMs: windowMsCfg,
+                limit: lim,
+                domainFilter
+              }, resolve);
+            });
+            if (recentResp && recentResp.success && Array.isArray(recentResp.data?.logs) && recentResp.data.logs.length > 0) {
+              const lines = this.formatUnifiedLogs(recentResp.data.logs);
+              if (lines && lines.length > 0) {
+                bugData.attachments = bugData.attachments || [];
+                bugData.attachments.push({ type: 'text', name: 'console-logs-recent.txt', data: lines.join('\n') });
+              }
+            }
+          } catch (_) {}
+        }
+      } catch (_) {}
+
+      const evResp = await this.sendToEasyVista(bugData);
+      const evId = evResp?.ticketId || evResp?.data?.ticketId || evResp?.data?.id;
+      const evUrl = evResp?.ticketUrl || evResp?.data?.ticketUrl;
+      if (!evId && !evUrl) throw new Error('Failed to get EasyVista ticket info');
+
+      const tabs = await new Promise((resolve) => {
+        chrome.tabs.query({active: true, currentWindow: true}, resolve);
+      });
+      if (tabs.length === 0) throw new Error('Could not get the current tab');
+      const tabId = tabs[0].id;
+      const key = `ai-reports-${tabId}`;
+      chrome.storage.local.get([key], (result) => {
+        const aiReports = result[key] || [];
+        const reportIndex = aiReports.findIndex(r => r.createdAt === report.createdAt);
+        if (reportIndex !== -1) {
+          aiReports[reportIndex].easyvistaId = evId || null;
+          aiReports[reportIndex].easyvistaUrl = evUrl || null;
+          aiReports[reportIndex].easyvistaAttempted = true;
+          aiReports[reportIndex].easyvistaSuccess = true;
+          aiReports[reportIndex].easyvistaSentAt = new Date().toISOString();
+          chrome.storage.local.set({ [key]: aiReports }, () => {
+            this.loadBugHistory();
+            this.updateHistoryStatus(`AI report sent to EasyVista${evId ? ': ' + evId : ''}`, 'success');
+          });
+        } else {
+          throw new Error('Report not found in storage');
+        }
+      });
+    } catch (error) {
+      console.error('Error sending AI report to EasyVista:', error);
+      const tabs = await new Promise((resolve) => {
+        chrome.tabs.query({active: true, currentWindow: true}, resolve);
+      });
+      if (tabs.length > 0) {
+        const tabId = tabs[0].id;
+        const key = `ai-reports-${tabId}`;
+        chrome.storage.local.get([key], (result) => {
+          const aiReports = result[key] || [];
+          const reportIndex = aiReports.findIndex(r => r.createdAt === report.createdAt);
+          if (reportIndex !== -1) {
+            aiReports[reportIndex].easyvistaAttempted = true;
+            aiReports[reportIndex].easyvistaSuccess = false;
+            aiReports[reportIndex].easyvistaError = error.message;
+            aiReports[reportIndex].easyvistaSentAt = new Date().toISOString();
+            chrome.storage.local.set({ [key]: aiReports }, () => {
+              this.updateHistoryStatus(`Error sending to EasyVista: ${error.message}`, 'error');
+            });
+          }
+        });
+      }
+    }
+  }
+
   openSettings() {
     // Open settings page in a new tab
     chrome.tabs.create({ url: chrome.runtime.getURL('src/ui/settings.html') });
@@ -2651,9 +3054,14 @@ class BugSpotter {
 
   async loadPriorityOptions() {
     try {
-      // Carregando opções de prioridade - silenciado
-      const result = await chrome.storage.local.get(['settings']);
-      // Storage completo - silenciado
+      // Carregar de storage se disponível; caso contrário, usar cache/default
+      let prioritiesSource = null;
+      if (this.isExtensionContext()) {
+        const result = await chrome.storage.local.get(['settings']);
+        prioritiesSource = result.settings?.jira?.priorities || null;
+      } else {
+        prioritiesSource = this.cachedSettings?.jira?.priorities || null;
+      }
       
       const defaultPriorities = {
         'highest': 'Highest',
@@ -2663,7 +3071,7 @@ class BugSpotter {
         'lowest': 'Lowest'
       };
       
-      const priorities = result.settings?.jira?.priorities || defaultPriorities;
+      const priorities = prioritiesSource || defaultPriorities;
       // Prioridades a serem usadas - silenciado
       
       const prioritySelect = document.getElementById('priority');
@@ -2718,6 +3126,9 @@ class BugSpotter {
   // Métodos para gerenciamento de estado de gravação
   async checkRecordingState() {
     try {
+      if (!this.isExtensionContext()) {
+        return;
+      }
       const response = await chrome.runtime.sendMessage({ action: 'GET_RECORDING_STATE' });
       if (response && response.success && response.state && response.state.isRecording) {
         console.log('[Popup] Ongoing recording detected, restoring state...');
@@ -2988,6 +3399,10 @@ class BugSpotter {
     console.log('[Popup] Message received from background:', message);
     
     switch (message.type) {
+      case 'AI_REPORT_STORED':
+        // Atualizar imediatamente o histórico ao armazenar novo relatório AI
+        this.loadBugHistory();
+        break;
       case 'VIDEO_ATTACHED':
         this.handleVideoAttached(message);
         break;

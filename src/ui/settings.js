@@ -1,6 +1,7 @@
 class BugSpotterSettings {
   constructor() {
     this.defaultSettings = {
+      preferredTarget: 'jira',
       jira: {
         enabled: false,
         baseUrl: 'https://jorgealijo.atlassian.net',
@@ -15,6 +16,11 @@ class BugSpotterSettings {
           low: 'Low',
           lowest: 'Lowest'
         }
+      },
+      easyvista: {
+        enabled: false,
+        baseUrl: '',
+        apiKey: ''
       },
       capture: {
         autoCaptureLogs: true,
@@ -98,6 +104,14 @@ class BugSpotterSettings {
     document.getElementById('jiraForm').addEventListener('submit', (e) => this.saveJiraSettings(e));
     document.getElementById('jiraEnabled').addEventListener('change', () => this.toggleJiraConfig());
     document.getElementById('testJiraConnection').addEventListener('click', () => this.testJiraConnection());
+
+    // EasyVista form
+    const evForm = document.getElementById('easyvistaForm');
+    if (evForm) evForm.addEventListener('submit', (e) => this.saveEasyVistaSettings(e));
+    const evEnabled = document.getElementById('easyvistaEnabled');
+    if (evEnabled) evEnabled.addEventListener('change', () => this.toggleEasyVistaConfig());
+    const evTestBtn = document.getElementById('testEasyVistaConnection');
+    if (evTestBtn) evTestBtn.addEventListener('click', () => this.testEasyVistaConnection());
     
     // 🆕 Monitorar mudanças nos campos do Jira para atualizar estado das prioridades
     ['jiraUrl', 'jiraEmail', 'jiraApiToken', 'jiraProjectKey'].forEach(fieldId => {
@@ -151,6 +165,22 @@ class BugSpotterSettings {
     document.getElementById('exportData').addEventListener('click', () => this.exportData());
     document.getElementById('importData').addEventListener('click', () => this.importData());
     document.getElementById('clearData').addEventListener('click', () => this.clearData());
+
+    // Submission preferences
+    const preferredTargetEl = document.getElementById('preferredTarget');
+    if (preferredTargetEl) {
+      preferredTargetEl.addEventListener('change', async (e) => {
+        const value = e.target.value;
+        if (!['jira', 'easyvista'].includes(value)) return;
+        this.settings.preferredTarget = value;
+        try {
+          await this.saveSettings();
+          this.showStatus('✅ Preferred target saved!', 'success');
+        } catch (err) {
+          this.showStatus('❌ Error saving preferred target', 'error');
+        }
+      });
+    }
   }
 
   deepMerge(target, source) {
@@ -223,6 +253,14 @@ class BugSpotterSettings {
     // Load priority settings
     this.loadPriorityUI();
 
+    // EasyVista settings
+    const evEnabled = document.getElementById('easyvistaEnabled');
+    if (evEnabled) evEnabled.checked = this.settings.easyvista.enabled;
+    const evUrl = document.getElementById('easyvistaUrl');
+    if (evUrl) evUrl.value = this.settings.easyvista.baseUrl || '';
+    const evApiKey = document.getElementById('easyvistaApiKey');
+    if (evApiKey) evApiKey.value = this.settings.easyvista.apiKey || '';
+
     // Capture settings
     document.getElementById('autoCaptureLogs').checked = this.settings.capture.autoCaptureLogs;
     document.getElementById('screenshotFormat').value = this.settings.capture.screenshotFormat;
@@ -259,8 +297,15 @@ class BugSpotterSettings {
     document.getElementById('errorThreshold').value = this.settings.notifications.errorThreshold;
     document.getElementById('notificationSound').checked = this.settings.notifications.sound;
 
+    // Submission preferences
+    const preferredTargetEl = document.getElementById('preferredTarget');
+    if (preferredTargetEl) {
+      preferredTargetEl.value = this.settings.preferredTarget || 'jira';
+    }
+
     // Update config visibility
     this.toggleJiraConfig();
+    this.toggleEasyVistaConfig();
     this.toggleAIConfig();
     this.toggleNotificationsConfig();
     this.updateAPIKeyHelp();
@@ -279,6 +324,17 @@ class BugSpotterSettings {
     
     // Atualizar estado dos campos de prioridade quando Jira integration é alterado
     this.updatePriorityFieldsState();
+  }
+
+  toggleEasyVistaConfig() {
+    const enabled = document.getElementById('easyvistaEnabled')?.checked;
+    const config = document.getElementById('easyvistaConfig');
+    if (!config) return;
+    if (enabled) {
+      config.classList.remove('disabled');
+    } else {
+      config.classList.add('disabled');
+    }
   }
 
   async saveJiraSettings(event) {
@@ -380,6 +436,48 @@ class BugSpotterSettings {
         button.innerHTML = originalHTML;
         button.disabled = false;
       }, 1000);
+    }
+  }
+
+  async saveEasyVistaSettings(event) {
+    event.preventDefault();
+
+    const button = event.target.querySelector('.btn-save-config');
+    const originalHTML = button.innerHTML;
+
+    const formData = {
+      enabled: document.getElementById('easyvistaEnabled').checked,
+      baseUrl: document.getElementById('easyvistaUrl').value.trim(),
+      apiKey: document.getElementById('easyvistaApiKey').value.trim()
+    };
+
+    // Validação básica
+    if (formData.enabled) {
+      if (!formData.baseUrl || !/^https?:\/\/.+/.test(formData.baseUrl)) {
+        this.showStatus('❌ EasyVista URL must be a valid http/https URL', 'error');
+        return;
+      }
+      if (!formData.apiKey || formData.apiKey.length < 8) {
+        this.showStatus('❌ API key must be at least 8 characters long', 'error');
+        return;
+      }
+    }
+
+    button.innerHTML = '<span class="material-icons">sync</span>Saving...';
+    button.disabled = true;
+
+    try {
+      this.settings.easyvista = { ...formData };
+      await this.saveSettings();
+      this.showStatus('✅ EasyVista settings saved successfully!', 'success');
+    } catch (error) {
+      console.error('Error saving EasyVista settings:', error);
+      this.showStatus('❌ Error saving EasyVista settings', 'error');
+    } finally {
+      setTimeout(() => {
+        button.innerHTML = originalHTML;
+        button.disabled = false;
+      }, 800);
     }
   }
 
@@ -578,6 +676,47 @@ class BugSpotterSettings {
         button.innerHTML = originalHTML;
         button.disabled = false;
       }, 1000);
+    }
+  }
+
+  async testEasyVistaConnection() {
+    const button = document.getElementById('testEasyVistaConnection');
+    if (!button) return;
+    const originalHTML = button.innerHTML;
+
+    // Validar campos
+    const url = document.getElementById('easyvistaUrl')?.value?.trim();
+    const apiKey = document.getElementById('easyvistaApiKey')?.value?.trim();
+    if (!url || !/^https?:\/\/.+/.test(url)) {
+      this.showStatus('❌ Please provide a valid EasyVista URL', 'error');
+      return;
+    }
+    if (!apiKey || apiKey.length < 8) {
+      this.showStatus('❌ Please provide a valid API key', 'error');
+      return;
+    }
+
+    button.innerHTML = '<span class="material-icons">sync</span>Testing connection...';
+    button.disabled = true;
+
+    try {
+      const response = await chrome.runtime.sendMessage({
+        action: 'TEST_EASYVISTA_CONNECTION',
+        config: { baseUrl: url, apiKey }
+      });
+
+      if (response?.success) {
+        this.showStatus(`✅ ${response.data?.message || 'EasyVista configuration validated'}`, 'success');
+      } else {
+        throw new Error(response?.error || 'Unknown error');
+      }
+    } catch (error) {
+      this.showStatus('❌ Error testing EasyVista connection: ' + error.message, 'error');
+    } finally {
+      setTimeout(() => {
+        button.innerHTML = originalHTML;
+        button.disabled = false;
+      }, 800);
     }
   }
 
