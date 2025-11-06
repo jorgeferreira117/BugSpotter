@@ -214,11 +214,11 @@ class BugSpotterBackground {
       }
     });
     
-    // Limpar logs antigos periodicamente com referência armazenada
-    this.cleanupInterval = setInterval(() => {
-      this.cleanupOldLogs();
-      this.optimizeStorage();
-    }, 5 * 60 * 1000); // A cada 5 minutos
+      // Limpar logs antigos periodicamente com referência armazenada
+      this.cleanupInterval = setInterval(() => {
+        this.cleanupOldLogs();
+        this.optimizeStorage();
+      }, 5 * 60 * 1000); // A cada 5 minutos
     
     // 🆕 Listeners para navegação - preservar estado de gravação
     this.setupNavigationListeners();
@@ -1546,6 +1546,16 @@ class BugSpotterBackground {
           }
           break;
 
+        case 'ADD_JIRA_COMMENT':
+          try {
+            const { issueKey, body } = message;
+            const result = await this.addCommentToJiraIssue(issueKey, body);
+            sendResponse({ success: true, data: result });
+          } catch (error) {
+            sendResponse({ success: false, error: error.message });
+          }
+          break;
+
         case 'TEST_JIRA_CONNECTION':
           try {
             const jiraConfig = message.config;
@@ -2119,6 +2129,40 @@ class BugSpotterBackground {
         message: error.message,
         stack: error.stack
       });
+      throw error;
+    }
+  }
+
+  async addCommentToJiraIssue(issueKey, commentBody) {
+    try {
+      const settings = await this.getSettings();
+      if (!settings.jira || !settings.jira.enabled) {
+        throw new Error('Jira integration not configured');
+      }
+      if (!issueKey || typeof issueKey !== 'string') {
+        throw new Error('Invalid issue key');
+      }
+      const response = await fetch(`${settings.jira.baseUrl}/rest/api/2/issue/${issueKey}/comment`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Basic ${btoa(`${settings.jira.email}:${settings.jira.apiToken}`)}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ body: commentBody })
+      });
+      if (!response.ok) {
+        let details = '';
+        try { details = ` - ${await response.text()}`; } catch (_) {}
+        throw new Error(`Jira comment API error: HTTP ${response.status} ${response.statusText}${details.substring(0, 140)}`);
+      }
+      try {
+        const data = await response.json();
+        return data;
+      } catch (_) {
+        return { ok: true };
+      }
+    } catch (error) {
+      this.errorHandler.handleError(error, 'addCommentToJiraIssue');
       throw error;
     }
   }

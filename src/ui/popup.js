@@ -1500,6 +1500,19 @@ class BugSpotter {
               }
             }
           }
+          // Se Jira foi criado primeiro, adicionar comentário com link do EasyVista
+          if (order[0] === 'jira' && bugData.jiraKey && (bugData.easyvistaUrl || bugData.easyvistaId)) {
+            const commentLines = [
+              '*Linked Tickets:*',
+              bugData.crossLink?.easyvistaUrl ? `EasyVista: ${bugData.crossLink.easyvistaUrl}` : (bugData.crossLink?.easyvistaId ? `EasyVista ID: ${bugData.crossLink.easyvistaId}` : null)
+            ].filter(Boolean);
+            const commentBody = commentLines.join('\n');
+            try {
+              await this.addJiraComment(bugData.jiraKey, commentBody);
+            } catch (commentError) {
+              console.warn('Falha ao adicionar comentário de cross-link no Jira:', commentError);
+            }
+          }
           const summary = [
             bugData.jiraKey ? `Jira: ${bugData.jiraKey}` : null,
             bugData.easyvistaId ? `EasyVista: ${bugData.easyvistaId}` : null
@@ -1567,6 +1580,30 @@ class BugSpotter {
         submitBtn.classList.remove('loading');
       }, 1000); // Small delay to show result
     }
+  }
+
+  async addJiraComment(issueKey, body) {
+    return new Promise((resolve, reject) => {
+      chrome.runtime.sendMessage({
+        action: 'ADD_JIRA_COMMENT',
+        issueKey,
+        body
+      }, (response) => {
+        if (chrome.runtime.lastError) {
+          reject(new Error(`Communication error: ${chrome.runtime.lastError.message}`));
+          return;
+        }
+        if (!response) {
+          reject(new Error('No response received from background script'));
+          return;
+        }
+        if (response.success === false) {
+          reject(new Error(response.error || 'Unknown error'));
+          return;
+        }
+        resolve(response.data || { ok: true });
+      });
+    });
   }
 
   async getSettings() {
