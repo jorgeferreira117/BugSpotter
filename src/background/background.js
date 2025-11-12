@@ -42,6 +42,10 @@ class BugSpotterBackground {
     // 🆕 Sistema de persistência de estado de gravação
     this.recordingStates = new Map(); // Armazena estado de gravação por tabId
     this.recordingStorageKey = 'activeRecordings';
+
+    // 🆕 Interações do usuário por aba (para aprimoramento de IA)
+    this.userInteractions = new Map();
+    this.maxInteractionsPerTab = 300; // limite razoável para manter histórico recente
     
     // Inicializar módulos de forma compatível com Manifest V3
     this.initializeModules();
@@ -280,6 +284,21 @@ class BugSpotterBackground {
           console.debug('[Background] Erro ao restaurar estado de gravação:', error);
         }
       }, 1000);
+    }
+
+    // Registrar evento sintético de navegação nas interações do usuário
+    try {
+      let buf = this.userInteractions.get(tabId);
+      if (!buf) {
+        buf = [];
+        this.userInteractions.set(tabId, buf);
+      }
+      buf.push({ kind: 'navigate', ts: Date.now(), pageUrl: url, url, tabId });
+      if (buf.length > this.maxInteractionsPerTab) {
+        buf.splice(0, buf.length - this.maxInteractionsPerTab);
+      }
+    } catch (e) {
+      // Falha silenciosa ao registrar navegação
     }
   }
   
@@ -695,6 +714,10 @@ class BugSpotterBackground {
                   || (persistentData?.networkRequests || []).find(req => req.requestId === params.requestId);
                 if (originalReq) {
                   detailedErrorLog.requestHeaders = originalReq.requestHeaders || originalReq.headers || {};
+                  // Incluir método HTTP do request original
+                  if (originalReq.method) {
+                    detailedErrorLog.method = originalReq.method;
+                  }
                 }
               } catch (_) {}
 
@@ -1351,6 +1374,49 @@ class BugSpotterBackground {
       }
       
       switch (message.action) {
+        case 'LOG_USER_INTERACTION': {
+          try {
+            const tabId = sender.tab?.id;
+            if (!tabId) {
+              throw new Error('No tab ID available');
+            }
+            const item = message.data || {};
+            let buf = this.userInteractions.get(tabId);
+            if (!buf) {
+              buf = [];
+              this.userInteractions.set(tabId, buf);
+            }
+            buf.push({ ...item, tabId });
+            if (buf.length > this.maxInteractionsPerTab) {
+              buf.splice(0, buf.length - this.maxInteractionsPerTab);
+            }
+            sendResponse({ success: true });
+          } catch (error) {
+            sendResponse({ success: false, error: error.message });
+          }
+          break;
+        }
+
+        case 'GET_USER_INTERACTIONS': {
+          try {
+            const tabId = message.tabId || sender.tab?.id;
+            if (!tabId) {
+              throw new Error('No tab ID provided');
+            }
+            const limit = typeof message.limit === 'number' ? message.limit : 100;
+            const windowMs = typeof message.windowMs === 'number' ? message.windowMs : 15 * 60 * 1000;
+            const now = Date.now();
+            const list = (this.userInteractions.get(tabId) || []).filter(it => {
+              const t = new Date(it.timestamp || now).getTime();
+              return now - t <= windowMs;
+            });
+            const sliced = list.slice(Math.max(0, list.length - limit));
+            sendResponse({ success: true, data: sliced });
+          } catch (error) {
+            sendResponse({ success: false, error: error.message });
+          }
+          break;
+        }
         case 'CAPTURE_SCREENSHOT':
           try {
             const tabId = sender.tab?.id;
@@ -1575,6 +1641,47 @@ class BugSpotterBackground {
             sendResponse({ success: false, error: error.message });
           }
           break;
+
+        case 'ENHANCE_REPORT_WITH_AI': {
+          try {
+            const tabId = sender.tab?.id || message.tabId;
+            if (!tabId) {
+              throw new Error('No tab ID provided');
+            }
+            if (!this.aiService || !this.aiServiceReady || !this.aiService.isConfigured()) {
+              throw new Error('AI service not configured');
+            }
+            const fields = message.fields || {};
+            const interactions = (this.userInteractions.get(tabId) || []).slice(-150);
+            let context = {};
+            try {
+              const tab = await chrome.tabs.get(tabId);
+              context.pageUrl = tab.url;
+              context.pageTitle = tab.title;
+            } catch (e) {
+              // ignore
+            }
+            const suggestions = await this.aiService.enhanceBugFields({ fields, interactions, context });
+            sendResponse({ success: true, data: suggestions });
+          } catch (error) {
+            sendResponse({ success: false, error: error.message });
+          }
+          break;
+        }
+
+        case 'MIGRATE_AI_REPORT_STEPS': {
+          try {
+            const tabId = sender.tab?.id || message.tabId;
+            if (!tabId) {
+              throw new Error('No tab ID provided');
+            }
+            const updatedCount = await this.migrateAIReportsWithSteps(tabId);
+            sendResponse({ success: true, data: { updatedCount } });
+          } catch (error) {
+            sendResponse({ success: false, error: error.message });
+          }
+          break;
+        }
 
         case 'VALIDATE_INPUT':
           try {
@@ -2355,6 +2462,7 @@ ${bugData.actualBehavior || 'N/A'}
 
 *Original Error:*
 Status: ${statusLine || 'N/A'}
+Method: ${bugData.originalError.method || 'N/A'}
 
 URL: ${bugData.originalError.url || 'N/A'}
 
@@ -3280,7 +3388,13 @@ ${lines.join('\n')}`;
       if (recentLogs.length > 0) {
         context.recentLogs = recentLogs;
       }
-      
+
+      // 🆕 Incluir interações do usuário recentes no contexto
+      const interactions = this.userInteractions.get(tabId) || [];
+      if (interactions.length > 0) {
+        context.userInteractions = interactions.slice(-100);
+      }
+
       return context;
     } catch (error) {
       console.error('[Background] Erro ao coletar contexto:', error);
@@ -3332,8 +3446,15 @@ ${lines.join('\n')}`;
         severity: aiReport.severity,
         category: aiReport.category,
         suggestions: aiReport.suggestions,
+        // Incluir passos e comportamentos quando disponíveis
+        stepsToReproduce: Array.isArray(aiReport.stepsToReproduce)
+          ? aiReport.stepsToReproduce
+          : (Array.isArray(aiReport.steps) ? aiReport.steps : []),
+        expectedBehavior: aiReport.expectedBehavior,
+        actualBehavior: aiReport.actualBehavior,
         originalError: {
           url: errorLog.url,
+          method: errorLog.method,
           status: errorLog.status,
           statusText: errorLog.statusText,
           timestamp: errorLog.timestamp
@@ -3342,6 +3463,14 @@ ${lines.join('\n')}`;
         createdAt: new Date().toISOString(),
         source: 'ai-auto-generated'
       };
+
+      // Incluir Page URL para exibição correta no preview
+      try {
+        const tab = await chrome.tabs.get(tabId);
+        reportData.pageUrl = tab?.url || errorLog.url;
+      } catch (_) {
+        reportData.pageUrl = errorLog.url;
+      }
       
       // Armazenar no storage
       const key = `ai-reports-${tabId}`;
@@ -3371,6 +3500,75 @@ ${lines.join('\n')}`;
       // Relatório AI armazenado - silenciado
     } catch (error) {
       console.error('[Background] Erro ao armazenar relatório AI:', error);
+    }
+  }
+
+  /**
+   * Migra relatórios AI existentes que não possuem steps, gerando Steps to Reproduce
+   * @param {number} tabId
+   * @returns {Promise<number>} quantidade atualizada
+   */
+  async migrateAIReportsWithSteps(tabId) {
+    try {
+      const key = `ai-reports-${tabId}`;
+      const existingReports = await chrome.storage.local.get(key);
+      const aiReports = existingReports[key] || [];
+      if (aiReports.length === 0) return 0;
+
+      // Coletar contexto
+      let context = {};
+      try {
+        const tab = await chrome.tabs.get(tabId);
+        context.pageUrl = tab.url;
+        context.pageTitle = tab.title;
+      } catch (_) {}
+      const interactions = (this.userInteractions.get(tabId) || []).slice(-150);
+
+      let updated = 0;
+      for (let i = 0; i < aiReports.length; i++) {
+        const report = aiReports[i];
+        const hasSteps = Array.isArray(report.stepsToReproduce) && report.stepsToReproduce.length > 0;
+        if (hasSteps) continue;
+
+        const fields = {
+          title: report.title || '',
+          description: report.description || '',
+          steps: Array.isArray(report.steps) ? report.steps : [],
+          expectedBehavior: report.expectedBehavior || '',
+          actualBehavior: report.actualBehavior || ''
+        };
+
+        let suggestions;
+        try {
+          suggestions = await this.aiService.enhanceBugFields({ fields, interactions, context });
+        } catch (_) {
+          suggestions = null;
+        }
+
+        if (suggestions) {
+          // Atualizar relatório com novos passos
+          const newSteps = Array.isArray(suggestions.stepsToReproduce) ? suggestions.stepsToReproduce : [];
+          const expected = suggestions.expectedBehavior || report.expectedBehavior;
+          const actual = suggestions.actualBehavior || report.actualBehavior;
+          if (newSteps.length > 0 || expected || actual) {
+            aiReports[i] = {
+              ...report,
+              stepsToReproduce: newSteps.length > 0 ? newSteps : report.stepsToReproduce,
+              expectedBehavior: expected,
+              actualBehavior: actual
+            };
+            updated++;
+          }
+        }
+      }
+
+      if (updated > 0) {
+        await chrome.storage.local.set({ [key]: aiReports });
+      }
+      return updated;
+    } catch (error) {
+      console.error('[Background] Erro na migração de AI reports:', error);
+      return 0;
     }
   }
   

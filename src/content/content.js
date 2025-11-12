@@ -31,6 +31,7 @@ if (typeof window.bugSpotterContentInitialized === 'undefined') {
       this.setupErrorHandling();
       this.injectPageScript();
       this.startContinuousCapture(); // Nova função
+      this.setupInteractionCapture(); // Captura de cliques/inputs do utilizador
     }
 
     interceptConsoleLogs() {
@@ -252,6 +253,108 @@ if (typeof window.bugSpotterContentInitialized === 'undefined') {
       };
       document.addEventListener('visibilitychange', this.visibilityChangeHandler);
     }
+
+    // 🆕 Captura de interações do utilizador (cliques, inputs, submits)
+    setupInteractionCapture() {
+      const captureElementPath = (el) => {
+        try {
+          const path = [];
+          let node = el;
+          while (node && node.nodeType === Node.ELEMENT_NODE && path.length < 10) {
+            let selector = node.tagName.toLowerCase();
+            if (node.id) selector += `#${node.id}`;
+            if (node.className && typeof node.className === 'string') {
+              const cls = node.className.trim().split(/\s+/).slice(0, 3).join('.');
+              if (cls) selector += `.${cls}`;
+            }
+            path.unshift(selector);
+            node = node.parentElement;
+          }
+          return path.join(' > ');
+        } catch (_) {
+          return 'unknown-path';
+        }
+      };
+
+      const sanitizeValue = (value, type) => {
+        try {
+          if (!value) return '';
+          if ((type || '').toLowerCase() === 'password') return '***';
+          const str = String(value);
+          return str.length > 120 ? str.slice(0, 120) + '…' : str;
+        } catch (_) {
+          return '';
+        }
+      };
+
+      const recordInteraction = (kind, details) => {
+        const item = {
+          kind,
+          ts: Date.now(),
+          pageUrl: location.href,
+          ...details
+        };
+        // Buffer local para robustez
+        if (Array.isArray(this.interactionBuffer)) {
+          this.interactionBuffer.push(item);
+          if (this.interactionBuffer.length > (this.maxInteractions || 200)) {
+            this.interactionBuffer.shift();
+          }
+        }
+        // Enviar para background
+        try {
+          chrome.runtime.sendMessage({ action: 'LOG_USER_INTERACTION', data: item });
+        } catch (_) {}
+      };
+
+      // Clique
+      document.addEventListener('click', (e) => {
+        const target = e.target;
+        const rect = target && target.getBoundingClientRect ? target.getBoundingClientRect() : null;
+        const details = {
+          tag: target?.tagName?.toLowerCase() || 'unknown',
+          id: target?.id || '',
+          classes: target?.className || '',
+          text: sanitizeValue(target?.innerText || target?.value || '', target?.type),
+          path: captureElementPath(target),
+          x: e.clientX,
+          y: e.clientY,
+          bbox: rect ? { x: Math.round(rect.x), y: Math.round(rect.y), w: Math.round(rect.width), h: Math.round(rect.height) } : null
+        };
+        recordInteraction('click', details);
+      }, true);
+
+      // Inputs (input/change)
+      const inputHandler = (e) => {
+        const el = e.target;
+        const type = (el?.type || el?.tagName || '').toLowerCase();
+        const details = {
+          tag: el?.tagName?.toLowerCase() || 'unknown',
+          id: el?.id || '',
+          classes: el?.className || '',
+          name: el?.name || '',
+          placeholder: el?.placeholder || '',
+          path: captureElementPath(el),
+          value: sanitizeValue(el?.value || '', type),
+          inputType: type
+        };
+        recordInteraction(e.type === 'change' ? 'change' : 'input', details);
+      };
+      document.addEventListener('input', inputHandler, true);
+      document.addEventListener('change', inputHandler, true);
+
+      // Submit de formulários
+      document.addEventListener('submit', (e) => {
+        const form = e.target;
+        const details = {
+          tag: 'form',
+          id: form?.id || '',
+          classes: form?.className || '',
+          path: captureElementPath(form)
+        };
+        recordInteraction('submit', details);
+      }, true);
+    }
     
     // Método de cleanup centralizado
     cleanup() {
@@ -291,6 +394,12 @@ if (typeof window.bugSpotterContentInitialized === 'undefined') {
         this.saveLogsToStorage().catch(error => {
           console.warn('Erro ao salvar logs durante cleanup:', error.message);
         });
+        // Persistir interações recentes para referência
+        try {
+          const key = 'bugSpotter_interactions_snapshot';
+          const payload = JSON.stringify({ ts: Date.now(), url: location.href, items: this.interactionBuffer || [] });
+          localStorage.setItem(key, payload);
+        } catch (_) {}
       }
     }
     

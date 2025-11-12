@@ -440,12 +440,12 @@ section:hover {
 .form-textarea,
 .form-select {
   padding: 8px 10px;
-  border: 1px solid #e5e7eb;
+  border: 1px solid #e9ecef;
   border-radius: 6px;
   font-size: 13px;
   font-family: inherit;
-  transition: border-color 0.2s ease;
-  background: #ffffff;
+  transition: border-color 0.2s ease, background-color 0.2s ease;
+  background: #f8f9fa;
   color: #333333;
 }
 
@@ -461,12 +461,56 @@ section:hover {
   outline: none;
   border-color: #002bff;
   box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+  background: #f8f9fa;
+}
+
+/* Uniformizar selects com a dropbox de Logs (split-menu) */
+.form-select {
+  background: #ffffff; /* igual ao .split-menu */
+  border-color: #e5e7eb; /* igual ao .split-menu */
+  -webkit-appearance: none;
+  appearance: none;
+}
+.form-select:hover {
+  background: #f3f4f6; /* igual ao hover dos itens do split-menu */
+}
+.form-select:focus {
   background: #ffffff;
+}
+
+/* Forçar estilo específico nos dropdowns Priority e Environment, incluindo caret */
+#priority.form-select,
+#environment.form-select {
+  background-color: #ffffff !important;
+  border-color: #e5e7eb !important;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' fill='%236b7280' viewBox='0 0 24 24'><path d='M7 10l5 5 5-5z'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  background-size: 16px 16px;
+  padding-right: 32px;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
+}
+
+#priority.form-select:hover,
+#environment.form-select:hover {
+  background-color: #f3f4f6 !important;
+}
+
+#priority.form-select:focus,
+#environment.form-select:focus {
+  background-color: #ffffff !important;
 }
 
 .form-textarea {
   resize: vertical;
   min-height: 60px;
+}
+
+/* Dar respiro ao botão Enhance junto ao campo Steps */
+.inline-actions {
+  margin-top: 10px;
 }
 
 /* Anexos */
@@ -480,6 +524,7 @@ section:hover {
   padding: 8px;
   min-height: 40px;
   background: #f9fafb;
+  overflow-x: hidden; /* evitar que o tamanho do ficheiro escape horizontalmente */
 }
 
 .no-attachments {
@@ -500,6 +545,7 @@ section:hover {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 8px;
   padding: 6px 8px;
   background: white;
   border: 1px solid #e5e7eb;
@@ -525,6 +571,7 @@ section:hover {
   align-items: center;
   gap: 6px;
   flex: 1;
+  min-width: 0; /* permite ellipsis no nome sem empurrar o tamanho para fora */
 }
 
 .attachment-icon {
@@ -542,11 +589,33 @@ section:hover {
   font-size: 12px;
   font-weight: 500;
   color: #374151;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis; /* nomes longos não quebram o layout */
 }
 
 .attachment-size {
   font-size: 10px;
   color: #9ca3af;
+  white-space: nowrap; /* manter tamanho numa linha */
+}
+
+/* Compatibilidade com itens de anexos renderizados como spans simples (AI report) */
+.attachment-item > span.material-icons {
+  flex-shrink: 0;
+}
+
+.attachment-item > span.attachment-size {
+  flex-shrink: 0;
+  margin-left: 8px;
+}
+
+.attachment-item > span:not(.attachment-size):not(.material-icons) {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .remove-attachment {
@@ -1278,8 +1347,8 @@ section:hover {
 .ai-report-modal-content {
   background: white;
   border-radius: 12px;
-  padding: 20px;
-  max-width: 90%;
+  padding: 24px;
+  max-width: 95%;
   max-height: 80%;
   overflow-y: auto;
   box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
@@ -1326,6 +1395,7 @@ section:hover {
   color: #374151;
   word-wrap: break-word;
   overflow-wrap: break-word;
+  padding: 0 12px;
 }
 
 /* Modal para relatórios manuais */
@@ -1345,8 +1415,8 @@ section:hover {
 .manual-report-modal-content {
   background: white;
   border-radius: 12px;
-  padding: 20px;
-  max-width: 90%;
+  padding: 24px;
+  max-width: 95%;
   max-height: 80%;
   overflow-y: auto;
   box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
@@ -1393,6 +1463,7 @@ section:hover {
   color: #374151;
   word-wrap: break-word;
   overflow-wrap: break-word;
+  padding: 0 12px;
 }
 
 .meta-item {
@@ -1452,7 +1523,15 @@ section:hover {
 .ai-report-modal-body h4 {
   font-size: 14px;
   font-weight: 600;
-  margin: 16px 0 8px 0;
+  margin: 8px 0 8px 0; /* espaçamento intermédio no topo */
+  color: #7c3aed;
+}
+
+/* Uniformizar títulos nas modais manuais */
+.manual-report-modal-body h4 {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 8px 0 8px 0; /* espaçamento intermédio no topo */
   color: #7c3aed;
 }
 
@@ -1483,6 +1562,18 @@ section:hover {
   overflow-wrap: break-word;
 }
 
+/* Afastar conteúdo das laterais dentro de cada seção nas modais */
+.ai-report-modal-body .report-section,
+.manual-report-modal-body .report-section {
+  padding: 12px 16px;
+}
+
+/* Dar respiro ao texto no topo das seções */
+.ai-report-modal-body .report-section p,
+.manual-report-modal-body .report-section p {
+  margin-top: 4px;
+}
+
 .ai-report-modal-body .error-details p,
 .manual-report-modal-body .error-details p,
 .ai-report-modal-body .report-section p,
@@ -1506,6 +1597,25 @@ section:hover {
   word-break: break-word;
   overflow-wrap: anywhere;
   white-space: normal;
+}
+
+/* Tipografia consistente dentro da modal manual */
+.manual-report-modal-body .meta-item {
+  font-size: 12px;
+}
+
+/* Tipografia consistente dentro da modal AI */
+.ai-report-modal-body .meta-item {
+  font-size: 12px;
+}
+
+/* Truncamento elegante para URLs muito longas nos metadados */
+.ai-report-modal-body .meta-url,
+.manual-report-modal-body .meta-url {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: block;
 }
 
 /* Seção manual de relatórios */
@@ -1690,7 +1800,7 @@ section:hover {
   font-size: 14px;
   font-weight: 600;
   margin-bottom: 8px;
-  color: #7c3aed;
+  color: #2563eb; /* azul do Send Report */
   display: flex;
   align-items: center;
   gap: 6px;
@@ -1705,6 +1815,18 @@ section:hover {
   background: #f8fafc;
   border-radius: 8px;
   border: 1px solid #e2e8f0;
+  font-size: 12px; /* tipografia mais consistente com as demais seções */
+}
+
+/* Empilhar itens de metadados em linha única por item nas modais */
+.ai-report-modal-body .report-meta,
+.manual-report-modal-body .report-meta {
+  flex-direction: column;
+  /* expand colored background to align with modal content edges */
+  margin-left: -12px;
+  margin-right: -12px;
+  padding-left: 16px; /* keep inner content aligned with sections */
+  padding-right: 16px;
 }
 
 
@@ -1772,7 +1894,79 @@ section:hover {
   z-index: 2;
 }
 
+/* --- Overrides de largura e cantos para blocos com fundo colorido --- */
+/* Clipping nos cantos arredondados da modal, mantendo scroll vertical */
+.ai-report-modal-content,
+.manual-report-modal-content {
+  overflow: hidden;
+  overflow-y: auto;
+}
+
+/* Evitar scroll horizontal quando expandimos blocos dentro do body */
+.ai-report-modal-body,
+.manual-report-modal-body {
+  overflow-x: hidden;
+}
+
+/* Arredondamento consistente e largura visual ampliada nos metadados */
+.report-meta {
+  border-radius: 12px;
+}
+
+.ai-report-modal-body .report-meta,
+.manual-report-modal-body .report-meta {
+  background: #f8fafc; /* cinza leve para consistência com as outras secções */
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 10px 20px 12px 20px;
+  margin-left: -12px;
+  margin-right: -12px;
+  border-left: 3px solid #fa551e;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+.report-meta h4 {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 8px 0 8px 0; /* espaçamento intermédio para harmonizar com as outras secções */
+  color: #2563eb; /* azul do Send Report */
+  display: flex;
+  align-items: center;
+}
+
+/* Seções principais com fundo, cantos arredondados e largura ampliada */
+.ai-report-modal-body .report-section,
+.manual-report-modal-body .report-section {
+  background: #f8fafc; /* cinza leve para melhorar leitura */
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 10px 20px 12px 20px; /* topo ligeiramente ajustado */
+  margin-left: -12px; /* igual ao padding lateral do body para mostrar contornos */
+  margin-right: -12px;
+  border-left: 3px solid #fa551e; /* acento laranja igual ao botão de captura de vídeo */
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04); /* leve sombra de cartão */
+}
+
 .report-section {
   position: relative;
   z-index: 1;
 }
+
+/* Lista de passos numerada (AI e manual) */
+.steps-list {
+  list-style: decimal;
+  padding-left: 20px;
+  margin: 0;
+}
+
+.steps-list li {
+  margin-bottom: 4px;
+}
+
+/* Lista de passos manual sem numeração */
+.steps-list-manual {
+  list-style: none;
+  padding-left: 16px; /* leve recuo para legibilidade */
+}
+
+/* steps-preview removido da extensão */
