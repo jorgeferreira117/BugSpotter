@@ -21,7 +21,8 @@ class BugSpotterSettings {
       easyvista: {
         enabled: false,
         baseUrl: '',
-        apiKey: ''
+        apiKey: '',
+        catalogGuid: ''
       },
       capture: {
         autoCaptureLogs: true,
@@ -62,6 +63,8 @@ class BugSpotterSettings {
     this.updateUI();
     this.bindEvents();
     this.initTabs();
+    // Load performance metrics initially
+    this.loadPerformanceMetrics();
   }
 
   initTabs() {
@@ -97,6 +100,11 @@ class BugSpotterSettings {
       
       // Save active tab to localStorage
       localStorage.setItem('bugspotter-active-tab', tabName);
+
+      // Load metrics when switching to Metrics tab
+      if (tabName === 'metrics') {
+        this.loadPerformanceMetrics();
+      }
     }
   }
 
@@ -157,6 +165,12 @@ class BugSpotterSettings {
     document.getElementById('aiEnabled').addEventListener('change', () => this.toggleAIConfig());
     document.getElementById('testAiConnection').addEventListener('click', () => this.testAIConnection());
     document.getElementById('aiProvider').addEventListener('change', () => this.updateAPIKeyHelp());
+
+    // Performance metrics refresh
+    const refreshBtn = document.getElementById('refreshMetrics');
+    if (refreshBtn) {
+      refreshBtn.addEventListener('click', () => this.loadPerformanceMetrics());
+    }
     
     // Notifications settings
     document.getElementById('notificationsForm').addEventListener('change', () => this.saveNotificationSettings());
@@ -187,6 +201,8 @@ class BugSpotterSettings {
     if (postToBothEl) {
       postToBothEl.addEventListener('change', async (e) => {
         this.settings.postToBoth = !!e.target.checked;
+        const preferredTargetEl2 = document.getElementById('preferredTarget');
+        if (preferredTargetEl2) preferredTargetEl2.disabled = !!this.settings.postToBoth;
         try {
           await this.saveSettings();
           this.showStatus('✅ "Send to both" preference saved!', 'success');
@@ -255,6 +271,49 @@ class BugSpotterSettings {
     }
   }
 
+  async loadPerformanceMetrics() {
+    try {
+      if (typeof chrome === 'undefined' || !chrome.runtime || !chrome.runtime.sendMessage) {
+        return;
+      }
+      const res = await chrome.runtime.sendMessage({ action: 'GET_PERFORMANCE_STATS' });
+      if (!res || !res.success) {
+        return;
+      }
+      const stats = res.data || {};
+      this.renderMetricCard('jira', stats['jiraSubmission']);
+      this.renderMetricCard('ev', stats['easyvistaSubmission']);
+    } catch (e) {
+      // Silenciar erros na UI de métricas
+    }
+  }
+
+  renderMetricCard(prefix, stat) {
+    const setText = (id, value) => {
+      const el = document.getElementById(id);
+      if (el) el.textContent = value;
+    };
+    if (!stat) {
+      setText(`${prefix}Count`, '0');
+      setText(`${prefix}SuccessRate`, '0%');
+      setText(`${prefix}Avg`, '– ms');
+      setText(`${prefix}Median`, '– ms');
+      return;
+    }
+    const toMs = (num) => {
+      if (typeof num !== 'number' || Number.isNaN(num)) return '– ms';
+      return `${num.toFixed(0)} ms`;
+    };
+    const toPct = (num) => {
+      if (typeof num !== 'number' || Number.isNaN(num)) return '–%';
+      return `${num.toFixed(0)}%`;
+    };
+    setText(`${prefix}Count`, String(stat.totalOperations || 0));
+    setText(`${prefix}SuccessRate`, toPct(stat.successRate));
+    setText(`${prefix}Avg`, toMs(stat.avgDuration));
+    setText(`${prefix}Median`, toMs(stat.medianDuration));
+  }
+
   updateUI() {
     // Jira settings
     document.getElementById('jiraEnabled').checked = this.settings.jira.enabled;
@@ -274,6 +333,8 @@ class BugSpotterSettings {
     if (evUrl) evUrl.value = this.settings.easyvista.baseUrl || '';
     const evApiKey = document.getElementById('easyvistaApiKey');
     if (evApiKey) evApiKey.value = this.settings.easyvista.apiKey || '';
+    const evCatalog = document.getElementById('easyvistaCatalogGuid');
+    if (evCatalog) evCatalog.value = this.settings.easyvista.catalogGuid || '';
 
     // Capture settings
     document.getElementById('autoCaptureLogs').checked = this.settings.capture.autoCaptureLogs;
@@ -315,6 +376,7 @@ class BugSpotterSettings {
     const preferredTargetEl = document.getElementById('preferredTarget');
     if (preferredTargetEl) {
       preferredTargetEl.value = this.settings.preferredTarget || 'jira';
+      preferredTargetEl.disabled = !!this.settings.postToBoth;
     }
     const postToBothEl = document.getElementById('postToBoth');
     if (postToBothEl) {
@@ -466,7 +528,8 @@ class BugSpotterSettings {
     const formData = {
       enabled: document.getElementById('easyvistaEnabled').checked,
       baseUrl: document.getElementById('easyvistaUrl').value.trim(),
-      apiKey: document.getElementById('easyvistaApiKey').value.trim()
+      apiKey: document.getElementById('easyvistaApiKey').value.trim(),
+      catalogGuid: document.getElementById('easyvistaCatalogGuid')?.value?.trim() || ''
     };
 
     // Validação básica
@@ -705,6 +768,7 @@ class BugSpotterSettings {
     // Validar campos
     const url = document.getElementById('easyvistaUrl')?.value?.trim();
     const apiKey = document.getElementById('easyvistaApiKey')?.value?.trim();
+    const catalogGuid = document.getElementById('easyvistaCatalogGuid')?.value?.trim();
     if (!url || !/^https?:\/\/.+/.test(url)) {
       this.showStatus('❌ Please provide a valid EasyVista URL', 'error');
       return;
@@ -713,6 +777,14 @@ class BugSpotterSettings {
       this.showStatus('❌ Please provide a valid API key', 'error');
       return;
     }
+    if (catalogGuid) {
+      // Validação básica de GUID RFC 4122
+      const guidRegex = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$/;
+      if (!guidRegex.test(catalogGuid)) {
+        this.showStatus('❌ Catalog GUID format looks invalid (expected UUID v4)', 'error');
+        return;
+      }
+    }
 
     button.innerHTML = '<span class="material-icons">sync</span>Testing connection...';
     button.disabled = true;
@@ -720,7 +792,7 @@ class BugSpotterSettings {
     try {
       const response = await chrome.runtime.sendMessage({
         action: 'TEST_EASYVISTA_CONNECTION',
-        config: { baseUrl: url, apiKey }
+        config: { baseUrl: url, apiKey, catalogGuid }
       });
 
       if (response?.success) {

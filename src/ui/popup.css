@@ -52,6 +52,9 @@ label {
   padding: 16px 20px;
   border-radius: 0 0 12px 12px;
   margin-bottom: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
 }
 
 .logo-container {
@@ -68,6 +71,44 @@ label {
   font-size: 18px;
   font-weight: 600;
   margin: 0;
+}
+
+/* Ações no header (lado direito) */
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.header-action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px;
+  background: transparent;
+  color: #ffffff;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.2s ease, transform 0.2s ease, opacity 0.2s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.header-action-btn .material-icons {
+  font-size: 20px;
+}
+
+.header-action-btn:hover {
+  background: rgba(255, 255, 255, 0.15);
+  transform: translateY(-1px);
+}
+
+.header-action-btn:focus {
+  outline: none;
+}
+
+.header-action-btn:focus-visible {
+  background: rgba(255, 255, 255, 0.15);
 }
 
 /* Main content */
@@ -148,10 +189,12 @@ section:hover {
 
 /* Gradiente mais acentuado no fundo das seções */
 .capture-section {
-  background: linear-gradient(135deg, rgba(59, 130, 246, 0.08), rgba(147, 197, 253, 0.12));
+  /* Agora usa a paleta roxa da antiga Advanced/Settings */
+  background: linear-gradient(135deg, rgba(139, 92, 246, 0.08), rgba(196, 181, 253, 0.12));
 }
 
 .report-section {
+  /* Agora usa a paleta azul suave */
   background: linear-gradient(135deg, rgba(59, 130, 246, 0.08), rgba(147, 197, 253, 0.12));
 }
 

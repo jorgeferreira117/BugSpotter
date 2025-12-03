@@ -84,6 +84,7 @@ class BugSpotter {
     document.getElementById('startRecording').addEventListener('click', () => this.startRecording());
     document.getElementById('clearHistory').addEventListener('click', () => this.clearHistory());
     document.getElementById('openSettings').addEventListener('click', () => this.openSettings());
+    // Removido: listener para seção Advanced Settings (seção foi eliminada)
 
     // Split-button: toggle e menu
     const caretBtn = document.getElementById('captureLogsToggle');
@@ -1639,9 +1640,9 @@ class BugSpotter {
         target = 'easyvista';
       }
 
-      // Envio sequencial para ambos quando habilitado
+      // Envio sequencial para ambos quando habilitado: sempre Jira → EasyVista
       if (jiraEnabled && evEnabled && settings.postToBoth) {
-        const order = target === 'easyvista' ? ['easyvista', 'jira'] : ['jira', 'easyvista'];
+        const order = ['jira', 'easyvista'];
         try {
           for (const step of order) {
             if (step === 'jira') {
@@ -1673,17 +1674,17 @@ class BugSpotter {
               }
             }
           }
-          // Se Jira foi criado primeiro, adicionar comentário com link do EasyVista
+          // Se Jira foi criado primeiro, adicionar comentário com link do EasyVista (formato padrão)
           if (order[0] === 'jira' && bugData.jiraKey && (bugData.easyvistaUrl || bugData.easyvistaId)) {
-            const commentLines = [
-              '*Linked Tickets:*',
-              bugData.crossLink?.easyvistaUrl ? `EasyVista: ${bugData.crossLink.easyvistaUrl}` : (bugData.crossLink?.easyvistaId ? `EasyVista ID: ${bugData.crossLink.easyvistaId}` : null)
-            ].filter(Boolean);
-            const commentBody = commentLines.join('\n');
-            try {
-              await this.addJiraComment(bugData.jiraKey, commentBody);
-            } catch (commentError) {
-              console.warn('Falha ao adicionar comentário de cross-link no Jira:', commentError);
+            const commentBody = bugData.crossLink?.easyvistaUrl
+              ? `[EASYVISTA] ${bugData.crossLink.easyvistaUrl}`
+              : (bugData.crossLink?.easyvistaId ? `[EASYVISTA] ${bugData.crossLink.easyvistaId}` : null);
+            if (commentBody) {
+              try {
+                await this.addJiraComment(bugData.jiraKey, commentBody);
+              } catch (commentError) {
+                console.warn('Falha ao adicionar comentário de cross-link no Jira:', commentError);
+              }
             }
           }
           const summary = [
@@ -3069,8 +3070,10 @@ class BugSpotter {
       const bugData = {
         title: report.title,
         description: report.description || report.analysis || 'AI-generated report',
-        // Mapear steps do relatório de IA
-        steps: report.stepsToReproduce || [],
+        // Mapear steps do relatório de IA com sanitização de prefixos numéricos/bullets
+        steps: Array.isArray(report.stepsToReproduce)
+          ? report.stepsToReproduce.map(s => (s || '').replace(/^\s*(\d+[\)\.]|[-•])\s*/, '').trim())
+          : [],
         expectedBehavior: report.expectedBehavior,
         actualBehavior: report.actualBehavior,
         // Usar severity do relatório de IA, apenas para descrição (não define prioridade Jira em AI)
@@ -3260,7 +3263,9 @@ class BugSpotter {
       const bugData = {
         title: report.title,
         description: report.description || report.analysis || 'AI-generated report',
-        steps: report.stepsToReproduce || [],
+        steps: Array.isArray(report.stepsToReproduce)
+          ? report.stepsToReproduce.map(s => (s || '').replace(/^\s*(\d+[\)\.]|[-•])\s*/, '').trim())
+          : [],
         expectedBehavior: report.expectedBehavior,
         actualBehavior: report.actualBehavior,
         priority: report.severity || 'Medium',

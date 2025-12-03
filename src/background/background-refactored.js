@@ -462,8 +462,11 @@ class BugSpotterBackground {
     
     if (bugData.steps && bugData.steps.length > 0) {
       description += `*Steps to Reproduce:*\n`;
+      const cleanStepPrefix = (s) => (s || '')
+        .replace(/^\s*(?:(?:\(\d+\)|\d+\s*[\.\)\-–—])\s*)?(?:[-•*]\s*)?/, '')
+        .trim();
       bugData.steps.forEach((step, index) => {
-        description += `${index + 1}. ${step}\n`;
+        description += `${index + 1}. ${cleanStepPrefix(step)}\n`;
       });
       description += `\n`;
     }

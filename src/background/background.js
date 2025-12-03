@@ -2425,8 +2425,11 @@ class BugSpotterBackground {
   }
 
   formatJiraDescription(bugData) {
+    const cleanStepPrefix = (s) => (s || '')
+      .replace(/^\s*(?:(?:\(\d+\)|\d+\s*[\.\)\-–—])\s*)?(?:[-•*]\s*)?/, '')
+      .trim();
     const stepsBlock = Array.isArray(bugData.steps)
-      ? (bugData.steps.length ? bugData.steps.map((s, i) => `${i + 1}. ${s}`).join('\n') : 'N/A')
+      ? (bugData.steps.length ? bugData.steps.map((s, i) => `${i + 1}. ${cleanStepPrefix(s)}`).join('\n') : 'N/A')
       : (bugData.steps || 'N/A');
 
     const url = bugData.url || bugData.originalError?.url || 'N/A';
@@ -2780,11 +2783,25 @@ ${lines.join('\n')}`;
         throw new Error('EasyVista base URL or API key missing');
       }
 
+      // Construir descrição específica para EasyVista: remover bloco "Linked Tickets"
+      // e adicionar linha padrão de cross-link para Jira
+      let description = this.formatJiraDescription(bugData);
+      try {
+        description = description.replace(/\n\*Linked Tickets:\*\n[\s\S]*$/, '');
+      } catch (_) {}
+      const jiraLink = (bugData.crossLink?.jiraUrl) || (bugData.crossLink?.jiraKey ? bugData.crossLink.jiraKey : null);
+      if (jiraLink) {
+        description += `\n[JIRA] ${jiraLink}`;
+      }
+
       const payload = {
         subject: bugData.title,
-        description: this.formatJiraDescription(bugData),
-        priority: bugData.priority || 'Medium'
+        description
       };
+      // Incluir catalog_guid quando disponível nas configurações
+      if (settings.easyvista && settings.easyvista.catalogGuid) {
+        payload.catalog_guid = settings.easyvista.catalogGuid;
+      }
 
       const commonHeaders = {
         'Accept': 'application/json',
@@ -2792,7 +2809,7 @@ ${lines.join('\n')}`;
       };
 
       // Tentativa 1: Authorization Bearer
-      let response = await fetch(`${baseUrl}/api/v1/tickets`, {
+      let response = await fetch(`${baseUrl}/tickets`, {
         method: 'POST',
         headers: { ...commonHeaders, 'Authorization': `Bearer ${apiKey}` },
         body: JSON.stringify(payload)
@@ -2800,7 +2817,7 @@ ${lines.join('\n')}`;
 
       // Tentativa 2: X-API-Key caso a primeira falhe
       if (!response.ok) {
-        response = await fetch(`${baseUrl}/api/v1/tickets`, {
+        response = await fetch(`${baseUrl}/tickets`, {
           method: 'POST',
           headers: { ...commonHeaders, 'X-API-Key': apiKey },
           body: JSON.stringify(payload)
@@ -2856,18 +2873,49 @@ ${lines.join('\n')}`;
       };
 
       // Rotas comuns de verificação
-      const candidates = ['/api/v1/users/me', '/api/v1/status'];
+      const candidates = ['/users/me', '/status'];
       let lastResp = null;
+      let baseOk = false;
       for (const path of candidates) {
         lastResp = await tryFetch(path);
         if (lastResp.ok) {
-          let info = null;
-          try { info = await lastResp.json(); } catch (_) {}
-          return {
-            success: true,
-            message: info?.name ? `Connection successful! User: ${info.name}` : 'Connection successful!'
-          };
+          baseOk = true;
+          break;
         }
+      }
+
+      if (baseOk) {
+        // Se um Catalog GUID foi fornecido, validar também
+        if (config.catalogGuid) {
+          const guid = String(config.catalogGuid).trim();
+          const catalogCandidates = [
+            `/catalogs/${guid}`,
+            `/catalog/${guid}`,
+            `/service-catalog/${guid}`,
+            `/catalog/items/${guid}`
+          ];
+          let catalogResp = null;
+          for (const path of catalogCandidates) {
+            catalogResp = await tryFetch(path);
+            if (catalogResp.ok) {
+              let info = null;
+              try { info = await catalogResp.json(); } catch (_) {}
+              const baseMsg = 'Connection successful!';
+              const catalogMsg = info?.name ? ` Catalog GUID validated: ${info.name}` : ' Catalog GUID validated.';
+              return { success: true, message: baseMsg + catalogMsg, data: { catalogValidated: true } };
+            }
+          }
+          let details = '';
+          try { details = ` - ${await catalogResp.text()}`; } catch (_) {}
+          throw new Error(`Catalog GUID validation failed (404/unauthorized). Check account and GUID.${details.substring(0, 140)}`);
+        }
+        // Sem GUID, sucesso básico
+        let info = null;
+        try { info = await lastResp.json(); } catch (_) {}
+        return {
+          success: true,
+          message: info?.name ? `Connection successful! User: ${info.name}` : 'Connection successful!'
+        };
       }
 
       // Se chegou aqui, falhou

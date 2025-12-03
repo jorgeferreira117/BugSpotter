@@ -21,6 +21,7 @@
 
     <!-- Main content -->
     <main class="main-content">
+      <div class="settings-layout">
       <!-- Tab Navigation -->
       <nav class="tab-navigation">
         <button class="tab-button active" data-tab="jira">
@@ -50,6 +51,10 @@
         <button class="tab-button" data-tab="data">
           <span class="material-icons">storage</span>
           <span>Data</span>
+        </button>
+        <button class="tab-button" data-tab="metrics">
+          <span class="material-icons">speed</span>
+          <span>Metrics</span>
         </button>
       </nav>
 
@@ -179,6 +184,12 @@
                   <label for="easyvistaUrl">EasyVista Base URL:</label>
                   <input type="url" id="easyvistaUrl" placeholder="https://your-host/api/v1/your-account/" />
                   <small class="help-text">Use a URL completa incluindo <code>/api/v1/&lt;account&gt;/</code></small>
+                </div>
+
+                <div class="form-group">
+                  <label for="easyvistaCatalogGuid">Catalog GUID:</label>
+                  <input type="text" id="easyvistaCatalogGuid" placeholder="e.g., 123e4567-e89b-12d3-a456-426614174000" />
+                  <small class="help-text">Identificador obrigatório do catálogo de serviços no EasyVista.</small>
                 </div>
 
                 <div class="form-group">
@@ -433,6 +444,70 @@
       </section>
         </div>
 
+        <!-- Metrics Tab -->
+        <div class="tab-content" id="metrics-tab">
+          <section class="settings-section metrics-section">
+            <div class="section-header">
+              <h2><span class="material-icons">speed</span>Performance Metrics</h2>
+              <p class="section-description">Monitor latency and reliability of Jira and EasyVista submissions.</p>
+            </div>
+            <form id="metricsForm">
+              <div class="metrics-config" id="metricsConfig">
+                <div class="form-group">
+                  <div class="performance-metrics" id="performanceMetrics">
+                    <div class="metrics-grid">
+                      <div class="metric-card" id="jiraMetricCard">
+                        <h4><span class="material-icons">bug_report</span> Jira</h4>
+                        <div class="metric-row">
+                        <span>Submissions:</span>
+                          <strong id="jiraCount">–</strong>
+                        </div>
+                        <div class="metric-row">
+                          <span>Success rate:</span>
+                          <strong id="jiraSuccessRate">–%</strong>
+                        </div>
+                        <div class="metric-row">
+                        <span>Average:</span>
+                          <strong id="jiraAvg">– ms</strong>
+                        </div>
+                        <div class="metric-row">
+                        <span>Median:</span>
+                          <strong id="jiraMedian">– ms</strong>
+                        </div>
+                      </div>
+                      <div class="metric-card" id="evMetricCard">
+                        <h4><span class="material-icons">assignment</span> EasyVista</h4>
+                        <div class="metric-row">
+                        <span>Submissions:</span>
+                          <strong id="evCount">–</strong>
+                        </div>
+                        <div class="metric-row">
+                          <span>Success rate:</span>
+                          <strong id="evSuccessRate">–%</strong>
+                        </div>
+                        <div class="metric-row">
+                        <span>Average:</span>
+                          <strong id="evAvg">– ms</strong>
+                        </div>
+                        <div class="metric-row">
+                        <span>Median:</span>
+                          <strong id="evMedian">– ms</strong>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div class="form-group">
+                  <button type="button" id="refreshMetrics" class="btn btn-secondary">
+                    <span class="material-icons">refresh</span>
+                    Refresh Metrics
+                  </button>
+                </div>
+              </div>
+            </form>
+          </section>
+        </div>
+
         <!-- Data Tab -->
         <div class="tab-content" id="data-tab">
           <section class="settings-section data-section">
@@ -469,7 +544,7 @@
                 <option value="jira">Jira</option>
                 <option value="easyvista">EasyVista</option>
               </select>
-              <small>This preference applies when both integrations are enabled.</small>
+              <small>Used when both are enabled and "Send to both" is OFF.</small>
             </div>
             <div class="form-group">
               <label for="postToBoth" class="checkbox-label">
@@ -477,10 +552,11 @@
                 <span class="checkmark"></span>
                 Also send to both when enabled
               </label>
-              <small>If both integrations are enabled, send to both sequentially.</small>
+              <small>When both are enabled, sends Jira first then EasyVista. Preferred Target is ignored.</small>
             </div>
           </form>
         </section>
+      </div>
       </div>
       </div>
     </main>
@@ -494,3 +570,4 @@
   <script src="settings.js"></script>
 </body>
 </html>
+        </div>
