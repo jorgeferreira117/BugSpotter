@@ -208,6 +208,184 @@ class AIService {
     }
 
     /**
+     * Aprimora campos do bug report usando interações do usuário e contexto
+     * @param {Object} payload - { fields: {title, description, steps}, interactions: Array, context: Object }
+     * @returns {Promise<Object>} Sugestões de aprimoramento { title, description, stepsToReproduce }
+     */
+    async enhanceBugFields(payload) {
+        if (!this.isConfigured()) {
+            return {
+                title: payload?.fields?.title || '',
+                description: payload?.fields?.description || '',
+                stepsToReproduce: Array.isArray(payload?.fields?.steps) ? payload.fields.steps : [],
+                expectedBehavior: payload?.fields?.expectedBehavior || '',
+                actualBehavior: payload?.fields?.actualBehavior || '',
+                severity: 'medium'
+            };
+        }
+
+        if (await this.shouldPauseAI() || !this.checkRateLimit()) {
+            return {
+                title: payload?.fields?.title || '',
+                description: payload?.fields?.description || '',
+                stepsToReproduce: Array.isArray(payload?.fields?.steps) ? payload.fields.steps : [],
+                expectedBehavior: payload?.fields?.expectedBehavior || '',
+                actualBehavior: payload?.fields?.actualBehavior || '',
+                severity: 'medium'
+            };
+        }
+
+        try {
+            this.rateLimiter.requests++;
+            const prompt = this.buildEnhancementPrompt(payload);
+            const response = await this.callGeminiAPI(prompt);
+            const parsed = this.parseAIResponse(response);
+            // Normalize steps field from possible variants
+            let stepsNormalized = [];
+            if (Array.isArray(parsed.stepsToReproduce)) {
+                stepsNormalized = parsed.stepsToReproduce;
+            } else if (Array.isArray(parsed.steps)) {
+                stepsNormalized = parsed.steps;
+            } else if (Array.isArray(parsed.steps_to_reproduce)) {
+                stepsNormalized = parsed.steps_to_reproduce;
+            } else if (typeof parsed.stepsToReproduce === 'string') {
+                stepsNormalized = parsed.stepsToReproduce.split('\n').map(s => s.trim()).filter(Boolean);
+            } else if (typeof parsed.steps === 'string') {
+                stepsNormalized = parsed.steps.split('\n').map(s => s.trim()).filter(Boolean);
+            } else if (typeof parsed.steps_to_reproduce === 'string') {
+                stepsNormalized = parsed.steps_to_reproduce.split('\n').map(s => s.trim()).filter(Boolean);
+            }
+            // Deterministic fallback: derive steps across pages if AI returned none
+            if ((!stepsNormalized || stepsNormalized.length === 0) && Array.isArray(payload?.interactions) && payload.interactions.length) {
+                // Work with the last 150 interactions passed from background (already limited)
+                const interactions = payload.interactions.slice();
+                // Sort by timestamp ascending to preserve sequence
+                interactions.sort((a, b) => {
+                    const ta = Number(a.timestamp || a.ts || 0);
+                    const tb = Number(b.timestamp || b.ts || 0);
+                    return ta - tb;
+                });
+
+                const steps = [];
+                let lastUrl = null;
+                let stepIndex = 1;
+                const toTitleCase = (s) => (s || '').charAt(0).toUpperCase() + (s || '').slice(1);
+
+                interactions.forEach((it) => {
+                    const url = it.url || it.pageUrl || '';
+                    const type = (it.type || it.kind || '').toLowerCase();
+                    const selector = it.selector || it.path || it.id || it.tag || 'element';
+                    const value = it.value || it.text || '';
+
+                    if (type === 'navigate') {
+                        if (url && url !== lastUrl) {
+                            steps.push(`${stepIndex++}. Navigate to ${url}`);
+                            lastUrl = url;
+                        } else if (url && !lastUrl) {
+                            steps.push(`${stepIndex++}. Navigate to ${url}`);
+                            lastUrl = url;
+                        }
+                        return; // não gerar linha genérica para navigate
+                    }
+
+                    // Inserir marcador de navegação quando URL muda entre interações não-navegação
+                    if (url && url !== lastUrl) {
+                        steps.push(`${stepIndex++}. Navigate to ${url}`);
+                        lastUrl = url;
+                    }
+
+                    if (type === 'click') {
+                        const base = `${stepIndex++}. Click on ${selector}`;
+                        steps.push(value ? `${base} (${value})` : base);
+                    } else if (type === 'input' || type === 'change') {
+                        const base = `${stepIndex++}. Enter value in ${selector}`;
+                        steps.push(value ? `${base} (${value})` : base);
+                    } else if (type === 'submit') {
+                        steps.push(`${stepIndex++}. Submit form ${selector}`);
+                    } else if (type) {
+                        steps.push(`${stepIndex++}. ${toTitleCase(type)} on ${selector}`);
+                    }
+                });
+                stepsNormalized = steps;
+            }
+            // Cap steps to 20 for readability in UI
+            if (stepsNormalized.length > 20) {
+                stepsNormalized = stepsNormalized.slice(0, 20);
+            }
+            return {
+                title: parsed.title || payload?.fields?.title || '',
+                description: parsed.description || payload?.fields?.description || '',
+                stepsToReproduce: stepsNormalized.length ? stepsNormalized : (Array.isArray(payload?.fields?.steps) ? payload.fields.steps : []),
+                expectedBehavior: parsed.expectedBehavior || payload?.fields?.expectedBehavior || '',
+                actualBehavior: parsed.actualBehavior || payload?.fields?.actualBehavior || '',
+                severity: (parsed.severity || 'medium').toString().toLowerCase()
+            };
+        } catch (error) {
+            return {
+                title: payload?.fields?.title || '',
+                description: payload?.fields?.description || '',
+                stepsToReproduce: Array.isArray(payload?.fields?.steps) ? payload.fields.steps : [],
+                expectedBehavior: payload?.fields?.expectedBehavior || '',
+                actualBehavior: payload?.fields?.actualBehavior || '',
+                severity: 'medium'
+            };
+        }
+    }
+
+    /**
+     * Constrói prompt para aprimorar campos com base em interações
+     */
+    buildEnhancementPrompt(payload) {
+        const fields = payload?.fields || {};
+        const interactions = Array.isArray(payload?.interactions) ? payload.interactions : [];
+        const context = payload?.context || {};
+
+        const sanitized = {
+            existingTitle: fields.title || '',
+            existingDescription: fields.description || '',
+            existingSteps: Array.isArray(fields.steps) ? fields.steps : [],
+            existingExpectedBehavior: fields.expectedBehavior || '',
+            existingActualBehavior: fields.actualBehavior || '',
+            userInteractions: interactions.map(it => ({
+                // Map both content-script and generic keys
+                type: it.type || it.kind || 'unknown',
+                selector: it.selector || it.path || 'unknown',
+                value: it.value || it.text || '',
+                timestamp: it.timestamp || it.ts || Date.now(),
+                url: it.url || it.pageUrl || context.pageUrl || 'Unknown',
+                tag: it.tag || '',
+                id: it.id || '',
+                classes: it.classes || ''
+            })),
+            pageUrl: context.pageUrl || context.url || 'Unknown',
+            pageTitle: context.pageTitle || 'Unknown'
+        };
+
+        const prompt = `You are a QA assistant. Improve the bug report fields in English using the user's recent interactions and current values.
+
+Strict instructions:
+- Use only real information present in the provided input. Do not invent data.
+- Limit stepsToReproduce to a maximum of 20 items.
+- If there is insufficient information, keep the existing values or return empty strings.
+ - Provide concise 'expectedBehavior' and 'actualBehavior' based on context. Use empty strings if unknown.
+ - Provide a simple severity estimate: one of "low", "medium", "high".
+
+Input JSON:
+${JSON.stringify(sanitized, null, 2)}
+
+Output ONLY a valid JSON object with fields:
+{
+  "title": "Improved concise title",
+  "description": "Improved description summarizing impact and context",
+  "stepsToReproduce": ["Step 1", "Step 2", "... up to 20"],
+  "expectedBehavior": "What should have happened",
+  "actualBehavior": "What actually happened",
+  "severity": "low|medium|high"
+}`;
+        return prompt;
+    }
+
+    /**
      * Cria relatório básico sem AI quando há problemas de quota
      * @param {Object} errorData - Dados do erro HTTP
      * @returns {Object} Bug report básico estruturado
@@ -278,10 +456,31 @@ class AIService {
             referrer: error.referrer || context.referrer || 'N/A',
             consoleLogs: context.consoleLogs || [],
             networkRequests: context.networkRequests || [],
-            jsErrors: context.jsErrors || []
+            jsErrors: context.jsErrors || [],
+            userInteractions: context.userInteractions || []
         };
 
-        const prompt = `You are a web debugging expert. Analyze this HTTP error and generate a structured bug report in English.\n\n**ERROR DATA:**\n${JSON.stringify(sanitizedData, null, 2)}\n\nOutput ONLY a valid JSON object with fields:\n{\n  "title": "Short, clear title summarizing the issue",\n  "description": "Detailed description of what happened",\n  "category": "Network Error|API Error|Server Error|Client Error",\n  "stepsToReproduce": ["Step 1", "Step 2", "Step 3"],\n  "expectedBehavior": "What should have happened",\n  "actualBehavior": "What actually happened",\n  "errorType": "HTTP Error",\n  "severity": "low|medium|high",\n  "details": { "url": "...", "method": "...", "status": "...", "statusText": "...", "responseBody": "..." }
+        const prompt = `You are a web debugging expert. Analyze this HTTP error and generate a structured bug report in English.
+
+Strict instructions:
+- Use only real information present in the provided context. Do not invent data.
+- Limit stepsToReproduce to a maximum of 7 items.
+- If a field is unknown, use "N/A" or an empty string.
+
+**ERROR CONTEXT (sanitized):**
+${JSON.stringify(sanitizedData, null, 2)}
+
+Output ONLY a valid JSON object with fields:
+{
+  "title": "Short, clear title summarizing the issue",
+  "description": "Detailed description of what happened",
+  "category": "Network Error|API Error|Server Error|Client Error",
+  "stepsToReproduce": ["Step 1", "Step 2", "Step 3"],
+  "expectedBehavior": "What should have happened",
+  "actualBehavior": "What actually happened",
+  "errorType": "HTTP Error",
+  "severity": "low|medium|high",
+  "details": { "url": "...", "method": "...", "status": "...", "statusText": "...", "responseBody": "...", "probableCause": "short hypothesis based on context" }
             }`;
 
         return prompt;

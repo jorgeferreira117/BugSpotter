@@ -42,6 +42,10 @@ class BugSpotterBackground {
     // 🆕 Sistema de persistência de estado de gravação
     this.recordingStates = new Map(); // Armazena estado de gravação por tabId
     this.recordingStorageKey = 'activeRecordings';
+
+    // 🆕 Interações do usuário por aba (para aprimoramento de IA)
+    this.userInteractions = new Map();
+    this.maxInteractionsPerTab = 300; // limite razoável para manter histórico recente
     
     // Inicializar módulos de forma compatível com Manifest V3
     this.initializeModules();
@@ -214,11 +218,11 @@ class BugSpotterBackground {
       }
     });
     
-    // Limpar logs antigos periodicamente com referência armazenada
-    this.cleanupInterval = setInterval(() => {
-      this.cleanupOldLogs();
-      this.optimizeStorage();
-    }, 5 * 60 * 1000); // A cada 5 minutos
+      // Limpar logs antigos periodicamente com referência armazenada
+      this.cleanupInterval = setInterval(() => {
+        this.cleanupOldLogs();
+        this.optimizeStorage();
+      }, 5 * 60 * 1000); // A cada 5 minutos
     
     // 🆕 Listeners para navegação - preservar estado de gravação
     this.setupNavigationListeners();
@@ -280,6 +284,21 @@ class BugSpotterBackground {
           console.debug('[Background] Erro ao restaurar estado de gravação:', error);
         }
       }, 1000);
+    }
+
+    // Registrar evento sintético de navegação nas interações do usuário
+    try {
+      let buf = this.userInteractions.get(tabId);
+      if (!buf) {
+        buf = [];
+        this.userInteractions.set(tabId, buf);
+      }
+      buf.push({ kind: 'navigate', ts: Date.now(), pageUrl: url, url, tabId });
+      if (buf.length > this.maxInteractionsPerTab) {
+        buf.splice(0, buf.length - this.maxInteractionsPerTab);
+      }
+    } catch (e) {
+      // Falha silenciosa ao registrar navegação
     }
   }
   
@@ -695,6 +714,10 @@ class BugSpotterBackground {
                   || (persistentData?.networkRequests || []).find(req => req.requestId === params.requestId);
                 if (originalReq) {
                   detailedErrorLog.requestHeaders = originalReq.requestHeaders || originalReq.headers || {};
+                  // Incluir método HTTP do request original
+                  if (originalReq.method) {
+                    detailedErrorLog.method = originalReq.method;
+                  }
                 }
               } catch (_) {}
 
@@ -1351,6 +1374,49 @@ class BugSpotterBackground {
       }
       
       switch (message.action) {
+        case 'LOG_USER_INTERACTION': {
+          try {
+            const tabId = sender.tab?.id;
+            if (!tabId) {
+              throw new Error('No tab ID available');
+            }
+            const item = message.data || {};
+            let buf = this.userInteractions.get(tabId);
+            if (!buf) {
+              buf = [];
+              this.userInteractions.set(tabId, buf);
+            }
+            buf.push({ ...item, tabId });
+            if (buf.length > this.maxInteractionsPerTab) {
+              buf.splice(0, buf.length - this.maxInteractionsPerTab);
+            }
+            sendResponse({ success: true });
+          } catch (error) {
+            sendResponse({ success: false, error: error.message });
+          }
+          break;
+        }
+
+        case 'GET_USER_INTERACTIONS': {
+          try {
+            const tabId = message.tabId || sender.tab?.id;
+            if (!tabId) {
+              throw new Error('No tab ID provided');
+            }
+            const limit = typeof message.limit === 'number' ? message.limit : 100;
+            const windowMs = typeof message.windowMs === 'number' ? message.windowMs : 15 * 60 * 1000;
+            const now = Date.now();
+            const list = (this.userInteractions.get(tabId) || []).filter(it => {
+              const t = new Date(it.timestamp || now).getTime();
+              return now - t <= windowMs;
+            });
+            const sliced = list.slice(Math.max(0, list.length - limit));
+            sendResponse({ success: true, data: sliced });
+          } catch (error) {
+            sendResponse({ success: false, error: error.message });
+          }
+          break;
+        }
         case 'CAPTURE_SCREENSHOT':
           try {
             const tabId = sender.tab?.id;
@@ -1546,6 +1612,16 @@ class BugSpotterBackground {
           }
           break;
 
+        case 'ADD_JIRA_COMMENT':
+          try {
+            const { issueKey, body } = message;
+            const result = await this.addCommentToJiraIssue(issueKey, body);
+            sendResponse({ success: true, data: result });
+          } catch (error) {
+            sendResponse({ success: false, error: error.message });
+          }
+          break;
+
         case 'TEST_JIRA_CONNECTION':
           try {
             const jiraConfig = message.config;
@@ -1565,6 +1641,47 @@ class BugSpotterBackground {
             sendResponse({ success: false, error: error.message });
           }
           break;
+
+        case 'ENHANCE_REPORT_WITH_AI': {
+          try {
+            const tabId = sender.tab?.id || message.tabId;
+            if (!tabId) {
+              throw new Error('No tab ID provided');
+            }
+            if (!this.aiService || !this.aiServiceReady || !this.aiService.isConfigured()) {
+              throw new Error('AI service not configured');
+            }
+            const fields = message.fields || {};
+            const interactions = (this.userInteractions.get(tabId) || []).slice(-150);
+            let context = {};
+            try {
+              const tab = await chrome.tabs.get(tabId);
+              context.pageUrl = tab.url;
+              context.pageTitle = tab.title;
+            } catch (e) {
+              // ignore
+            }
+            const suggestions = await this.aiService.enhanceBugFields({ fields, interactions, context });
+            sendResponse({ success: true, data: suggestions });
+          } catch (error) {
+            sendResponse({ success: false, error: error.message });
+          }
+          break;
+        }
+
+        case 'MIGRATE_AI_REPORT_STEPS': {
+          try {
+            const tabId = sender.tab?.id || message.tabId;
+            if (!tabId) {
+              throw new Error('No tab ID provided');
+            }
+            const updatedCount = await this.migrateAIReportsWithSteps(tabId);
+            sendResponse({ success: true, data: { updatedCount } });
+          } catch (error) {
+            sendResponse({ success: false, error: error.message });
+          }
+          break;
+        }
 
         case 'VALIDATE_INPUT':
           try {
@@ -2122,6 +2239,40 @@ class BugSpotterBackground {
       throw error;
     }
   }
+
+  async addCommentToJiraIssue(issueKey, commentBody) {
+    try {
+      const settings = await this.getSettings();
+      if (!settings.jira || !settings.jira.enabled) {
+        throw new Error('Jira integration not configured');
+      }
+      if (!issueKey || typeof issueKey !== 'string') {
+        throw new Error('Invalid issue key');
+      }
+      const response = await fetch(`${settings.jira.baseUrl}/rest/api/2/issue/${issueKey}/comment`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Basic ${btoa(`${settings.jira.email}:${settings.jira.apiToken}`)}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ body: commentBody })
+      });
+      if (!response.ok) {
+        let details = '';
+        try { details = ` - ${await response.text()}`; } catch (_) {}
+        throw new Error(`Jira comment API error: HTTP ${response.status} ${response.statusText}${details.substring(0, 140)}`);
+      }
+      try {
+        const data = await response.json();
+        return data;
+      } catch (_) {
+        return { ok: true };
+      }
+    } catch (error) {
+      this.errorHandler.handleError(error, 'addCommentToJiraIssue');
+      throw error;
+    }
+  }
   
   // Novo método para anexar arquivos
   /**
@@ -2274,8 +2425,11 @@ class BugSpotterBackground {
   }
 
   formatJiraDescription(bugData) {
+    const cleanStepPrefix = (s) => (s || '')
+      .replace(/^\s*(?:(?:\(\d+\)|\d+\s*[\.\)\-–—])\s*)?(?:[-•*]\s*)?/, '')
+      .trim();
     const stepsBlock = Array.isArray(bugData.steps)
-      ? (bugData.steps.length ? bugData.steps.map((s, i) => `${i + 1}. ${s}`).join('\n') : 'N/A')
+      ? (bugData.steps.length ? bugData.steps.map((s, i) => `${i + 1}. ${cleanStepPrefix(s)}`).join('\n') : 'N/A')
       : (bugData.steps || 'N/A');
 
     const url = bugData.url || bugData.originalError?.url || 'N/A';
@@ -2311,10 +2465,37 @@ ${bugData.actualBehavior || 'N/A'}
 
 *Original Error:*
 Status: ${statusLine || 'N/A'}
+Method: ${bugData.originalError.method || 'N/A'}
 
 URL: ${bugData.originalError.url || 'N/A'}
 
 Timestamp: ${originalTimestamp}`;
+    }
+
+    // Cross-link to other system tickets if available
+    if (bugData.crossLink) {
+      const jiraKey = bugData.crossLink.jiraKey || null;
+      const jiraUrl = bugData.crossLink.jiraUrl || null;
+      const evId = bugData.crossLink.easyvistaId || null;
+      const evUrl = bugData.crossLink.easyvistaUrl || null;
+
+      const lines = [];
+      if (jiraUrl) {
+        lines.push(`Jira: ${jiraUrl}`);
+      } else if (jiraKey) {
+        lines.push(`Jira: ${jiraKey}`);
+      }
+      if (evUrl) {
+        lines.push(`EasyVista: ${evUrl}`);
+      } else if (evId) {
+        lines.push(`EasyVista ID: ${evId}`);
+      }
+      if (lines.length) {
+        description += `
+
+*Linked Tickets:*
+${lines.join('\n')}`;
+      }
     }
 
     return description;
@@ -2602,11 +2783,25 @@ Timestamp: ${originalTimestamp}`;
         throw new Error('EasyVista base URL or API key missing');
       }
 
+      // Construir descrição específica para EasyVista: remover bloco "Linked Tickets"
+      // e adicionar linha padrão de cross-link para Jira
+      let description = this.formatJiraDescription(bugData);
+      try {
+        description = description.replace(/\n\*Linked Tickets:\*\n[\s\S]*$/, '');
+      } catch (_) {}
+      const jiraLink = (bugData.crossLink?.jiraUrl) || (bugData.crossLink?.jiraKey ? bugData.crossLink.jiraKey : null);
+      if (jiraLink) {
+        description += `\n[JIRA] ${jiraLink}`;
+      }
+
       const payload = {
         subject: bugData.title,
-        description: this.formatJiraDescription(bugData),
-        priority: bugData.priority || 'Medium'
+        description
       };
+      // Incluir catalog_guid quando disponível nas configurações
+      if (settings.easyvista && settings.easyvista.catalogGuid) {
+        payload.catalog_guid = settings.easyvista.catalogGuid;
+      }
 
       const commonHeaders = {
         'Accept': 'application/json',
@@ -2614,7 +2809,7 @@ Timestamp: ${originalTimestamp}`;
       };
 
       // Tentativa 1: Authorization Bearer
-      let response = await fetch(`${baseUrl}/api/v1/tickets`, {
+      let response = await fetch(`${baseUrl}/tickets`, {
         method: 'POST',
         headers: { ...commonHeaders, 'Authorization': `Bearer ${apiKey}` },
         body: JSON.stringify(payload)
@@ -2622,7 +2817,7 @@ Timestamp: ${originalTimestamp}`;
 
       // Tentativa 2: X-API-Key caso a primeira falhe
       if (!response.ok) {
-        response = await fetch(`${baseUrl}/api/v1/tickets`, {
+        response = await fetch(`${baseUrl}/tickets`, {
           method: 'POST',
           headers: { ...commonHeaders, 'X-API-Key': apiKey },
           body: JSON.stringify(payload)
@@ -2678,18 +2873,49 @@ Timestamp: ${originalTimestamp}`;
       };
 
       // Rotas comuns de verificação
-      const candidates = ['/api/v1/users/me', '/api/v1/status'];
+      const candidates = ['/users/me', '/status'];
       let lastResp = null;
+      let baseOk = false;
       for (const path of candidates) {
         lastResp = await tryFetch(path);
         if (lastResp.ok) {
-          let info = null;
-          try { info = await lastResp.json(); } catch (_) {}
-          return {
-            success: true,
-            message: info?.name ? `Connection successful! User: ${info.name}` : 'Connection successful!'
-          };
+          baseOk = true;
+          break;
         }
+      }
+
+      if (baseOk) {
+        // Se um Catalog GUID foi fornecido, validar também
+        if (config.catalogGuid) {
+          const guid = String(config.catalogGuid).trim();
+          const catalogCandidates = [
+            `/catalogs/${guid}`,
+            `/catalog/${guid}`,
+            `/service-catalog/${guid}`,
+            `/catalog/items/${guid}`
+          ];
+          let catalogResp = null;
+          for (const path of catalogCandidates) {
+            catalogResp = await tryFetch(path);
+            if (catalogResp.ok) {
+              let info = null;
+              try { info = await catalogResp.json(); } catch (_) {}
+              const baseMsg = 'Connection successful!';
+              const catalogMsg = info?.name ? ` Catalog GUID validated: ${info.name}` : ' Catalog GUID validated.';
+              return { success: true, message: baseMsg + catalogMsg, data: { catalogValidated: true } };
+            }
+          }
+          let details = '';
+          try { details = ` - ${await catalogResp.text()}`; } catch (_) {}
+          throw new Error(`Catalog GUID validation failed (404/unauthorized). Check account and GUID.${details.substring(0, 140)}`);
+        }
+        // Sem GUID, sucesso básico
+        let info = null;
+        try { info = await lastResp.json(); } catch (_) {}
+        return {
+          success: true,
+          message: info?.name ? `Connection successful! User: ${info.name}` : 'Connection successful!'
+        };
       }
 
       // Se chegou aqui, falhou
@@ -3210,7 +3436,13 @@ Timestamp: ${originalTimestamp}`;
       if (recentLogs.length > 0) {
         context.recentLogs = recentLogs;
       }
-      
+
+      // 🆕 Incluir interações do usuário recentes no contexto
+      const interactions = this.userInteractions.get(tabId) || [];
+      if (interactions.length > 0) {
+        context.userInteractions = interactions.slice(-100);
+      }
+
       return context;
     } catch (error) {
       console.error('[Background] Erro ao coletar contexto:', error);
@@ -3262,8 +3494,15 @@ Timestamp: ${originalTimestamp}`;
         severity: aiReport.severity,
         category: aiReport.category,
         suggestions: aiReport.suggestions,
+        // Incluir passos e comportamentos quando disponíveis
+        stepsToReproduce: Array.isArray(aiReport.stepsToReproduce)
+          ? aiReport.stepsToReproduce
+          : (Array.isArray(aiReport.steps) ? aiReport.steps : []),
+        expectedBehavior: aiReport.expectedBehavior,
+        actualBehavior: aiReport.actualBehavior,
         originalError: {
           url: errorLog.url,
+          method: errorLog.method,
           status: errorLog.status,
           statusText: errorLog.statusText,
           timestamp: errorLog.timestamp
@@ -3272,6 +3511,14 @@ Timestamp: ${originalTimestamp}`;
         createdAt: new Date().toISOString(),
         source: 'ai-auto-generated'
       };
+
+      // Incluir Page URL para exibição correta no preview
+      try {
+        const tab = await chrome.tabs.get(tabId);
+        reportData.pageUrl = tab?.url || errorLog.url;
+      } catch (_) {
+        reportData.pageUrl = errorLog.url;
+      }
       
       // Armazenar no storage
       const key = `ai-reports-${tabId}`;
@@ -3301,6 +3548,75 @@ Timestamp: ${originalTimestamp}`;
       // Relatório AI armazenado - silenciado
     } catch (error) {
       console.error('[Background] Erro ao armazenar relatório AI:', error);
+    }
+  }
+
+  /**
+   * Migra relatórios AI existentes que não possuem steps, gerando Steps to Reproduce
+   * @param {number} tabId
+   * @returns {Promise<number>} quantidade atualizada
+   */
+  async migrateAIReportsWithSteps(tabId) {
+    try {
+      const key = `ai-reports-${tabId}`;
+      const existingReports = await chrome.storage.local.get(key);
+      const aiReports = existingReports[key] || [];
+      if (aiReports.length === 0) return 0;
+
+      // Coletar contexto
+      let context = {};
+      try {
+        const tab = await chrome.tabs.get(tabId);
+        context.pageUrl = tab.url;
+        context.pageTitle = tab.title;
+      } catch (_) {}
+      const interactions = (this.userInteractions.get(tabId) || []).slice(-150);
+
+      let updated = 0;
+      for (let i = 0; i < aiReports.length; i++) {
+        const report = aiReports[i];
+        const hasSteps = Array.isArray(report.stepsToReproduce) && report.stepsToReproduce.length > 0;
+        if (hasSteps) continue;
+
+        const fields = {
+          title: report.title || '',
+          description: report.description || '',
+          steps: Array.isArray(report.steps) ? report.steps : [],
+          expectedBehavior: report.expectedBehavior || '',
+          actualBehavior: report.actualBehavior || ''
+        };
+
+        let suggestions;
+        try {
+          suggestions = await this.aiService.enhanceBugFields({ fields, interactions, context });
+        } catch (_) {
+          suggestions = null;
+        }
+
+        if (suggestions) {
+          // Atualizar relatório com novos passos
+          const newSteps = Array.isArray(suggestions.stepsToReproduce) ? suggestions.stepsToReproduce : [];
+          const expected = suggestions.expectedBehavior || report.expectedBehavior;
+          const actual = suggestions.actualBehavior || report.actualBehavior;
+          if (newSteps.length > 0 || expected || actual) {
+            aiReports[i] = {
+              ...report,
+              stepsToReproduce: newSteps.length > 0 ? newSteps : report.stepsToReproduce,
+              expectedBehavior: expected,
+              actualBehavior: actual
+            };
+            updated++;
+          }
+        }
+      }
+
+      if (updated > 0) {
+        await chrome.storage.local.set({ [key]: aiReports });
+      }
+      return updated;
+    } catch (error) {
+      console.error('[Background] Erro na migração de AI reports:', error);
+      return 0;
     }
   }
   

@@ -47,7 +47,7 @@ small {
   display: flex;
   flex-direction: column;
   min-height: 100vh;
-  max-width: 900px;
+  max-width: 1160px;
   margin: 0 auto;
 }
 
@@ -91,10 +91,19 @@ small {
   flex: 1;
 }
 
+/* Layout de duas colunas: sidebar + conteúdo */
+.settings-layout {
+  display: grid;
+  grid-template-columns: 260px 1fr;
+  gap: 16px;
+  align-items: start;
+}
+
 /* Tab Navigation */
 .tab-navigation {
   display: flex;
-  justify-content: space-between;
+  flex-direction: column;
+  gap: 8px;
   background: rgba(255, 255, 255, 0.1);
   backdrop-filter: blur(10px);
   border-radius: 12px;
@@ -102,9 +111,8 @@ small {
   margin-bottom: 24px;
   border: 1px solid rgba(255, 255, 255, 0.2);
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
-  overflow-x: auto;
-  scrollbar-width: none;
-  -ms-overflow-style: none;
+  position: sticky;
+  top: 16px;
 }
 
 .tab-navigation::-webkit-scrollbar {
@@ -114,20 +122,21 @@ small {
 .tab-button {
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   gap: 8px;
-  padding: 12px 16px;
+  padding: 12px 20px;
   background: transparent;
   border: none;
   border-radius: 8px;
   color: rgba(0, 0, 0, 0.7);
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 500;
   cursor: pointer;
   transition: all 0.3s ease;
   white-space: nowrap;
-  flex: 1;
-  min-width: 0;
+  width: 100%;
+  /* base para separadores */
+  border-bottom: 1px solid transparent;
 }
 
 .tab-button:hover {
@@ -144,6 +153,18 @@ small {
 
 .tab-button .material-icons {
   font-size: 18px;
+}
+
+/* Separadores verticais entre itens da sidebar */
+.tab-navigation .tab-button:not(:last-child) {
+  border-bottom: 1px solid rgba(226, 232, 240, 0.9);
+}
+
+/* Evitar separadores quando em layout horizontal (mobile) */
+@media (max-width: 768px) {
+  .tab-navigation .tab-button {
+    border-bottom: none;
+  }
 }
 
 /* Tab Content */
@@ -173,15 +194,27 @@ small {
 
 /* Responsive Design for Tabs */
 @media (max-width: 768px) {
+  .settings-layout {
+    grid-template-columns: 1fr;
+  }
+  
   .tab-navigation {
+    display: flex;
+    flex-direction: row;
     padding: 6px;
     margin-bottom: 20px;
+    gap: 6px;
+    overflow-x: auto;
+    scrollbar-width: none;
   }
   
   .tab-button {
     padding: 10px 12px;
     font-size: 13px;
     gap: 6px;
+    width: auto;
+    flex: 0 0 auto;
+    min-width: 120px;
   }
   
   .tab-button span:not(.material-icons) {
@@ -196,12 +229,12 @@ small {
 @media (max-width: 480px) {
   .tab-navigation {
     padding: 4px;
-    gap: 2px;
+    gap: 4px;
   }
   
   .tab-button {
     padding: 8px 10px;
-    min-width: 44px;
+    min-width: 100px;
     justify-content: center;
   }
 }
@@ -549,6 +582,60 @@ small a:hover {
 .jira-config.disabled {
   opacity: 0.5;
   pointer-events: none;
+}
+
+/* ===== METRICS SECTION ===== */
+.metrics-config {
+  margin-top: 16px;
+  padding: 16px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+}
+
+.performance-metrics {
+  margin-top: 8px;
+}
+
+.metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 24px; /* Espaçamento claro entre Jira e EasyVista */
+}
+
+.metric-card {
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 16px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06);
+}
+
+.metric-card h4 {
+  margin: 0 0 12px 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #1f2937;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #e5e7eb; /* Separador para dar respiro */
+}
+
+.metric-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 0;
+}
+
+.metric-row span {
+  color: #4b5563;
+}
+
+.metric-row strong {
+  color: #111827;
 }
 
 /* Status messages */

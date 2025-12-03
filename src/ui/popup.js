@@ -84,6 +84,7 @@ class BugSpotter {
     document.getElementById('startRecording').addEventListener('click', () => this.startRecording());
     document.getElementById('clearHistory').addEventListener('click', () => this.clearHistory());
     document.getElementById('openSettings').addEventListener('click', () => this.openSettings());
+    // Removido: listener para seção Advanced Settings (seção foi eliminada)
 
     // Split-button: toggle e menu
     const caretBtn = document.getElementById('captureLogsToggle');
@@ -137,9 +138,17 @@ class BugSpotter {
       });
     }
 
+    // Enhancer AI button
+    const enhanceBtn = document.getElementById('enhanceWithAI');
+    if (enhanceBtn) {
+      enhanceBtn.addEventListener('click', () => this.enhanceWithAI());
+    }
+
     
     // Event listener for bug form
     document.getElementById('bugForm').addEventListener('submit', (e) => this.submitBug(e));
+
+    // Preview numerado não é atualizado durante escrita manual; somente via AI
     
     // Event listener for attachment removal and history buttons
     document.addEventListener('click', (e) => {
@@ -390,6 +399,16 @@ class BugSpotter {
     };
     
     statusIcon.textContent = icons[type] || 'info';
+
+    // Garantir visibilidade: rolar para o status se estiver fora de vista
+    try {
+      const rect = statusElement.getBoundingClientRect();
+      const viewHeight = Math.max(document.documentElement.clientHeight, window.innerHeight || 0);
+      const isVisible = rect.top >= 0 && rect.bottom <= viewHeight;
+      if (!isVisible) {
+        statusElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    } catch (_) { /* ignore scroll errors */ }
     
     // Clear previous timeout if exists
     if (this.reportStatusTimeout) {
@@ -403,6 +422,161 @@ class BugSpotter {
       }, 3000);
     }
   }
+
+  async enhanceWithAI() {
+    try {
+      // Feedback imediato no botão
+      const enhanceBtn = document.getElementById('enhanceWithAI');
+      const originalEnhanceHTML = enhanceBtn ? enhanceBtn.innerHTML : null;
+      if (enhanceBtn) {
+        enhanceBtn.disabled = true;
+        enhanceBtn.innerHTML = '<span class="material-icons">hourglass_empty</span> Enhancing...';
+      }
+
+      this.updateReportStatus('Enhancing with AI...', 'loading');
+      // Evitar erro em ambiente de preview (fora da extensão)
+      if (!this.isExtensionContext()) {
+        this.updateReportStatus('Enhance with AI está disponível apenas na extensão. Abra o popup da extensão para usar.', 'warning');
+        if (enhanceBtn) {
+          enhanceBtn.disabled = false;
+          if (typeof originalEnhanceHTML === 'string') {
+            enhanceBtn.innerHTML = originalEnhanceHTML;
+          } else {
+            enhanceBtn.innerHTML = '<span class="material-icons">auto_fix_high</span> Enhance with AI';
+          }
+        }
+        return;
+      }
+      const titleEl = document.getElementById('title');
+      const descEl = document.getElementById('description');
+      const stepsEl = document.getElementById('steps');
+      const expectedEl = document.getElementById('expectedBehavior');
+      const actualEl = document.getElementById('actualBehavior');
+      const priorityEl = document.getElementById('priority');
+      const fields = {
+        title: titleEl?.value || '',
+        description: descEl?.value || '',
+        steps: (stepsEl?.value || '').split('\n').map(s => s.trim()).filter(Boolean),
+        expectedBehavior: expectedEl?.value || '',
+        actualBehavior: actualEl?.value || ''
+      };
+
+      // Resolve active tabId to allow background to fetch interactions
+      let tabId = null;
+      try {
+        const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+        tabId = tabs && tabs[0] ? tabs[0].id : null;
+      } catch (e) {
+        // ignore; will be handled by background if null
+      }
+
+      const result = await new Promise((resolve, reject) => {
+        try {
+          chrome.runtime.sendMessage({ action: 'ENHANCE_REPORT_WITH_AI', fields, tabId }, (resp) => {
+            if (chrome.runtime.lastError) {
+              reject(new Error(chrome.runtime.lastError.message));
+              return;
+            }
+            if (resp && resp.success) {
+              resolve(resp.data);
+            } else {
+              reject(new Error(resp?.error || 'Enhancement failed'));
+            }
+          });
+        } catch (e) {
+          reject(e);
+        }
+      });
+
+      if (result) {
+        if (titleEl && typeof result.title === 'string') {
+          titleEl.value = result.title;
+        }
+        if (descEl && typeof result.description === 'string') {
+          descEl.value = result.description;
+        }
+        // Preencher Expected/Actual Behavior se fornecidos pela IA
+        if (expectedEl && typeof result.expectedBehavior === 'string') {
+          expectedEl.value = result.expectedBehavior;
+        }
+        if (actualEl && typeof result.actualBehavior === 'string') {
+          actualEl.value = result.actualBehavior;
+        }
+        // Mapear severidade da IA para prioridade selecionável
+        if (priorityEl && typeof result.severity === 'string') {
+          const sev = result.severity.toLowerCase();
+          const mapSeverityToPriorityKey = (s) => {
+            switch (s) {
+              case 'critical':
+              case 'blocker':
+              case 'highest':
+                return 'highest';
+              case 'high':
+                return 'high';
+              case 'medium':
+              case 'moderate':
+                return 'medium';
+              case 'low':
+              case 'minor':
+                return 'low';
+              default:
+                return 'medium';
+            }
+          };
+          const key = mapSeverityToPriorityKey(sev);
+          // Verificar se a opção existe antes de setar
+          const hasOption = Array.from(priorityEl.options).some(opt => opt.value === key);
+          if (hasOption) {
+            priorityEl.value = key;
+          }
+        }
+        // Preencher Steps apenas se a IA fornecer e o campo estiver vazio
+        if (stepsEl) {
+          let stepsNormalized = [];
+          if (Array.isArray(result.stepsToReproduce)) {
+            stepsNormalized = result.stepsToReproduce;
+          } else if (Array.isArray(result.steps)) {
+            stepsNormalized = result.steps;
+          } else if (Array.isArray(result['steps_to_reproduce'])) {
+            stepsNormalized = result['steps_to_reproduce'];
+          } else if (typeof result.stepsToReproduce === 'string') {
+            stepsNormalized = result.stepsToReproduce.split('\n').map(s => s.trim()).filter(Boolean);
+          } else if (typeof result.steps === 'string') {
+            stepsNormalized = result.steps.split('\n').map(s => s.trim()).filter(Boolean);
+          } else if (typeof result['steps_to_reproduce'] === 'string') {
+            stepsNormalized = result['steps_to_reproduce'].split('\n').map(s => s.trim()).filter(Boolean);
+          }
+          if (stepsNormalized.length > 20) stepsNormalized = stepsNormalized.slice(0, 20);
+          if (stepsNormalized.length && (!stepsEl.value || !stepsEl.value.trim().length)) {
+            const stepsNumbered = stepsNormalized.map((s, idx) => {
+              const clean = (s || '').replace(/^\s*(\d+[\)\.]|[-•])\s*/, '').trim();
+              return `${idx + 1}. ${clean}`;
+            });
+            stepsEl.value = stepsNumbered.join('\n');
+          }
+        }
+        this.updateReportStatus('Fields enhanced with AI', 'success');
+      } else {
+        this.updateReportStatus('No AI suggestions available', 'warning');
+      }
+    } catch (error) {
+      this.updateReportStatus(`AI enhancement error: ${error.message}`, 'error');
+    }
+    finally {
+      // Restaurar botão
+      const enhanceBtn = document.getElementById('enhanceWithAI');
+      if (enhanceBtn) {
+        enhanceBtn.disabled = false;
+        if (typeof originalEnhanceHTML === 'string') {
+          enhanceBtn.innerHTML = originalEnhanceHTML;
+        } else {
+          enhanceBtn.innerHTML = '<span class="material-icons">auto_fix_high</span> Enhance with AI';
+        }
+      }
+    }
+  }
+
+  // Preview de passos removido da extensão
 
   async captureScreenshot() {
     // captureScreenshot started - silenciado
@@ -1466,7 +1640,63 @@ class BugSpotter {
         target = 'easyvista';
       }
 
-      if (target === 'jira') {
+      // Envio sequencial para ambos quando habilitado: sempre Jira → EasyVista
+      if (jiraEnabled && evEnabled && settings.postToBoth) {
+        const order = ['jira', 'easyvista'];
+        try {
+          for (const step of order) {
+            if (step === 'jira') {
+              bugData.jiraAttempted = true;
+              const jiraResponse = await this.sendToJira(bugData);
+              const ticketKey = jiraResponse?.key || jiraResponse?.issueKey || jiraResponse?.data?.key || jiraResponse?.data?.issueKey;
+              if (ticketKey) {
+                bugData.jiraKey = ticketKey;
+                // Preparar cross-link para o próximo envio
+                const jiraUrl = this.getJiraTicketUrl(ticketKey);
+                bugData.crossLink = { ...(bugData.crossLink || {}), jiraKey: ticketKey, jiraUrl };
+                this.updateReportStatus(`Jira criado: ${ticketKey}. Prosseguindo com EasyVista...`, 'loading');
+              } else {
+                this.updateReportStatus('Jira criado com resposta inválida; continuando com EasyVista', 'warning');
+              }
+            } else if (step === 'easyvista') {
+              bugData.easyvistaAttempted = true;
+              const evResp = await this.sendToEasyVista(bugData);
+              const evId = evResp?.ticketId || evResp?.data?.ticketId || evResp?.data?.id;
+              const evUrl = evResp?.ticketUrl || evResp?.data?.ticketUrl;
+              if (evId || evUrl) {
+                bugData.easyvistaId = evId || null;
+                bugData.easyvistaUrl = evUrl || null;
+                // Preparar cross-link para o próximo envio
+                bugData.crossLink = { ...(bugData.crossLink || {}), easyvistaId: evId || undefined, easyvistaUrl: evUrl || undefined };
+                this.updateReportStatus(`EasyVista criado${evId ? ': ' + evId : ''}. Prosseguindo com Jira...`, 'loading');
+              } else {
+                this.updateReportStatus('EasyVista criado com resposta inválida; continuando com Jira', 'warning');
+              }
+            }
+          }
+          // Se Jira foi criado primeiro, adicionar comentário com link do EasyVista (formato padrão)
+          if (order[0] === 'jira' && bugData.jiraKey && (bugData.easyvistaUrl || bugData.easyvistaId)) {
+            const commentBody = bugData.crossLink?.easyvistaUrl
+              ? `[EASYVISTA] ${bugData.crossLink.easyvistaUrl}`
+              : (bugData.crossLink?.easyvistaId ? `[EASYVISTA] ${bugData.crossLink.easyvistaId}` : null);
+            if (commentBody) {
+              try {
+                await this.addJiraComment(bugData.jiraKey, commentBody);
+              } catch (commentError) {
+                console.warn('Falha ao adicionar comentário de cross-link no Jira:', commentError);
+              }
+            }
+          }
+          const summary = [
+            bugData.jiraKey ? `Jira: ${bugData.jiraKey}` : null,
+            bugData.easyvistaId ? `EasyVista: ${bugData.easyvistaId}` : null
+          ].filter(Boolean).join(' | ');
+          this.updateReportStatus(`Report enviado para ambos. ${summary}`, 'success');
+        } catch (dualError) {
+          console.error('Erro no envio duplo:', dualError);
+          this.updateReportStatus('Erro ao enviar para ambos: ' + dualError.message, 'warning');
+        }
+      } else if (target === 'jira') {
         try {
           bugData.jiraAttempted = true;
           const jiraResponse = await this.sendToJira(bugData);
@@ -1526,6 +1756,30 @@ class BugSpotter {
     }
   }
 
+  async addJiraComment(issueKey, body) {
+    return new Promise((resolve, reject) => {
+      chrome.runtime.sendMessage({
+        action: 'ADD_JIRA_COMMENT',
+        issueKey,
+        body
+      }, (response) => {
+        if (chrome.runtime.lastError) {
+          reject(new Error(`Communication error: ${chrome.runtime.lastError.message}`));
+          return;
+        }
+        if (!response) {
+          reject(new Error('No response received from background script'));
+          return;
+        }
+        if (response.success === false) {
+          reject(new Error(response.error || 'Unknown error'));
+          return;
+        }
+        resolve(response.data || { ok: true });
+      });
+    });
+  }
+
   async getSettings() {
     try {
       let settings = {};
@@ -1551,6 +1805,7 @@ class BugSpotter {
         includeConsole: settings.popup?.includeConsole ?? true,
         maxFileSize: settings.popup?.maxFileSize ?? 5,
         preferredTarget: settings.preferredTarget || 'jira',
+        postToBoth: !!settings.postToBoth,
         capture: {
           autoCaptureLogs: settings.capture?.autoCaptureLogs ?? true,
           screenshotFormat: settings.capture?.screenshotFormat ?? 'png',
@@ -1584,6 +1839,7 @@ class BugSpotter {
         includeConsole: true,
         maxFileSize: 5,
         preferredTarget: 'jira',
+        postToBoth: false,
         capture: {
           autoCaptureLogs: true,
           screenshotFormat: 'png',
@@ -1763,6 +2019,10 @@ class BugSpotter {
         this.loadAIReports()
       ]).then(([manualReports, aiReports]) => {
         this.displayBugHistory(manualReports, aiReports);
+        // Disparar migração de relatórios AI sem steps, se necessário (não bloqueante)
+        this.migrateAIReportsIfNeeded().catch((err) => {
+          console.warn('AI reports migration skipped/error:', err);
+        });
         resolve();
       }).catch(error => {
         console.error('Error loading history:', error);
@@ -1821,6 +2081,66 @@ class BugSpotter {
       } else {
         resolve([]);
       }
+    });
+  }
+
+  // Verifica se há relatórios AI sem steps e dispara migração no background
+  async migrateAIReportsIfNeeded() {
+    if (!this.isExtensionContext()) return false;
+    return new Promise((resolve) => {
+      chrome.tabs.query({active: true, currentWindow: true}, (tabs) => {
+        if (!tabs || tabs.length === 0) { resolve(false); return; }
+        const tabId = tabs[0].id;
+
+        const key = `ai-reports-${tabId}`;
+        const flagKey = `ai-migration-done-${tabId}`;
+
+        chrome.storage.local.get([key, flagKey], (result) => {
+          const alreadyDone = !!result[flagKey];
+          const aiReports = result[key] || [];
+          const missingSteps = aiReports.filter(r => {
+            const steps = r && r.stepsToReproduce;
+            return !steps || (Array.isArray(steps) && steps.length === 0) || (typeof steps === 'string' && steps.trim() === '');
+          });
+
+          if (alreadyDone || missingSteps.length === 0) {
+            // Marcar como done para evitar nova checagem visual
+            if (!alreadyDone) {
+              chrome.storage.local.set({ [flagKey]: true }, () => resolve(false));
+            } else {
+              resolve(false);
+            }
+            return;
+          }
+
+          // Informar ao usuário que vamos migrar
+          this.updateHistoryStatus('Migrando passos dos relatórios AI...', 'info');
+
+          // Disparar migração no background
+          chrome.runtime.sendMessage({ action: 'MIGRATE_AI_REPORT_STEPS', tabId }, (response) => {
+            if (chrome.runtime.lastError) {
+              console.warn('Erro ao solicitar migração:', chrome.runtime.lastError.message);
+              this.updateHistoryStatus('Falha ao migrar relatórios AI.', 'error');
+              resolve(false);
+              return;
+            }
+
+            if (response && response.success) {
+              // Marcar flag de migração concluída para esta aba
+              chrome.storage.local.set({ [flagKey]: true }, () => {
+                this.updateHistoryStatus('Migração concluída. Atualizando histórico...', 'success');
+                // Recarregar histórico para refletir novos steps
+                this.loadBugHistory();
+                resolve(true);
+              });
+            } else {
+              const msg = (response && response.error) ? response.error : 'Migração não retornou sucesso.';
+              this.updateHistoryStatus(`Falha na migração: ${msg}`, 'error');
+              resolve(false);
+            }
+          });
+        });
+      });
     });
   }
 
@@ -2175,11 +2495,14 @@ class BugSpotter {
     
     // Preparar metadados padronizados
     const createdAt = new Date(report.createdAt || report.timestamp || Date.now()).toLocaleString();
-    const pageUrlText = report.url || report.pageUrl || 'Not available';
+    const pageUrlText = report.url || report.pageUrl || (report.originalError && report.originalError.url) || 'Not available';
     const priorityText = report.severity || 'Not defined';
     const categoryText = report.category || '';
     const environmentText = report.environment || '';
     const descriptionText = report.description || report.analysis || 'No description provided.';
+    const stepsData = Array.isArray(report.stepsToReproduce)
+      ? report.stepsToReproduce
+      : (Array.isArray(report.steps) ? report.steps : []);
 
     // Construir lista de anexos para preview
     let attachmentsHTML = '';
@@ -2264,27 +2587,36 @@ class BugSpotter {
             <p>${descriptionText}</p>
           </div>
 
+          <div class="report-section">
+            <h4><span class="material-icons">format_list_numbered</span> Steps to Reproduce</h4>
+            <ol id="aiStepsList" class="steps-list"></ol>
+          </div>
+
+          ${report.expectedBehavior ? `
+            <div class="report-section">
+              <h4><span class="material-icons">check_circle</span> Expected Behavior</h4>
+              <p>${report.expectedBehavior}</p>
+            </div>
+          ` : ''}
+
+          ${report.actualBehavior ? `
+            <div class="report-section">
+              <h4><span class="material-icons">error</span> Actual Behavior</h4>
+              <p>${report.actualBehavior}</p>
+            </div>
+          ` : ''}
+
           <div class="report-meta">
+            <h4><span class="material-icons">info</span> Report Details</h4>
             <div class="meta-item"><span class="material-icons">flag</span><span>Priority: ${priorityText}</span></div>
             ${categoryText ? `<div class="meta-item"><span class="material-icons">category</span><span>Category: ${categoryText}</span></div>` : ''}
             ${environmentText ? `<div class="meta-item"><span class="material-icons">computer</span><span>Environment: ${environmentText}</span></div>` : ''}
             <div class="meta-item"><span class="material-icons">schedule</span><span>Created at: ${createdAt}</span></div>
-            <div class="meta-item"><span class="material-icons">link</span><span>Page URL: ${pageUrlText}</span></div>
+            <div class="meta-item"><span class="material-icons">link</span><span class="meta-url" title="${pageUrlText}">Page URL: ${pageUrlText}</span></div>
+            ${report.originalError && (report.originalError.status || report.originalError.statusText) ? `<div class="meta-item"><span class="material-icons">error</span><span>HTTP Error: ${[report.originalError.status, report.originalError.statusText].filter(Boolean).join(' ')}${report.originalError.method ? ' · ' + report.originalError.method : ''}</span></div>` : ''}
+            ${report.originalError && report.originalError.url && report.originalError.url !== pageUrlText ? `<div class="meta-item"><span class="material-icons">link</span><span>Request URL: ${report.originalError.url}</span></div>` : ''}
           </div>
           
-          ${report.originalError ? `
-            <div class="report-section">
-              <h4 class="error-section-header">
-                <span class="material-icons">error</span>
-                <span>Original Error</span>
-                <span class="error-status-badge">${[report.originalError.status, report.originalError.statusText].filter(Boolean).join(' ')}</span>
-              </h4>
-              <button class="error-details-toggle">Show details</button>
-              <div class="error-details" style="display: none;">
-                ${report.originalError.url && report.originalError.url !== pageUrlText ? `<p><strong>Request URL:</strong> ${report.originalError.url}</p>` : ''}
-              </div>
-            </div>
-          ` : ''}
           
           ${attachmentsHTML}
           ${screenshotHTML}
@@ -2314,6 +2646,37 @@ class BugSpotter {
 
     // Tentar popular tamanhos de anexos gerados dinamicamente (apenas em contexto de extensão)
     this.tryPopulateAIAttachmentSizes(report, modal).catch(() => {});
+
+    // Popular lista de passos com segurança (textContent) e suportar formatos string/objeto
+    try {
+      const listEl = modal.querySelector('#aiStepsList');
+      if (listEl) {
+        const toText = (step) => {
+          if (typeof step === 'string') return step;
+          if (!step || typeof step !== 'object') return '';
+          const parts = [];
+          const type = step.type || step.kind;
+          const selector = step.selector || step.path;
+          const text = step.text || step.value || '';
+          if (type) parts.push(type);
+          if (selector) parts.push(selector);
+          if (text) parts.push(text);
+          return parts.join(' - ') || JSON.stringify(step);
+        };
+
+        if (Array.isArray(stepsData) && stepsData.length > 0) {
+          stepsData.slice(0, 20).forEach((s) => {
+            const li = document.createElement('li');
+            li.textContent = toText(s);
+            listEl.appendChild(li);
+          });
+        } else {
+          const li = document.createElement('li');
+          li.textContent = 'No steps available for this report.';
+          listEl.appendChild(li);
+        }
+      }
+    } catch (_) { /* ignore steps population errors */ }
 
     // Toggle de detalhes do erro original
     try {
@@ -2527,12 +2890,10 @@ class BugSpotter {
             <p>${report.description || 'No description provided.'}</p>
           </div>
           
-          ${report.steps ? `
-            <div class="report-section">
-              <h4><span class="material-icons">list</span> Steps to Reproduce</h4>
-              <p>${report.steps}</p>
-            </div>
-          ` : ''}
+          <div class="report-section">
+            <h4><span class="material-icons">format_list_numbered</span> Steps to Reproduce</h4>
+            <ol id="manualStepsList" class="steps-list"></ol>
+          </div>
           
           ${report.expectedBehavior ? `
             <div class="report-section">
@@ -2543,12 +2904,13 @@ class BugSpotter {
           
           ${report.actualBehavior ? `
             <div class="report-section">
-              <h4><span class="material-icons">error</span> Current Behavior</h4>
+              <h4><span class="material-icons">error</span> Actual Behavior</h4>
               <p>${report.actualBehavior}</p>
             </div>
           ` : ''}
           
           <div class="report-meta">
+            <h4><span class="material-icons">info</span> Report Details</h4>
             <div class="meta-item">
               <span class="material-icons">flag</span>
               <span>Priority: ${report.priority || 'Not defined'}</span>
@@ -2565,8 +2927,10 @@ class BugSpotter {
             </div>
             <div class="meta-item">
               <span class="material-icons">link</span>
-              <span>Page URL: ${report.url || report.pageUrl || 'Not available'}</span>
+              <span class="meta-url" title="${report.url || report.pageUrl || 'Not available'}">Page URL: ${report.url || report.pageUrl || 'Not available'}</span>
             </div>
+            ${report.originalError && (report.originalError.status || report.originalError.statusText) ? `<div class="meta-item"><span class="material-icons">error</span><span>HTTP Error: ${[report.originalError.status, report.originalError.statusText].filter(Boolean).join(' ')}${report.originalError.method ? ' · ' + report.originalError.method : ''}</span></div>` : ''}
+            ${report.originalError && report.originalError.url && report.originalError.url !== (report.url || report.pageUrl) ? `<div class="meta-item"><span class="material-icons">link</span><span>Request URL: ${report.originalError.url}</span></div>` : ''}
           </div>
 
           ${report.attachments && report.attachments.length > 0 ? `
@@ -2609,6 +2973,7 @@ class BugSpotter {
               <button class="error-details-toggle">Show details</button>
               <div class="error-details" style="display: none;">
                 ${report.originalError.url && report.originalError.url !== (report.url || report.pageUrl) ? `<p><strong>Request URL:</strong> ${report.originalError.url}</p>` : ''}
+                ${report.originalError.method ? `<p><strong>Method:</strong> ${report.originalError.method}</p>` : ''}
               </div>
             </div>
           ` : ''}
@@ -2627,6 +2992,49 @@ class BugSpotter {
     });
 
     document.body.appendChild(modal);
+
+    // Popular lista numerada de passos com parsing seguro
+    try {
+      const listEl = modal.querySelector('#manualStepsList');
+      if (listEl) {
+        const rawSteps = Array.isArray(report.stepsToReproduce)
+          ? report.stepsToReproduce
+          : (Array.isArray(report.steps) ? report.steps : (typeof report.steps === 'string' ? report.steps : ''));
+
+        const toText = (step) => {
+          if (typeof step === 'string') return step;
+          if (!step || typeof step !== 'object') return '';
+          const parts = [];
+          const type = step.type || step.kind;
+          const selector = step.selector || step.path;
+          const text = step.text || step.value || '';
+          if (type) parts.push(type);
+          if (selector) parts.push(selector);
+          if (text) parts.push(text);
+          return parts.join(' - ') || JSON.stringify(step);
+        };
+
+        let stepsArray = [];
+        if (Array.isArray(rawSteps)) {
+          stepsArray = rawSteps;
+        } else if (typeof rawSteps === 'string' && rawSteps.trim().length > 0) {
+          // Dividir por quebras de linha ou ponto e vírgula; remover numeração prefixada
+          stepsArray = rawSteps.split(/\r?\n|;/).map(s => s.replace(/^\s*\d+\.\s*/, '').trim()).filter(Boolean);
+        }
+
+        if (stepsArray.length > 0) {
+          stepsArray.slice(0, 50).forEach((s) => {
+            const li = document.createElement('li');
+            li.textContent = toText(s);
+            listEl.appendChild(li);
+          });
+        } else {
+          const li = document.createElement('li');
+          li.textContent = 'No steps provided.';
+          listEl.appendChild(li);
+        }
+      }
+    } catch (_) { /* ignore steps population errors */ }
 
     // Toggle de detalhes do erro original (manual)
     try {
@@ -2662,8 +3070,10 @@ class BugSpotter {
       const bugData = {
         title: report.title,
         description: report.description || report.analysis || 'AI-generated report',
-        // Mapear steps do relatório de IA
-        steps: report.stepsToReproduce || [],
+        // Mapear steps do relatório de IA com sanitização de prefixos numéricos/bullets
+        steps: Array.isArray(report.stepsToReproduce)
+          ? report.stepsToReproduce.map(s => (s || '').replace(/^\s*(\d+[\)\.]|[-•])\s*/, '').trim())
+          : [],
         expectedBehavior: report.expectedBehavior,
         actualBehavior: report.actualBehavior,
         // Usar severity do relatório de IA, apenas para descrição (não define prioridade Jira em AI)
@@ -2853,7 +3263,9 @@ class BugSpotter {
       const bugData = {
         title: report.title,
         description: report.description || report.analysis || 'AI-generated report',
-        steps: report.stepsToReproduce || [],
+        steps: Array.isArray(report.stepsToReproduce)
+          ? report.stepsToReproduce.map(s => (s || '').replace(/^\s*(\d+[\)\.]|[-•])\s*/, '').trim())
+          : [],
         expectedBehavior: report.expectedBehavior,
         actualBehavior: report.actualBehavior,
         priority: report.severity || 'Medium',
@@ -3544,6 +3956,23 @@ document.addEventListener('DOMContentLoaded', async () => {
   try {
     window.bugSpotter = new BugSpotter();
     await window.bugSpotter.init();
+
+    // Modo de preview: abrir modal de relatório manual com steps numerados
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('previewManualSteps') === '1') {
+      const mockReport = {
+        title: 'Preview Manual Report',
+        description: 'Exemplo de descrição de bug para preview.',
+        steps: '1. Abrir a página X\n2. Clicar no botão Y\n3. Observar erro Z',
+        expectedBehavior: 'Deveria carregar sem erros.',
+        actualBehavior: 'Aparece erro 500.',
+        priority: 'High',
+        environment: 'Chrome 118 / macOS',
+        timestamp: new Date().toISOString(),
+        url: 'https://example.com'
+      };
+      window.bugSpotter.showManualReportModal(mockReport);
+    }
   } catch (error) {
     console.error('[Popup] Error during initialization:', error);
   }
