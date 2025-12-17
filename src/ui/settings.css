@@ -99,6 +99,15 @@ small {
   align-items: start;
 }
 
+/* Garantir posicionamento consistente das colunas */
+.settings-layout .tab-navigation {
+  grid-column: 1;
+}
+
+.settings-layout .tab-content-container {
+  grid-column: 2;
+}
+
 /* Tab Navigation */
 .tab-navigation {
   display: flex;
@@ -193,7 +202,7 @@ small {
 }
 
 /* Responsive Design for Tabs */
-@media (max-width: 768px) {
+@media (max-width: 600px) {
   .settings-layout {
     grid-template-columns: 1fr;
   }
@@ -1016,4 +1025,26 @@ form .btn[type="submit"] {
     align-items: flex-start;
     gap: 4px;
   }
+}
+.actions-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.actions-row .actions-buttons {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.actions-row .help-text {
+  margin: 0;
+}
+
+.jira-sync-section .actions-row {
+  border-top: 1px solid rgba(0,0,0,0.08);
+  padding-top: 12px;
 }

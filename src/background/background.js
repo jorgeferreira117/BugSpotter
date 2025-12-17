@@ -172,6 +172,9 @@ class BugSpotterBackground {
     chrome.runtime.onSuspend.addListener(() => {
       this.cleanup();
     });
+
+    // Inicializar agendamento de sincronização Jira
+    await this.initializeJiraSync();
   }
 
   setupEventListeners() {
@@ -226,6 +229,22 @@ class BugSpotterBackground {
     
     // 🆕 Listeners para navegação - preservar estado de gravação
     this.setupNavigationListeners();
+
+    // 🆕 Listener para alarmes (Jira Sync)
+    if (chrome.alarms && chrome.alarms.onAlarm) {
+      chrome.alarms.onAlarm.addListener((alarm) => {
+        if (alarm.name === 'jiraSync') {
+          this.runJiraSync().catch(e => console.error('[Background] Jira sync error:', e));
+        }
+      });
+    }
+
+    // 🆕 Reagendar quando configurações mudarem
+    chrome.storage.onChanged.addListener((changes, areaName) => {
+      if (areaName === 'local' && changes.settings) {
+        this.scheduleJiraSync(changes.settings.newValue).catch(e => console.error('[Background] Failed to reschedule Jira sync:', e));
+      }
+    });
   }
   
   setupNavigationListeners() {
@@ -243,6 +262,180 @@ class BugSpotterBackground {
           this.handleNavigationCompleted(details.tabId, details.url);
         }
       });
+    }
+  }
+
+  async initializeJiraSync() {
+    try {
+      const { settings } = await chrome.storage.local.get(['settings']);
+      await this.scheduleJiraSync(settings);
+    } catch (error) {
+      console.warn('[Background] initializeJiraSync warning:', error);
+    }
+  }
+
+  async scheduleJiraSync(settings) {
+    try {
+      if (!chrome.alarms) return;
+      await chrome.alarms.clear('jiraSync');
+      const jiraEnabled = !!(settings && settings.jira && settings.jira.enabled);
+      const syncEnabled = !!(settings && settings.jiraSync && settings.jiraSync.enabled);
+      const interval = (settings && settings.jiraSync && settings.jiraSync.intervalMinutes) || 5;
+      if (jiraEnabled && syncEnabled && interval >= 1) {
+        chrome.alarms.create('jiraSync', { periodInMinutes: interval });
+        console.log(`[Background] Jira sync scheduled every ${interval} min`);
+      } else {
+        console.log('[Background] Jira sync disabled or Jira not enabled');
+      }
+    } catch (error) {
+      console.error('[Background] scheduleJiraSync error:', error);
+    }
+  }
+
+  async runJiraSync() {
+    const { settings } = await chrome.storage.local.get(['settings']);
+    if (!settings) {
+      throw new Error('No settings available');
+    }
+    // Exigir que o Jira Sync esteja habilitado, independentemente da integração Jira
+    if (!settings.jiraSync?.enabled) {
+      throw new Error('Jira Sync is not enabled');
+    }
+    // Base URL continua sendo o da integração Jira
+    if (!settings.jira || !settings.jira.baseUrl) {
+      throw new Error('Jira Base URL missing');
+    }
+    const summary = await this.performJiraSync(settings);
+    await chrome.storage.local.set({ jiraSyncLastResult: summary });
+    return summary;
+  }
+
+  async performJiraSync(settings) {
+    const baseUrl = settings.jira.baseUrl;
+    // Preferir overrides do Jira Sync, se fornecidos
+    const email = settings.jiraSync?.email || settings.jira.email;
+    const apiToken = settings.jiraSync?.apiToken || settings.jira.apiToken;
+    const projectKey = settings.jiraSync?.projectKey || settings.jira.projectKey;
+    // Ajuste: incluir tickets com EV ID e não excluir status Done para capturar transições
+    const fieldId = settings.jiraSync?.fieldId || 'customfield_12345';
+    const jql = settings.jiraSync?.jql || `project = ${projectKey} AND ${fieldId} IS NOT EMPTY`;
+
+    if (!email || !apiToken) {
+      throw new Error('Jira credentials missing for sync');
+    }
+    const auth = btoa(`${email}:${apiToken}`);
+    const url = `${baseUrl}/rest/api/3/search?jql=${encodeURIComponent(jql)}&fields=summary,${encodeURIComponent(fieldId)},status&maxResults=50`;
+    const res = await fetch(url, {
+      headers: {
+        'Authorization': `Basic ${auth}`,
+        'Accept': 'application/json'
+      }
+    });
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+    }
+    const data = await res.json();
+    const issues = Array.isArray(data.issues) ? data.issues : [];
+    const missingField = issues.filter(i => !i.fields || i.fields[fieldId] == null);
+    // Detectar mudanças de status comparando com cache anterior
+    const stored = await chrome.storage.local.get(['jiraStatusCache', 'evSyncedCache']);
+    const prevCache = stored.jiraStatusCache || {};
+    const evSyncedCache = stored.evSyncedCache || {};
+    const newCache = {};
+    const statusChanges = [];
+    for (const i of issues) {
+      const statusName = i?.fields?.status?.name || '';
+      newCache[i.key] = statusName;
+      if (prevCache[i.key] !== statusName) {
+        statusChanges.push({ key: i.key, prev: prevCache[i.key], curr: statusName, issue: i });
+      }
+    }
+    await chrome.storage.local.set({ jiraStatusCache: newCache });
+
+    const summary = {
+      timestamp: Date.now(),
+      total: typeof data.total === 'number' ? data.total : issues.length,
+      checked: issues.length,
+      missingFieldCount: missingField.length,
+      sampleMissing: missingField.slice(0, 5).map(i => i.key)
+    };
+
+    // Aplica sync de status para EasyVista quando habilitado
+    if (settings.easyvista?.statusSync?.enabled) {
+      const updateTemplate = settings.easyvista.statusSync.updateUrlTemplate || '';
+      const token = settings.easyvista.apiKey || '';
+      const mapping = settings.easyvista.statusSync.fieldMapping || {};
+      const linkFieldId = fieldId; // usar o mesmo campo configurado para link EV
+      let attempted = 0, succeeded = 0, failed = 0;
+      const updatedIssues = [];
+
+      for (const change of statusChanges) {
+        const statusName = change.curr || '';
+        // Focar em transições para Resolved/Done
+        const isResolved = /resolved|done/i.test(statusName);
+        if (!isResolved) continue;
+        const issue = change.issue;
+        const evIdRaw = issue?.fields?.[linkFieldId];
+        const evId = typeof evIdRaw === 'object' && evIdRaw != null ? (evIdRaw.id || evIdRaw.value || evIdRaw.key || evIdRaw) : evIdRaw;
+        if (!evId) continue;
+
+        // Ledger de proteção: evitar atualização duplicada se já sincronizado para o mesmo status
+        const lastSynced = evSyncedCache[change.key];
+        if (lastSynced && typeof lastSynced === 'object' && String(lastSynced.evId) === String(evId) && (lastSynced.lastStatus || '').toLowerCase() === statusName.toLowerCase()) {
+          continue;
+        }
+
+        attempted++;
+        try {
+          // Construir payload
+          const payload = { status: statusName };
+          for (const [evField, jiraFieldId] of Object.entries(mapping)) {
+            payload[evField] = issue?.fields?.[jiraFieldId];
+          }
+          await this.updateEasyVistaRecord(evId, updateTemplate, token, payload);
+          succeeded++;
+          updatedIssues.push(change.key);
+
+          // Atualizar ledger
+          evSyncedCache[change.key] = { lastStatus: statusName, ts: Date.now(), evId };
+        } catch (err) {
+          failed++;
+          console.debug('[Background] EasyVista update failed for', change.key, err?.message || err);
+        }
+      }
+      // Persistir ledger atualizado
+      await chrome.storage.local.set({ evSyncedCache });
+      summary.evStatusSync = {
+        attempted,
+        succeeded,
+        failed,
+        updatedIssues: updatedIssues.slice(0, 5)
+      };
+    }
+    return summary;
+  }
+
+  async updateEasyVistaRecord(evId, urlTemplate, token, payload) {
+    if (!urlTemplate || !urlTemplate.includes('{id}')) {
+      throw new Error('Invalid EasyVista update URL template');
+    }
+    const url = urlTemplate.replace('{id}', encodeURIComponent(String(evId)));
+    const res = await fetch(url, {
+      method: 'PUT',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      },
+      body: JSON.stringify(payload || {})
+    });
+    if (!res.ok) {
+      throw new Error(`EV HTTP ${res.status}: ${res.statusText}`);
+    }
+    try {
+      return await res.json();
+    } catch (_) {
+      return {};
     }
   }
   
@@ -1604,12 +1797,8 @@ class BugSpotterBackground {
           break;
 
         case 'SEND_TO_EASYVISTA':
-          try {
-            const evResult = await this.sendToEasyVista(message.data);
-            sendResponse({ success: true, data: evResult });
-          } catch (error) {
-            sendResponse({ success: false, error: error.message });
-          }
+          // EasyVista integration is being dismantled; short-circuit any send attempts
+          sendResponse({ success: false, error: 'EasyVista integration disabled (phase-out)' });
           break;
 
         case 'ADD_JIRA_COMMENT':
@@ -1621,7 +1810,7 @@ class BugSpotterBackground {
             sendResponse({ success: false, error: error.message });
           }
           break;
-
+    
         case 'TEST_JIRA_CONNECTION':
           try {
             const jiraConfig = message.config;
@@ -1632,14 +1821,15 @@ class BugSpotterBackground {
           }
           break;
 
+        case 'JIRA_SYNC_NOW':
+          this.runJiraSync()
+            .then(summary => sendResponse({ success: true, data: summary }))
+            .catch(error => sendResponse({ success: false, error: error.message }));
+          break;
+
         case 'TEST_EASYVISTA_CONNECTION':
-          try {
-            const evConfig = message.config;
-            const testResult = await this.testEasyVistaConnection(evConfig);
-            sendResponse({ success: true, data: testResult });
-          } catch (error) {
-            sendResponse({ success: false, error: error.message });
-          }
+          // EasyVista integration is being dismantled; disable connection testing
+          sendResponse({ success: false, error: 'EasyVista integration disabled (phase-out)' });
           break;
 
         case 'ENHANCE_REPORT_WITH_AI': {
@@ -3521,6 +3711,7 @@ ${lines.join('\n')}`;
       }
       
       // Armazenar no storage
+      reportData.originTabId = tabId;
       const key = `ai-reports-${tabId}`;
       const existingReports = await chrome.storage.local.get(key);
       const reports = existingReports[key] || [];

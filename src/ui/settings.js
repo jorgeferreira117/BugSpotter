@@ -1,8 +1,6 @@
 class BugSpotterSettings {
   constructor() {
     this.defaultSettings = {
-      preferredTarget: 'jira',
-      postToBoth: false,
       jira: {
         enabled: false,
         baseUrl: 'https://jorgealijo.atlassian.net',
@@ -18,11 +16,17 @@ class BugSpotterSettings {
           lowest: 'Lowest'
         }
       },
+      // 🆕 Configuração genérica de sincronização Jira
+      jiraSync: {
+        enabled: false,
+        intervalMinutes: 5,
+        jql: '',
+        fieldId: 'customfield_12345'
+      },
       easyvista: {
         enabled: false,
         baseUrl: '',
-        apiKey: '',
-        catalogGuid: ''
+        apiKey: ''
       },
       capture: {
         autoCaptureLogs: true,
@@ -113,14 +117,24 @@ class BugSpotterSettings {
     document.getElementById('jiraForm').addEventListener('submit', (e) => this.saveJiraSettings(e));
     document.getElementById('jiraEnabled').addEventListener('change', () => this.toggleJiraConfig());
     document.getElementById('testJiraConnection').addEventListener('click', () => this.testJiraConnection());
+    // 🆕 Jira Sync
+    const jiraSyncEnabledEl = document.getElementById('jiraSyncEnabled');
+    if (jiraSyncEnabledEl) jiraSyncEnabledEl.addEventListener('change', () => this.toggleJiraSyncConfig());
+    const jiraSyncNowBtn = document.getElementById('jiraSyncNow');
+    if (jiraSyncNowBtn) jiraSyncNowBtn.addEventListener('click', () => this.triggerJiraSyncNow());
+    const testSyncBtn = document.getElementById('testJiraSyncCredentials');
+    if (testSyncBtn) testSyncBtn.addEventListener('click', () => this.testJiraSyncCredentials());
+    const saveSyncBtn = document.getElementById('saveJiraSyncSettings');
+    if (saveSyncBtn) saveSyncBtn.addEventListener('click', () => this.saveJiraSyncSettings());
 
     // EasyVista form
     const evForm = document.getElementById('easyvistaForm');
     if (evForm) evForm.addEventListener('submit', (e) => this.saveEasyVistaSettings(e));
     const evEnabled = document.getElementById('easyvistaEnabled');
     if (evEnabled) evEnabled.addEventListener('change', () => this.toggleEasyVistaConfig());
-    const evTestBtn = document.getElementById('testEasyVistaConnection');
-    if (evTestBtn) evTestBtn.addEventListener('click', () => this.testEasyVistaConnection());
+    const evStatusEnable = document.getElementById('easyvistaStatusSyncEnable');
+    if (evStatusEnable) evStatusEnable.addEventListener('change', () => this.toggleEasyVistaStatusSyncConfig());
+    // Removido: teste de conexão EasyVista
     
     // 🆕 Monitorar mudanças nos campos do Jira para atualizar estado das prioridades
     ['jiraUrl', 'jiraEmail', 'jiraApiToken', 'jiraProjectKey'].forEach(fieldId => {
@@ -181,36 +195,7 @@ class BugSpotterSettings {
     document.getElementById('importData').addEventListener('click', () => this.importData());
     document.getElementById('clearData').addEventListener('click', () => this.clearData());
 
-    // Submission preferences
-    const preferredTargetEl = document.getElementById('preferredTarget');
-    if (preferredTargetEl) {
-      preferredTargetEl.addEventListener('change', async (e) => {
-        const value = e.target.value;
-        if (!['jira', 'easyvista'].includes(value)) return;
-        this.settings.preferredTarget = value;
-        try {
-          await this.saveSettings();
-          this.showStatus('✅ Preferred target saved!', 'success');
-        } catch (err) {
-          this.showStatus('❌ Error saving preferred target', 'error');
-        }
-      });
-    }
-
-    const postToBothEl = document.getElementById('postToBoth');
-    if (postToBothEl) {
-      postToBothEl.addEventListener('change', async (e) => {
-        this.settings.postToBoth = !!e.target.checked;
-        const preferredTargetEl2 = document.getElementById('preferredTarget');
-        if (preferredTargetEl2) preferredTargetEl2.disabled = !!this.settings.postToBoth;
-        try {
-          await this.saveSettings();
-          this.showStatus('✅ "Send to both" preference saved!', 'success');
-        } catch (err) {
-          this.showStatus('❌ Error saving "Send to both"', 'error');
-        }
-      });
-    }
+    // Submission preferences removidas
   }
 
   deepMerge(target, source) {
@@ -323,6 +308,24 @@ class BugSpotterSettings {
     document.getElementById('jiraProjectKey').value = this.settings.jira.projectKey;
     document.getElementById('jiraIssueType').value = this.settings.jira.issueTypeId;
 
+    // 🆕 Jira Sync UI
+    const syncEnabledEl = document.getElementById('jiraSyncEnabled');
+    const syncIntervalEl = document.getElementById('jiraSyncInterval');
+    const syncJQLEl = document.getElementById('jiraSyncJQL');
+    const syncFieldEl = document.getElementById('jiraSyncFieldId');
+    if (syncEnabledEl) syncEnabledEl.checked = !!this.settings.jiraSync?.enabled;
+    if (syncIntervalEl) syncIntervalEl.value = this.settings.jiraSync?.intervalMinutes ?? 5;
+    if (syncJQLEl) syncJQLEl.value = this.settings.jiraSync?.jql ?? '';
+    if (syncFieldEl) syncFieldEl.value = this.settings.jiraSync?.fieldId ?? 'customfield_12345';
+    // 🆕 Jira Sync credential overrides
+    const syncEmailEl = document.getElementById('jiraSyncEmail');
+    if (syncEmailEl) syncEmailEl.value = this.settings.jiraSync?.email || '';
+    const syncTokenEl = document.getElementById('jiraSyncApiToken');
+    if (syncTokenEl) syncTokenEl.value = this.settings.jiraSync?.apiToken || '';
+    const syncProjectEl = document.getElementById('jiraSyncProjectKey');
+    if (syncProjectEl) syncProjectEl.value = this.settings.jiraSync?.projectKey || '';
+    this.loadJiraSyncStatus();
+
     // Load priority settings
     this.loadPriorityUI();
 
@@ -333,8 +336,22 @@ class BugSpotterSettings {
     if (evUrl) evUrl.value = this.settings.easyvista.baseUrl || '';
     const evApiKey = document.getElementById('easyvistaApiKey');
     if (evApiKey) evApiKey.value = this.settings.easyvista.apiKey || '';
-    const evCatalog = document.getElementById('easyvistaCatalogGuid');
-    if (evCatalog) evCatalog.value = this.settings.easyvista.catalogGuid || '';
+    // Campo Catalog GUID removido
+
+    // 🆕 EasyVista Status Sync settings
+    const evStatusEnableEl = document.getElementById('easyvistaStatusSyncEnable');
+    if (evStatusEnableEl) evStatusEnableEl.checked = !!this.settings.easyvista?.statusSync?.enabled;
+    const evUpdateTplEl = document.getElementById('easyvistaUpdateUrlTemplate');
+    if (evUpdateTplEl) evUpdateTplEl.value = this.settings.easyvista?.statusSync?.updateUrlTemplate || '';
+    const evMappingEl = document.getElementById('easyvistaFieldMapping');
+    if (evMappingEl) {
+      const fm = this.settings.easyvista?.statusSync?.fieldMapping || {};
+      try {
+        evMappingEl.value = Object.keys(fm).length ? JSON.stringify(fm, null, 2) : '';
+      } catch (_) {
+        evMappingEl.value = '';
+      }
+    }
 
     // Capture settings
     document.getElementById('autoCaptureLogs').checked = this.settings.capture.autoCaptureLogs;
@@ -372,20 +389,13 @@ class BugSpotterSettings {
     document.getElementById('errorThreshold').value = this.settings.notifications.errorThreshold;
     document.getElementById('notificationSound').checked = this.settings.notifications.sound;
 
-    // Submission preferences
-    const preferredTargetEl = document.getElementById('preferredTarget');
-    if (preferredTargetEl) {
-      preferredTargetEl.value = this.settings.preferredTarget || 'jira';
-      preferredTargetEl.disabled = !!this.settings.postToBoth;
-    }
-    const postToBothEl = document.getElementById('postToBoth');
-    if (postToBothEl) {
-      postToBothEl.checked = !!this.settings.postToBoth;
-    }
+    // Submission preferences removidas
 
     // Update config visibility
     this.toggleJiraConfig();
+    this.toggleJiraSyncConfig();
     this.toggleEasyVistaConfig();
+    this.toggleEasyVistaStatusSyncConfig();
     this.toggleAIConfig();
     this.toggleNotificationsConfig();
     this.updateAPIKeyHelp();
@@ -417,6 +427,123 @@ class BugSpotterSettings {
     }
   }
 
+  // 🆕 Mostrar/ocultar configuração de status sync do EasyVista
+  toggleEasyVistaStatusSyncConfig() {
+    const enabled = document.getElementById('easyvistaStatusSyncEnable')?.checked;
+    const config = document.getElementById('easyvistaStatusSyncConfig');
+    if (!config) return;
+    if (enabled) {
+      config.classList.remove('disabled');
+    } else {
+      config.classList.add('disabled');
+    }
+  }
+
+  // 🆕 Mostrar/ocultar configuração de sincronização Jira
+  toggleJiraSyncConfig() {
+    const enabled = document.getElementById('jiraSyncEnabled')?.checked;
+    const config = document.getElementById('jiraSyncConfig');
+    if (!config) return;
+    if (enabled) {
+      config.classList.remove('disabled');
+    } else {
+      config.classList.add('disabled');
+    }
+  }
+
+  async triggerJiraSyncNow() {
+    try {
+      const statusEl = document.getElementById('jiraSyncStatus');
+      if (statusEl) statusEl.textContent = 'Running sync...';
+      const response = await chrome.runtime.sendMessage({ action: 'JIRA_SYNC_NOW' });
+      if (response.success) {
+        const summary = response.data;
+        await chrome.storage.local.set({ jiraSyncLastResult: summary });
+        if (statusEl) statusEl.textContent = `Last sync: ${new Date(summary.timestamp).toLocaleString()} • Checked ${summary.checked} • Missing field: ${summary.missingFieldCount}`;
+        this.showStatus('✅ Jira sync completed', 'success');
+      } else {
+        if (statusEl) statusEl.textContent = `Error: ${response.error}`;
+        this.showStatus(`❌ Jira sync error: ${response.error}`, 'error');
+      }
+    } catch (error) {
+      const statusEl = document.getElementById('jiraSyncStatus');
+      if (statusEl) statusEl.textContent = `Error: ${error.message}`;
+      this.showStatus(`❌ Jira sync error: ${error.message}`, 'error');
+    }
+  }
+
+  async loadJiraSyncStatus() {
+    try {
+      const data = await chrome.storage.local.get(['jiraSyncLastResult']);
+      const statusEl = document.getElementById('jiraSyncStatus');
+      const summary = data.jiraSyncLastResult;
+      if (statusEl) {
+        if (summary) {
+          statusEl.textContent = `Last sync: ${new Date(summary.timestamp).toLocaleString()} • Checked ${summary.checked} • Missing field: ${summary.missingFieldCount}`;
+        } else {
+          statusEl.textContent = '';
+        }
+      }
+    } catch (error) {
+      // silenciar
+    }
+  }
+
+  async saveJiraSyncSettings() {
+    const button = document.getElementById('saveJiraSyncSettings');
+    const originalHTML = button ? button.innerHTML : '';
+
+    // Coletar dados do Sync
+    const jiraSyncData = {
+      enabled: document.getElementById('jiraSyncEnabled')?.checked || false,
+      intervalMinutes: parseInt(document.getElementById('jiraSyncInterval')?.value || '5', 10),
+      jql: document.getElementById('jiraSyncJQL')?.value?.trim() || '',
+      fieldId: document.getElementById('jiraSyncFieldId')?.value?.trim() || 'customfield_12345',
+      email: document.getElementById('jiraSyncEmail')?.value?.trim() || '',
+      apiToken: document.getElementById('jiraSyncApiToken')?.value?.trim() || '',
+      projectKey: document.getElementById('jiraSyncProjectKey')?.value?.trim() || ''
+    };
+
+    // Validação básica do Sync
+    if (jiraSyncData.enabled) {
+      if (!Number.isFinite(jiraSyncData.intervalMinutes) || jiraSyncData.intervalMinutes < 1) {
+        this.showStatus('❌ Sync interval must be at least 1 minute', 'error');
+        return;
+      }
+      if (!jiraSyncData.fieldId) {
+        this.showStatus('❌ Please set a customfield ID for EasyVista link', 'error');
+        return;
+      }
+      const hasAnyOverride = !!(jiraSyncData.email || jiraSyncData.apiToken || jiraSyncData.projectKey);
+      const hasCredOverride = !!(jiraSyncData.email && jiraSyncData.apiToken);
+      if (hasAnyOverride && !hasCredOverride) {
+        this.showStatus('❌ If using Jira Sync credential overrides, provide both email and API token', 'error');
+        return;
+      }
+    }
+
+    if (button) {
+      button.innerHTML = '<span class="material-icons">sync</span>Saving...';
+      button.disabled = true;
+    }
+
+    try {
+      this.settings.jiraSync = { ...jiraSyncData };
+      await this.saveSettings();
+      this.showStatus('✅ Jira Sync settings saved successfully!', 'success');
+    } catch (error) {
+      console.error('Error saving Jira Sync settings:', error);
+      this.showStatus('❌ Error saving Jira Sync settings', 'error');
+    } finally {
+      if (button) {
+        setTimeout(() => {
+          button.innerHTML = originalHTML;
+          button.disabled = false;
+        }, 800);
+      }
+    }
+  }
+
   async saveJiraSettings(event) {
     event.preventDefault();
     
@@ -431,6 +558,18 @@ class BugSpotterSettings {
       apiToken: document.getElementById('jiraApiToken').value.trim(),
       projectKey: document.getElementById('jiraProjectKey').value.trim(),
       issueTypeId: document.getElementById('jiraIssueType').value.trim()
+    };
+
+    // 🆕 Dados de sincronização Jira (genéricos)
+    const jiraSyncData = {
+      enabled: document.getElementById('jiraSyncEnabled')?.checked || false,
+      intervalMinutes: parseInt(document.getElementById('jiraSyncInterval')?.value || '5', 10),
+      jql: document.getElementById('jiraSyncJQL')?.value?.trim() || '',
+      fieldId: document.getElementById('jiraSyncFieldId')?.value?.trim() || 'customfield_12345',
+      // 🆕 Optional overrides
+      email: document.getElementById('jiraSyncEmail')?.value?.trim() || '',
+      apiToken: document.getElementById('jiraSyncApiToken')?.value?.trim() || '',
+      projectKey: document.getElementById('jiraSyncProjectKey')?.value?.trim() || ''
     };
     
     // Schema de validação
@@ -490,6 +629,25 @@ class BugSpotterSettings {
         }
       }
     }
+    // 🆕 Validação básica para sincronização
+    if (jiraSyncData.enabled) {
+      if (!Number.isFinite(jiraSyncData.intervalMinutes) || jiraSyncData.intervalMinutes < 1) {
+        this.showStatus('❌ Sync interval must be at least 1 minute', 'error');
+        return;
+      }
+      if (!jiraSyncData.fieldId) {
+        this.showStatus('❌ Please set a customfield ID for EasyVista link', 'error');
+        return;
+      }
+      // Se overrides forem parcialmente preenchidos, validar consistência
+      const hasAnyOverride = !!(jiraSyncData.email || jiraSyncData.apiToken || jiraSyncData.projectKey);
+      const hasCredOverride = !!(jiraSyncData.email && jiraSyncData.apiToken);
+      if (hasAnyOverride && !hasCredOverride) {
+        this.showStatus('❌ If using Jira Sync credential overrides, provide both email and API token', 'error');
+        return;
+      }
+      // ProjectKey override é opcional
+    }
     
     button.innerHTML = '<span class="material-icons">sync</span>Saving...';
     button.disabled = true;
@@ -499,6 +657,8 @@ class BugSpotterSettings {
         ...formData,
         priorities: this.settings.jira.priorities // Manter prioridades existentes
       };
+      // 🆕 Persistir configuração genérica de sincronização
+      this.settings.jiraSync = { ...jiraSyncData };
       
       // Salvar prioridades junto com as configurações do Jira
       await this.savePrioritySettings(false); // Não mostrar mensagem individual
@@ -528,9 +688,33 @@ class BugSpotterSettings {
     const formData = {
       enabled: document.getElementById('easyvistaEnabled').checked,
       baseUrl: document.getElementById('easyvistaUrl').value.trim(),
-      apiKey: document.getElementById('easyvistaApiKey').value.trim(),
-      catalogGuid: document.getElementById('easyvistaCatalogGuid')?.value?.trim() || ''
+      apiKey: document.getElementById('easyvistaApiKey').value.trim()
     };
+
+    const statusSyncEnabled = document.getElementById('easyvistaStatusSyncEnable')?.checked || false;
+    const updateUrlTemplate = document.getElementById('easyvistaUpdateUrlTemplate')?.value?.trim() || '';
+    const mappingText = document.getElementById('easyvistaFieldMapping')?.value?.trim() || '';
+    let fieldMapping = {};
+    if (mappingText) {
+      try {
+        const parsed = JSON.parse(mappingText);
+        if (typeof parsed !== 'object' || Array.isArray(parsed)) {
+          this.showStatus('❌ Field Mapping must be a JSON object', 'error');
+          return;
+        }
+        // Validar que valores são strings (IDs de campos do Jira)
+        for (const [k, v] of Object.entries(parsed)) {
+          if (typeof k !== 'string' || typeof v !== 'string') {
+            this.showStatus('❌ Field Mapping keys and values must be strings', 'error');
+            return;
+          }
+        }
+        fieldMapping = parsed;
+      } catch (e) {
+        this.showStatus('❌ Field Mapping must be valid JSON', 'error');
+        return;
+      }
+    }
 
     // Validação básica
     if (formData.enabled) {
@@ -544,13 +728,33 @@ class BugSpotterSettings {
       }
     }
 
+    // Validação para status sync
+    if (statusSyncEnabled) {
+      if (!updateUrlTemplate || !updateUrlTemplate.includes('{id}')) {
+        this.showStatus('❌ Update URL Template must include {id}', 'error');
+        return;
+      }
+      // Se sync estiver ativo, exigir configuração geral do EV
+      if (!formData.baseUrl || !formData.apiKey) {
+        this.showStatus('❌ Configure EasyVista Base URL and Access Token to enable status sync', 'error');
+        return;
+      }
+    }
+
     button.innerHTML = '<span class="material-icons">sync</span>Saving...';
     button.disabled = true;
 
     try {
-      this.settings.easyvista = { ...formData };
-      await this.saveSettings();
-      this.showStatus('✅ EasyVista settings saved successfully!', 'success');
+      this.settings.easyvista = {
+        ...formData,
+        statusSync: {
+          enabled: statusSyncEnabled,
+          updateUrlTemplate,
+          fieldMapping
+        }
+      };
+     await this.saveSettings();
+     this.showStatus('✅ EasyVista settings saved successfully!', 'success');
     } catch (error) {
       console.error('Error saving EasyVista settings:', error);
       this.showStatus('❌ Error saving EasyVista settings', 'error');
@@ -760,55 +964,7 @@ class BugSpotterSettings {
     }
   }
 
-  async testEasyVistaConnection() {
-    const button = document.getElementById('testEasyVistaConnection');
-    if (!button) return;
-    const originalHTML = button.innerHTML;
-
-    // Validar campos
-    const url = document.getElementById('easyvistaUrl')?.value?.trim();
-    const apiKey = document.getElementById('easyvistaApiKey')?.value?.trim();
-    const catalogGuid = document.getElementById('easyvistaCatalogGuid')?.value?.trim();
-    if (!url || !/^https?:\/\/.+/.test(url)) {
-      this.showStatus('❌ Please provide a valid EasyVista URL', 'error');
-      return;
-    }
-    if (!apiKey || apiKey.length < 8) {
-      this.showStatus('❌ Please provide a valid API key', 'error');
-      return;
-    }
-    if (catalogGuid) {
-      // Validação básica de GUID RFC 4122
-      const guidRegex = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$/;
-      if (!guidRegex.test(catalogGuid)) {
-        this.showStatus('❌ Catalog GUID format looks invalid (expected UUID v4)', 'error');
-        return;
-      }
-    }
-
-    button.innerHTML = '<span class="material-icons">sync</span>Testing connection...';
-    button.disabled = true;
-
-    try {
-      const response = await chrome.runtime.sendMessage({
-        action: 'TEST_EASYVISTA_CONNECTION',
-        config: { baseUrl: url, apiKey, catalogGuid }
-      });
-
-      if (response?.success) {
-        this.showStatus(`✅ ${response.data?.message || 'EasyVista configuration validated'}`, 'success');
-      } else {
-        throw new Error(response?.error || 'Unknown error');
-      }
-    } catch (error) {
-      this.showStatus('❌ Error testing EasyVista connection: ' + error.message, 'error');
-    } finally {
-      setTimeout(() => {
-        button.innerHTML = originalHTML;
-        button.disabled = false;
-      }, 800);
-    }
-  }
+  // testEasyVistaConnection removido
 
   // Método exportData
   async exportData() {
@@ -1510,6 +1666,56 @@ class BugSpotterSettings {
       }
   
       throw error;
+    }
+  }
+
+  async testJiraSyncCredentials() {
+    const button = document.getElementById('testJiraSyncCredentials');
+    if (!button) {
+      this.showStatus('❌ Test button not found', 'error');
+      return;
+    }
+    const originalHTML = button.innerHTML;
+
+    // Coletar overrides
+    const baseUrl = document.getElementById('jiraUrl').value.trim(); // Base URL vem da integração Jira
+    const email = document.getElementById('jiraSyncEmail')?.value?.trim() || '';
+    const apiToken = document.getElementById('jiraSyncApiToken')?.value?.trim() || '';
+    const projectKey = document.getElementById('jiraSyncProjectKey')?.value?.trim() || document.getElementById('jiraProjectKey')?.value?.trim() || '';
+
+    // Validar requerimentos
+    if (!baseUrl || !/^https?:\/\/.+/.test(baseUrl)) {
+      this.showStatus('❌ Jira Base URL must be a valid http/https URL', 'error');
+      return;
+    }
+    if (!email || !apiToken) {
+      this.showStatus('❌ Provide Email and API Token overrides for Jira Sync', 'error');
+      return;
+    }
+    if (!projectKey) {
+      this.showStatus('❌ Project Key is required (override or main)', 'error');
+      return;
+    }
+
+    button.innerHTML = '<span class="material-icons">sync</span>Testing sync credentials...';
+    button.disabled = true;
+
+    try {
+      const jiraConfig = { baseUrl, email, apiToken, projectKey };
+      const response = await chrome.runtime.sendMessage({ action: 'TEST_JIRA_CONNECTION', config: jiraConfig });
+      if (response.success) {
+        this.showStatus(`✅ ${response.data.message} (Sync overrides)`, 'success');
+      } else {
+        throw new Error(response.error);
+      }
+    } catch (error) {
+      console.error('Sync credentials test error:', error);
+      this.showStatus(`❌ Sync credentials error: ${error.message}`, 'error');
+    } finally {
+      setTimeout(() => {
+        button.innerHTML = originalHTML;
+        button.disabled = false;
+      }, 800);
     }
   }
 

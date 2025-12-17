@@ -189,8 +189,10 @@ class AIService {
             } else if (error.message && error.message.includes('Base URL não configurada')) {
                 console.error('[AIService] Base URL inválida');
             } else if (error.message && error.message.includes('429')) {
-                console.warn('[AIService] Quota da API excedida, pausando AI por 10 minutos');
-                await this.setPauseAI(10); // Pausar por 10 minutos
+                const suggested = this.parseRetryAfterSeconds(error.message);
+                const minutes = suggested && isFinite(suggested) ? Math.ceil(suggested / 60) : 10;
+                console.warn(`[AIService] Quota da API excedida, pausando AI por ${minutes} minutos`);
+                await this.setPauseAI(Math.max(1, minutes));
             } else if (error.message && error.message.includes('503')) {
                 console.warn('[AIService] Modelo sobrecarregado (503), pausando AI por 15 minutos');
                 await this.setPauseAI(15); // Pausar por 15 minutos para sobrecarga
@@ -208,16 +210,80 @@ class AIService {
     }
 
     /**
+     * Gera passos determinísticos a partir das interações
+     * @param {Array} interactions 
+     * @returns {Array<string>} Passos sem numeração
+     * @private
+     */
+    _generateDeterministicSteps(interactions) {
+        if (!Array.isArray(interactions) || interactions.length === 0) return [];
+        
+        const sortedInteractions = interactions.slice().sort((a, b) => {
+            const ta = Number(a.timestamp || a.ts || 0);
+            const tb = Number(b.timestamp || b.ts || 0);
+            return ta - tb;
+        });
+
+        const steps = [];
+        let lastUrl = null;
+        const toTitleCase = (s) => (s || '').charAt(0).toUpperCase() + (s || '').slice(1);
+
+        sortedInteractions.forEach((it) => {
+            const url = it.url || it.pageUrl || '';
+            const type = (it.type || it.kind || '').toLowerCase();
+            const selector = it.selector || it.path || it.id || it.tag || 'element';
+            const value = it.value || it.text || '';
+
+            // Handle Navigation
+            if (type === 'navigate') {
+                if (url && url !== lastUrl) {
+                    steps.push(`Navigate to ${url}`);
+                    lastUrl = url;
+                } else if (url && !lastUrl) {
+                    steps.push(`Navigate to ${url}`);
+                    lastUrl = url;
+                }
+                return;
+            }
+
+            // Implicit Navigation check
+            if (url && url !== lastUrl) {
+                steps.push(`Navigate to ${url}`);
+                lastUrl = url;
+            }
+
+            if (type === 'click') {
+                const base = `Click on ${selector}`;
+                steps.push(value ? `${base} (${value})` : base);
+            } else if (type === 'input' || type === 'change') {
+                const base = `Enter value in ${selector}`;
+                steps.push(value ? `${base} (${value})` : base);
+            } else if (type === 'submit') {
+                steps.push(`Submit form ${selector}`);
+            } else if (type) {
+                steps.push(`${toTitleCase(type)} on ${selector}`);
+            }
+        });
+
+        return steps;
+    }
+
+    /**
      * Aprimora campos do bug report usando interações do usuário e contexto
      * @param {Object} payload - { fields: {title, description, steps}, interactions: Array, context: Object }
      * @returns {Promise<Object>} Sugestões de aprimoramento { title, description, stepsToReproduce }
      */
     async enhanceBugFields(payload) {
         if (!this.isConfigured()) {
+            let stepsNormalized = Array.isArray(payload?.fields?.steps) ? payload.fields.steps : [];
+            if ((!stepsNormalized || stepsNormalized.length === 0) && Array.isArray(payload?.interactions) && payload.interactions.length) {
+                stepsNormalized = this._generateDeterministicSteps(payload.interactions);
+            }
+            if (stepsNormalized.length > 20) stepsNormalized = stepsNormalized.slice(0, 20);
             return {
                 title: payload?.fields?.title || '',
                 description: payload?.fields?.description || '',
-                stepsToReproduce: Array.isArray(payload?.fields?.steps) ? payload.fields.steps : [],
+                stepsToReproduce: stepsNormalized,
                 expectedBehavior: payload?.fields?.expectedBehavior || '',
                 actualBehavior: payload?.fields?.actualBehavior || '',
                 severity: 'medium'
@@ -225,10 +291,15 @@ class AIService {
         }
 
         if (await this.shouldPauseAI() || !this.checkRateLimit()) {
+            let stepsNormalized = Array.isArray(payload?.fields?.steps) ? payload.fields.steps : [];
+            if ((!stepsNormalized || stepsNormalized.length === 0) && Array.isArray(payload?.interactions) && payload.interactions.length) {
+                stepsNormalized = this._generateDeterministicSteps(payload.interactions);
+            }
+            if (stepsNormalized.length > 20) stepsNormalized = stepsNormalized.slice(0, 20);
             return {
                 title: payload?.fields?.title || '',
                 description: payload?.fields?.description || '',
-                stepsToReproduce: Array.isArray(payload?.fields?.steps) ? payload.fields.steps : [],
+                stepsToReproduce: stepsNormalized,
                 expectedBehavior: payload?.fields?.expectedBehavior || '',
                 actualBehavior: payload?.fields?.actualBehavior || '',
                 severity: 'medium'
@@ -257,56 +328,7 @@ class AIService {
             }
             // Deterministic fallback: derive steps across pages if AI returned none
             if ((!stepsNormalized || stepsNormalized.length === 0) && Array.isArray(payload?.interactions) && payload.interactions.length) {
-                // Work with the last 150 interactions passed from background (already limited)
-                const interactions = payload.interactions.slice();
-                // Sort by timestamp ascending to preserve sequence
-                interactions.sort((a, b) => {
-                    const ta = Number(a.timestamp || a.ts || 0);
-                    const tb = Number(b.timestamp || b.ts || 0);
-                    return ta - tb;
-                });
-
-                const steps = [];
-                let lastUrl = null;
-                let stepIndex = 1;
-                const toTitleCase = (s) => (s || '').charAt(0).toUpperCase() + (s || '').slice(1);
-
-                interactions.forEach((it) => {
-                    const url = it.url || it.pageUrl || '';
-                    const type = (it.type || it.kind || '').toLowerCase();
-                    const selector = it.selector || it.path || it.id || it.tag || 'element';
-                    const value = it.value || it.text || '';
-
-                    if (type === 'navigate') {
-                        if (url && url !== lastUrl) {
-                            steps.push(`${stepIndex++}. Navigate to ${url}`);
-                            lastUrl = url;
-                        } else if (url && !lastUrl) {
-                            steps.push(`${stepIndex++}. Navigate to ${url}`);
-                            lastUrl = url;
-                        }
-                        return; // não gerar linha genérica para navigate
-                    }
-
-                    // Inserir marcador de navegação quando URL muda entre interações não-navegação
-                    if (url && url !== lastUrl) {
-                        steps.push(`${stepIndex++}. Navigate to ${url}`);
-                        lastUrl = url;
-                    }
-
-                    if (type === 'click') {
-                        const base = `${stepIndex++}. Click on ${selector}`;
-                        steps.push(value ? `${base} (${value})` : base);
-                    } else if (type === 'input' || type === 'change') {
-                        const base = `${stepIndex++}. Enter value in ${selector}`;
-                        steps.push(value ? `${base} (${value})` : base);
-                    } else if (type === 'submit') {
-                        steps.push(`${stepIndex++}. Submit form ${selector}`);
-                    } else if (type) {
-                        steps.push(`${stepIndex++}. ${toTitleCase(type)} on ${selector}`);
-                    }
-                });
-                stepsNormalized = steps;
+                stepsNormalized = this._generateDeterministicSteps(payload.interactions);
             }
             // Cap steps to 20 for readability in UI
             if (stepsNormalized.length > 20) {
@@ -541,18 +563,21 @@ Output ONLY a valid JSON object with fields:
             if (!response.ok) {
                 const errorData = await response.json().catch(() => ({}));
                 
-                // Se for erro 429 (rate limit) e ainda temos tentativas
-                if (response.status === 429 && retryCount < this.retryConfig.maxRetries) {
-                    const delay = this.calculateBackoffDelay(retryCount);
-                    console.warn(`[AIService] Rate limit atingido. Tentativa ${retryCount + 1}/${this.retryConfig.maxRetries}. Aguardando ${delay}ms...`);
+                // 429: aplicar backoff usando Retry-After ou mensagem
+                if (response.status === 429) {
+                    const headerRetry = response.headers ? response.headers.get('retry-after') : null;
+                    const suggestedSeconds = this.parseRetryAfterSeconds(errorData?.error?.message) || (headerRetry ? Number(headerRetry) : null);
+                    const dynamicDelayMs = suggestedSeconds && isFinite(suggestedSeconds) ? Math.min(suggestedSeconds * 1000, this.retryConfig.maxDelay) : this.calculateBackoffDelay(retryCount);
                     
-                    // Aguardar antes de tentar novamente
-                    await this.sleep(delay);
-                    
-                    // Reset do rate limiter para dar uma chance
-                    this.rateLimiter.requests = Math.max(0, this.rateLimiter.requests - 1);
-                    
-                    return this.callGeminiAPI(prompt, retryCount + 1, modelToUse);
+                    if (retryCount < this.retryConfig.maxRetries) {
+                        console.warn(`[AIService] Rate limit atingido. Tentativa ${retryCount + 1}/${this.retryConfig.maxRetries}. Aguardando ${dynamicDelayMs}ms...`);
+                        await this.sleep(dynamicDelayMs);
+                        this.rateLimiter.requests = Math.max(0, this.rateLimiter.requests - 1);
+                        return this.callGeminiAPI(prompt, retryCount + 1, modelToUse);
+                    } else {
+                        const pauseMinutes = suggestedSeconds && isFinite(suggestedSeconds) ? Math.ceil(suggestedSeconds / 60) : 10;
+                        await this.setPauseAI(Math.max(1, pauseMinutes));
+                    }
                 }
                 
                 // Se for erro 503 (overloaded) e ainda temos tentativas
@@ -608,6 +633,19 @@ Output ONLY a valid JSON object with fields:
     calculateBackoffDelay(retryCount) {
         const delay = this.retryConfig.baseDelay * Math.pow(2, retryCount);
         return Math.min(delay, this.retryConfig.maxDelay);
+    }
+
+    /**
+     * Extrai segundos sugeridos de retry a partir da mensagem de erro da API
+     */
+    parseRetryAfterSeconds(message) {
+        if (!message || typeof message !== 'string') return null;
+        const m = message.match(/retry in\s+([0-9]+(?:\.[0-9]+)?)s/i);
+        if (m && m[1]) {
+            const val = parseFloat(m[1]);
+            return isFinite(val) ? val : null;
+        }
+        return null;
     }
 
     /**

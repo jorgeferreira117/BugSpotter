@@ -142,16 +142,19 @@
                 <span class="material-icons">add_circle</span>
                 Add Priority Level
               </button>
-              <button type="button" id="resetPriorities" class="btn btn-outline">
-                <span class="material-icons">refresh</span>
-                Reset to Default
-              </button>
-            </div>
-            
+            <button type="button" id="resetPriorities" class="btn btn-outline">
+              <span class="material-icons">refresh</span>
+              Reset to Default
+            </button>
+          </div>
+          
+          <!-- Botão de Teste da Integração Jira (após toda a configuração de integração) -->
+          <div class="form-group">
             <button type="button" id="testJiraConnection" class="btn btn-secondary">
               <span class="material-icons">search</span>
               Test Connection
             </button>
+          </div>
           </div>
           
           <button type="submit" class="btn btn-primary btn-save-config">
@@ -160,14 +163,84 @@
           </button>
         </form>
       </section>
+      
+      <!-- Jira Sync Section (separada da Integração Jira) -->
+      <section class="settings-section jira-sync-section">
+        <div class="section-header">
+          <h2><span class="material-icons">sync</span>Jira Sync (generic)</h2>
+        </div>
+        
+        <!-- Controle de habilitação do Sync -->
+        <div class="form-group">
+          <label for="jiraSyncEnabled" class="checkbox-label">
+            <input type="checkbox" id="jiraSyncEnabled">
+            <span class="checkmark"></span>
+            Enable Jira Sync (generic)
+          </label>
+        </div>
+
+        <div class="jira-config" id="jiraSyncConfig">
+          <div class="form-group">
+            <label for="jiraSyncInterval">Sync Interval (minutes):</label>
+            <input type="number" id="jiraSyncInterval" min="1" value="5">
+          </div>
+          <div class="form-group">
+            <label for="jiraSyncJQL">Scope JQL:</label>
+            <input type="text" id="jiraSyncJQL" placeholder="project = BUG AND statusCategory != Done">
+            <small class="help-text">Use a generic JQL; update later.</small>
+          </div>
+          <div class="form-group">
+            <label>Jira Sync Credentials (override)</label>
+            <small class="help-text">Optional: Use specific credentials for Sync. Base URL remains the same as Jira Integration.</small>
+          </div>
+          <div class="form-group">
+            <label for="jiraSyncEmail">Email (override):</label>
+            <input type="email" id="jiraSyncEmail" placeholder="sync-user@example.com">
+          </div>
+          <div class="form-group">
+            <label for="jiraSyncApiToken">API Token (override):</label>
+            <input type="password" id="jiraSyncApiToken" placeholder="Sync API Token">
+          </div>
+          <div class="form-group">
+            <label for="jiraSyncProjectKey">Project Key (override):</label>
+            <input type="text" id="jiraSyncProjectKey" placeholder="BUG">
+            <small class="help-text">If empty, uses the Project Key from Jira Integration.</small>
+          </div>
+          <div class="form-group">
+            <label for="jiraSyncFieldId">EasyVista ID Field (customfield):</label>
+            <input type="text" id="jiraSyncFieldId" placeholder="customfield_12345">
+          </div>
+          <div class="form-group">
+            <button type="button" id="jiraSyncNow" class="btn">
+              <span class="material-icons">sync</span>
+              Sync Now
+            </button>
+            <small id="jiraSyncStatus" class="help-text"></small>
+          </div>
+          <div class="form-group">
+            <button type="button" id="testJiraSyncCredentials" class="btn btn-secondary">
+              <span class="material-icons">search</span>
+              Test Sync Credentials
+            </button>
+            <small class="help-text">Tests the credential overrides configured for Jira Sync.</small>
+          </div>
+          
+          <div class="form-group">
+            <button type="button" id="saveJiraSyncSettings" class="btn btn-primary btn-save-config">
+              <span class="material-icons">save</span>
+              Save Sync Settings
+            </button>
+          </div>
+        </div>
+      </section>
         </div>
 
         <!-- EasyVista Tab -->
         <div class="tab-content" id="easyvista-tab">
           <section class="settings-section easyvista-section">
             <div class="section-header">
-              <h2><span class="material-icons">integration_instructions</span>EasyVista Integration</h2>
-              <p class="section-description">Configure EasyVista connection for ticket submission</p>
+              <h2><span class="material-icons">integration_instructions</span>EasyVista</h2>
+              <p class="section-description">Configure credentials for future EasyVista synchronization</p>
             </div>
 
             <form id="easyvistaForm">
@@ -177,36 +250,46 @@
                   <span class="checkmark"></span>
                   Enable EasyVista integration
                 </label>
+                <small class="help-text">Note: submissions to EasyVista are disabled in the background (phase-out).</small>
               </div>
 
               <div class="jira-config" id="easyvistaConfig">
                 <div class="form-group">
                   <label for="easyvistaUrl">EasyVista Base URL:</label>
                   <input type="url" id="easyvistaUrl" placeholder="https://your-host/api/v1/your-account/" />
-                  <small class="help-text">Use a URL completa incluindo <code>/api/v1/&lt;account&gt;/</code></small>
+                  <small class="help-text">Use the full URL including <code>/api/v1/&lt;account&gt;/</code></small>
                 </div>
-
-                <div class="form-group">
-                  <label for="easyvistaCatalogGuid">Catalog GUID:</label>
-                  <input type="text" id="easyvistaCatalogGuid" placeholder="e.g., 123e4567-e89b-12d3-a456-426614174000" />
-                  <small class="help-text">Identificador obrigatório do catálogo de serviços no EasyVista.</small>
-                </div>
-
                 <div class="form-group">
                   <label for="easyvistaApiKey">Access Token (Bearer):</label>
                   <input type="password" id="easyvistaApiKey" placeholder="Your Access Token" />
-                  <small class="help-text">Gere o token em EasyVista: Administration → Access Management → Access Tokens</small>
-                </div>
-
-                <button type="button" id="testEasyVistaConnection" class="btn btn-secondary">
-                  <span class="material-icons">search</span>
-                  Test Connection
-                </button>
+                  <small class="help-text">Generate the token in EasyVista: Administration → Access Management → Access Tokens</small>
+              </div>
+              <hr />
+              <div class="form-group">
+                <label for="easyvistaStatusSyncEnable" class="checkbox-label">
+                  <input type="checkbox" id="easyvistaStatusSyncEnable">
+                  <span class="checkmark"></span>
+                  Enable EasyVista status sync
+                </label>
+                <small class="help-text">When the status in Jira changes (e.g., Resolved), send required fields to EasyVista via API.</small>
               </div>
 
-              <button type="submit" class="btn btn-primary btn-save-config">
-                <span class="material-icons">save</span>
-                Save Settings
+              <div class="form-group" id="easyvistaStatusSyncConfig">
+                <label for="easyvistaUpdateUrlTemplate">Status Update URL Template:</label>
+                <input type="text" id="easyvistaUpdateUrlTemplate" placeholder="https://your-host/api/v1/requests/{id}" />
+                <small class="help-text">Must contain <code>{id}</code>, replaced with the EasyVista ticket ID obtained from the Jira custom field.</small>
+              </div>
+
+              <div class="form-group">
+                <label for="easyvistaFieldMapping">Field Mapping (JSON):</label>
+                <textarea id="easyvistaFieldMapping" rows="4" placeholder='{"resolution": "customfield_12345", "root_cause": "customfield_54321"}'></textarea>
+                <small class="help-text">JSON mapping EasyVista field names to Jira field IDs. Jira values are sent using the defined keys for EV.</small>
+              </div>
+            </div>
+          
+          <button type="submit" class="btn btn-primary btn-save-config">
+            <span class="material-icons">save</span>
+            Save Settings
               </button>
             </form>
           </section>
@@ -531,31 +614,7 @@
         </div>
       </section>
         
-        <section class="settings-section submission-section">
-          <div class="section-header">
-            <h2><span class="material-icons">send</span>Default Submission Target</h2>
-            <p class="section-description">Choose the default system to send bug reports to.</p>
-          </div>
-          
-          <form id="submissionForm">
-          <div class="form-group">
-              <label for="preferredTarget">Preferred Target:</label>
-              <select id="preferredTarget">
-                <option value="jira">Jira</option>
-                <option value="easyvista">EasyVista</option>
-              </select>
-              <small>Used when both are enabled and "Send to both" is OFF.</small>
-            </div>
-            <div class="form-group">
-              <label for="postToBoth" class="checkbox-label">
-                <input type="checkbox" id="postToBoth">
-                <span class="checkmark"></span>
-                Also send to both when enabled
-              </label>
-              <small>When both are enabled, sends Jira first then EasyVista. Preferred Target is ignored.</small>
-            </div>
-          </form>
-        </section>
+        
       </div>
       </div>
       </div>
@@ -570,4 +629,3 @@
   <script src="settings.js"></script>
 </body>
 </html>
-        </div>
