@@ -223,6 +223,12 @@ class StorageManager {
       }
       
     } catch (error) {
+      // Tratamento específico para contexto invalidado
+      if (this.isExtensionContextInvalidated(error)) {
+        console.warn(`⚠️ Contexto invalidado ao tentar armazenar ${key} - operação abortada com segurança`);
+        return false;
+      }
+      
       const duration = Date.now() - startTime;
       console.error(`❌ Erro no armazenamento de ${key} (${duration}ms):`, error);
       throw error;
@@ -785,6 +791,12 @@ class StorageManager {
   async getChromeStorageUsage() {
     // Cache para evitar chamadas repetidas em contexto invalidado
     if (this._contextInvalidated) {
+      return { totalSize: 0, itemCount: 0, usagePercentage: 0 };
+    }
+
+    // Verificação defensiva de API
+    if (typeof chrome === 'undefined' || !chrome.storage || !chrome.storage.local) {
+      // Silencioso em contextos onde a API não está disponível
       return { totalSize: 0, itemCount: 0, usagePercentage: 0 };
     }
 

@@ -2013,3 +2013,20 @@ section:hover {
 }
 
 /* steps-preview removido da extensão */
+
+#replayBtn {
+  grid-column: span 2;
+  flex-direction: row;
+  justify-content: center;
+  gap: 8px;
+  background: #e0e0e0;
+  color: #333333;
+}
+
+#replayBtn:hover {
+  background: #cccccc;
+}
+
+#replayBtn .material-icons {
+  font-size: 18px;
+}

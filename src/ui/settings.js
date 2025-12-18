@@ -3,10 +3,10 @@ class BugSpotterSettings {
     this.defaultSettings = {
       jira: {
         enabled: false,
-        baseUrl: 'https://jorgealijo.atlassian.net',
-        email: 'jorge.alijo@gmail.com',
+        baseUrl: '',
+        email: '',
         apiToken: '',
-        projectKey: 'BUG',
+        projectKey: '',
         issueTypeId: '10035',
         priorities: {
           highest: 'Highest',
@@ -59,17 +59,27 @@ class BugSpotterSettings {
       }
     };
     
-    this.init();
-  }
+    // 🆕 Cache de API Keys para troca rápida na UI
+      this.apiKeys = {
+        gemini: '',
+        openai: '',
+        claude: ''
+      };
 
-  async init() {
-    await this.loadSettings();
-    this.updateUI();
-    this.bindEvents();
-    this.initTabs();
-    // Load performance metrics initially
-    this.loadPerformanceMetrics();
-  }
+      this.init();
+    }
+
+    async init() {
+      await this.loadSettings();
+      this.updateUI();
+      this.bindEvents();
+      this.initTabs();
+      // Load performance metrics initially
+      this.loadPerformanceMetrics();
+      
+      // Inicializar o estado das keys na UI
+      this.updateAPIKeyInputState();
+    }
 
   initTabs() {
     // Initialize tab functionality
@@ -178,7 +188,28 @@ class BugSpotterSettings {
     document.getElementById('aiForm').addEventListener('submit', (e) => this.saveAISettings(e));
     document.getElementById('aiEnabled').addEventListener('change', () => this.toggleAIConfig());
     document.getElementById('testAiConnection').addEventListener('click', () => this.testAIConnection());
-    document.getElementById('aiProvider').addEventListener('change', () => this.updateAPIKeyHelp());
+    
+    // Gerenciamento inteligente de providers e keys
+    const providerSelect = document.getElementById('aiProvider');
+    const apiKeyInput = document.getElementById('aiApiKey');
+
+    // Inicializar tracking do provider atual
+    this.currentUiProvider = providerSelect.value || 'gemini';
+
+    providerSelect.addEventListener('focus', () => {
+        // Armazenar qual era o provider antes da mudança
+        this.currentUiProvider = providerSelect.value;
+    });
+
+    providerSelect.addEventListener('change', () => {
+        this.handleProviderChange();
+    });
+
+    // Atualizar cache local quando usuário digita
+    apiKeyInput.addEventListener('input', (e) => {
+        const provider = document.getElementById('aiProvider').value;
+        this.apiKeys[provider] = e.target.value;
+    });
 
     // Performance metrics refresh
     const refreshBtn = document.getElementById('refreshMetrics');
@@ -219,7 +250,7 @@ class BugSpotterSettings {
         // Carregar configurações do storage local e sync
         const [localResult, syncResult] = await Promise.all([
           chrome.storage.local.get(['settings']),
-          chrome.storage.sync.get(['aiEnabled', 'aiProvider', 'aiApiKey', 'aiAutoNotify', 'aiMinStatus'])
+          chrome.storage.sync.get(['aiEnabled', 'aiProvider', 'aiApiKey', 'aiAutoNotify', 'aiMinStatus', 'aiKeys'])
         ]);
         
         // Carregando configurações do storage - silenciado
@@ -233,6 +264,11 @@ class BugSpotterSettings {
           // Usando configurações padrão - silenciado
         }
         
+        // Carregar cache de keys
+        if (syncResult.aiKeys) {
+            this.apiKeys = { ...this.apiKeys, ...syncResult.aiKeys };
+        }
+
         // Carregar configurações de AI do sync storage
         if (syncResult.aiEnabled !== undefined) {
           this.settings.ai = {
@@ -243,6 +279,12 @@ class BugSpotterSettings {
             autoNotify: syncResult.aiAutoNotify || false,
             minStatus: syncResult.aiMinStatus || 400
           };
+
+          // Sincronizar a key ativa com o cache se necessário
+          const currentProvider = this.settings.ai.provider;
+          if (this.settings.ai.apiKey && !this.apiKeys[currentProvider]) {
+             this.apiKeys[currentProvider] = this.settings.ai.apiKey;
+          }
         }
       } else {
         // Modo de desenvolvimento - usar configurações padrão
@@ -1397,6 +1439,40 @@ class BugSpotterSettings {
     this.updateAIStatus();
   }
   
+  handleProviderChange() {
+    const providerSelect = document.getElementById('aiProvider');
+    const apiKeyInput = document.getElementById('aiApiKey');
+    const newProvider = providerSelect.value;
+    
+    // Salvar key do provider anterior (caso o evento de input não tenha pego algo ou para garantir)
+    if (this.currentUiProvider && this.currentUiProvider !== newProvider) {
+       // A key já deve estar atualizada pelo evento 'input', mas vamos garantir
+       // Nota: Não lemos do input aqui porque ele já pode ter mudado se não formos cuidadosos,
+       // mas no evento 'change' o valor do input ainda é o antigo? Não, o input não muda sozinho.
+       // O input ainda tem o valor que o usuário digitou.
+       this.apiKeys[this.currentUiProvider] = apiKeyInput.value;
+    }
+
+    // Atualizar input com a key do novo provider
+    apiKeyInput.value = this.apiKeys[newProvider] || '';
+    
+    // Atualizar referência do provider atual
+    this.currentUiProvider = newProvider;
+
+    // Atualizar texto de ajuda
+    this.updateAPIKeyHelp();
+  }
+
+  updateAPIKeyInputState() {
+      // Chamado no init para setar o valor inicial correto
+      const provider = document.getElementById('aiProvider').value;
+      if (this.apiKeys[provider]) {
+          document.getElementById('aiApiKey').value = this.apiKeys[provider];
+      }
+      this.currentUiProvider = provider;
+      this.updateAPIKeyHelp();
+  }
+  
   updateAPIKeyHelp() {
     const provider = document.getElementById('aiProvider').value;
     const helpElement = document.getElementById('apiKeyHelp');
@@ -1435,11 +1511,16 @@ class BugSpotterSettings {
     event.preventDefault();
     
     try {
+      // Ensure current input is in the keys object
+      const currentProvider = document.getElementById('aiProvider').value;
+      const currentKey = document.getElementById('aiApiKey').value;
+      this.apiKeys[currentProvider] = currentKey;
+
       // Collect AI settings
       const aiSettings = {
         enabled: document.getElementById('aiEnabled').checked,
-        provider: document.getElementById('aiProvider').value,
-        apiKey: document.getElementById('aiApiKey').value,
+        provider: currentProvider,
+        apiKey: currentKey,
         autoNotify: document.getElementById('aiAutoNotify').checked,
         minStatus: parseInt(document.getElementById('aiMinStatus').value)
       };
@@ -1466,6 +1547,7 @@ class BugSpotterSettings {
               aiEnabled: aiSettings.enabled,
               aiProvider: aiSettings.provider,
               aiApiKey: aiSettings.apiKey,
+              aiKeys: this.apiKeys,
               aiAutoNotify: aiSettings.autoNotify,
               aiMinStatus: aiSettings.minStatus
             }, resolve);
@@ -1527,7 +1609,14 @@ class BugSpotterSettings {
       };
       
       // Test connection by sending a simple request
-      const response = await this.testGeminiConnection(apiKey, testData);
+    let response;
+    if (provider === 'claude') {
+      response = await this.testClaudeConnection(apiKey, testData);
+    } else if (provider === 'openai') {
+      response = await this.testOpenAIConnection(apiKey, testData);
+    } else {
+      response = await this.testGeminiConnection(apiKey, testData);
+    }
       
       this.showStatus('AI connection successful! Generated test report.', 'success');
       
@@ -1558,9 +1647,9 @@ class BugSpotterSettings {
   }
   
   async testGeminiConnection(apiKey, testData, retryCount = 0, modelOverride = null) {
-    const maxRetries = 3;
+    const maxRetries = 0;
     const baseDelay = 2000; // 2 seconds
-  
+ 
     const candidateModels = ['gemini-2.5-flash', 'gemini-2.0-flash'];
     const modelToUse = modelOverride || 'gemini-2.0-flash';
   
@@ -1592,19 +1681,12 @@ class BugSpotterSettings {
   
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
-  
+ 
         // Handle model not found/unsupported
         if (response.status === 404) {
-          const allModels = [modelToUse, ...candidateModels.filter(m => m !== modelToUse)];
-          const nextIndex = retryCount + 1;
-          if (nextIndex < allModels.length) {
-            const nextModel = allModels[nextIndex];
-            this.showStatus(`Model not available: ${modelToUse}. Trying alternative: ${nextModel}`, 'warning');
-            return this.testGeminiConnection(apiKey, testData, retryCount + 1, nextModel);
-          }
           throw new Error(`Model not found or unsupported for generateContent: ${modelToUse}`);
         }
-  
+ 
         // For 503 and 429 errors, try to retry
         if ((response.status === 503 || response.status === 429) && retryCount < maxRetries) {
           const delay = baseDelay * Math.pow(2, retryCount); // Exponential backoff
@@ -1653,11 +1735,11 @@ class BugSpotterSettings {
   
       return data.candidates[0].content.parts[0].text;
   
-    } catch (error) {
-      // If it's a network error and we haven't exceeded retries, try again
-      if (error.name === 'TypeError' && retryCount < maxRetries) {
-        const delay = baseDelay * Math.pow(2, retryCount);
-        // Network error retrying - silenciado
+      } catch (error) {
+        // If it's a network error and we haven't exceeded retries, try again
+        if (error.name === 'TypeError' && retryCount < maxRetries) {
+          const delay = baseDelay * Math.pow(2, retryCount);
+          // Network error retrying - silenciado
   
         this.showStatus(`Network error. Retrying in ${delay/1000} seconds... (${retryCount + 1}/${maxRetries})`, 'warning');
   
@@ -1665,6 +1747,182 @@ class BugSpotterSettings {
         return this.testGeminiConnection(apiKey, testData, retryCount + 1, modelToUse);
       }
   
+      throw error;
+    }
+  }
+
+  async testClaudeConnection(apiKey, testData, retryCount = 0) {
+    const maxRetries = 0;
+    const baseDelay = 2000;
+    const modelToUse = 'claude-3-haiku-20240307';
+    const url = 'https://api.anthropic.com/v1/messages';
+
+    const prompt = `Test connection. Respond with valid JSON: {"status": "ok", "message": "Connection successful"}`;
+
+    const requestBody = {
+        model: modelToUse,
+        max_tokens: 100,
+        temperature: 0.1,
+        system: "You are a QA assistant. Return ONLY valid JSON.",
+        messages: [
+            {
+                role: "user",
+                content: prompt
+            }
+        ]
+    };
+
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': apiKey,
+            'anthropic-version': '2023-06-01'
+        },
+        body: JSON.stringify(requestBody)
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+
+        // Retry logic for 429/503
+        if ((response.status === 503 || response.status === 429) && retryCount < maxRetries) {
+          const delay = baseDelay * Math.pow(2, retryCount);
+          this.showStatus(`Service overloaded. Retrying in ${delay/1000} seconds... (${retryCount + 1}/${maxRetries})`, 'warning');
+          await new Promise(resolve => setTimeout(resolve, delay));
+          return this.testClaudeConnection(apiKey, testData, retryCount + 1);
+        }
+
+        let errorMessage;
+        switch (response.status) {
+          case 401:
+            errorMessage = 'Invalid API key. Please check your Anthropic API key.';
+            break;
+          case 403:
+            errorMessage = 'API access forbidden. Please verify your API key permissions.';
+            break;
+          case 429:
+            errorMessage = 'Rate limit exceeded. Please wait a moment and try again.';
+            break;
+          case 503:
+            errorMessage = 'Claude service is temporarily overloaded.';
+            break;
+          default:
+            errorMessage = errorData.error?.message || `API Error: ${response.status} - ${response.statusText}`;
+        }
+        throw new Error(errorMessage);
+      }
+
+      const data = await response.json();
+
+      if (!data.content || !data.content[0] || !data.content[0].text) {
+        throw new Error('Invalid response from Claude API');
+      }
+
+      return data.content[0].text;
+
+    } catch (error) {
+      if (error.name === 'TypeError' && retryCount < maxRetries) {
+        const delay = baseDelay * Math.pow(2, retryCount);
+        this.showStatus(`Network error. Retrying in ${delay/1000} seconds... (${retryCount + 1}/${maxRetries})`, 'warning');
+        await new Promise(resolve => setTimeout(resolve, delay));
+        return this.testClaudeConnection(apiKey, testData, retryCount + 1);
+      }
+      throw error;
+    }
+  }
+
+  async testOpenAIConnection(apiKey, testData, retryCount = 0) {
+    const maxRetries = 0;
+    const baseDelay = 2000;
+    // Use gpt-4o-mini as a more widely available and cost-effective default
+    const modelToUse = 'gpt-4o-mini';
+    const url = 'https://api.openai.com/v1/chat/completions';
+
+    const prompt = `Test connection. Respond with valid JSON: {"status": "ok", "message": "Connection successful"}`;
+
+    const requestBody = {
+        model: modelToUse,
+        messages: [
+            {
+                role: "system",
+                content: "You are a QA assistant. Return ONLY valid JSON."
+            },
+            {
+                role: "user",
+                content: prompt
+            }
+        ],
+        temperature: 0.1,
+        response_format: { type: "json_object" }
+    };
+
+    try {
+      const headers = {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`
+      };
+
+      // Adicionar OpenAI-Project se disponível nas configurações
+      // Por enquanto hardcoded como 'bugspotter' conforme pedido, mas idealmente configurável
+      // O usuário mencionou "bugspotter", mas vamos garantir que seja passado se necessário
+      // Como não temos input para isso ainda, vamos adicionar fixo ou verificar se precisamos de input
+      // O usuário disse: "tenho o nome do projeto que desconfio que tem que ser passado" -> "bugspotter"
+      headers['OpenAI-Project'] = 'bugspotter';
+
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: headers,
+        body: JSON.stringify(requestBody)
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+
+        // Retry logic for 429/503
+        if ((response.status === 503 || response.status === 429) && retryCount < maxRetries) {
+          const delay = baseDelay * Math.pow(2, retryCount);
+          this.showStatus(`Service overloaded. Retrying in ${delay/1000} seconds... (${retryCount + 1}/${maxRetries})`, 'warning');
+          await new Promise(resolve => setTimeout(resolve, delay));
+          return this.testOpenAIConnection(apiKey, testData, retryCount + 1);
+        }
+
+        let errorMessage;
+        switch (response.status) {
+          case 401:
+            errorMessage = 'Invalid API key. Please check your OpenAI API key.';
+            break;
+          case 403:
+            errorMessage = 'API access forbidden. Please verify your API key permissions.';
+            break;
+          case 429:
+            errorMessage = 'Rate limit exceeded. Please wait a moment and try again.';
+            break;
+          case 503:
+            errorMessage = 'OpenAI service is temporarily overloaded.';
+            break;
+          default:
+            errorMessage = errorData.error?.message || `API Error: ${response.status} - ${response.statusText}`;
+        }
+        throw new Error(errorMessage);
+      }
+
+      const data = await response.json();
+
+      if (!data.choices || !data.choices[0] || !data.choices[0].message || !data.choices[0].message.content) {
+        throw new Error('Invalid response from OpenAI API');
+      }
+
+      return data.choices[0].message.content;
+
+    } catch (error) {
+      if (error.name === 'TypeError' && retryCount < maxRetries) {
+        const delay = baseDelay * Math.pow(2, retryCount);
+        this.showStatus(`Network error. Retrying in ${delay/1000} seconds... (${retryCount + 1}/${maxRetries})`, 'warning');
+        await new Promise(resolve => setTimeout(resolve, delay));
+        return this.testOpenAIConnection(apiKey, testData, retryCount + 1);
+      }
       throw error;
     }
   }

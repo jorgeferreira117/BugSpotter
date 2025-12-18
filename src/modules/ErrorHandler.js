@@ -78,6 +78,15 @@ class ErrorHandler {
       } catch (error) {
         lastError = error;
         
+        // ABORT ON DUPLICATE ERROR
+        // If it's a DuplicateLocal/Remote error, retrying is pointless (it will always be duplicate).
+        // We must stop immediately and re-throw so the UI can handle it.
+        if (error.message && (error.message.startsWith('DuplicateLocal') || error.message.startsWith('DuplicateRemote'))) {
+          // Log it as warning, not error, as it's a valid business rule
+          console.warn(`[Retry Aborted] Duplicate detected: ${error.message}`);
+          throw error;
+        }
+
         if (attempt === maxRetries) {
           this.handleError(error, `${context} (failed after ${maxRetries} attempts)`, 'high');
           throw error;

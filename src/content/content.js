@@ -256,23 +256,101 @@ if (typeof window.bugSpotterContentInitialized === 'undefined') {
 
     // 🆕 Captura de interações do utilizador (cliques, inputs, submits)
     setupInteractionCapture() {
+      // Helper para gerar seletores robustos (Prioridade: TestID > ID > Aria > Atributos > Caminho)
+      const generateRobustSelector = (el) => {
+        if (!el) return '';
+        
+        // 1. Test IDs (Padrão Ouro)
+        const testAttributes = ['data-testid', 'data-cy', 'data-test', 'data-qa', 'data-automation-id'];
+        for (const attr of testAttributes) {
+          if (el.hasAttribute(attr)) {
+            return `[${attr}="${el.getAttribute(attr)}"]`;
+          }
+        }
+
+        // 2. ID (se parecer estável)
+        if (el.id) {
+            // Rejeitar IDs que parecem gerados (ex: "input-1234", "ember345", "uuid-...")
+            const isGenerated = /[\d-]{4,}/.test(el.id) || /ember\d+/.test(el.id) || /uuid/i.test(el.id);
+            if (!isGenerated) {
+                // Verificar unicidade
+                if (document.querySelectorAll(`#${CSS.escape(el.id)}`).length === 1) {
+                    return `#${CSS.escape(el.id)}`;
+                }
+            }
+        }
+
+        // 3. Atributos Semânticos Únicos (Name, Aria-Label, Alt, Placeholder)
+        const tagName = el.tagName.toLowerCase();
+        
+        if (el.name && (tagName === 'input' || tagName === 'select' || tagName === 'textarea')) {
+             if (document.querySelectorAll(`${tagName}[name="${CSS.escape(el.name)}"]`).length === 1) {
+                 return `${tagName}[name="${CSS.escape(el.name)}"]`;
+             }
+        }
+
+        if (el.getAttribute('aria-label')) {
+             const selector = `${tagName}[aria-label="${CSS.escape(el.getAttribute('aria-label'))}"]`;
+             if (document.querySelectorAll(selector).length === 1) return selector;
+        }
+
+        if (tagName === 'img' && el.alt) {
+             const selector = `img[alt="${CSS.escape(el.alt)}"]`;
+             if (document.querySelectorAll(selector).length === 1) return selector;
+        }
+
+        if (el.placeholder) {
+             const selector = `${tagName}[placeholder="${CSS.escape(el.placeholder)}"]`;
+             if (document.querySelectorAll(selector).length === 1) return selector;
+        }
+
+        // 4. Caminho CSS Otimizado (Fallback)
+        // Tenta encontrar o ancestral mais próximo com ID ou TestID e constrói caminho relativo
+        let path = [];
+        let current = el;
+        let root = null;
+
+        while (current && current.nodeType === Node.ELEMENT_NODE) {
+            let selector = current.tagName.toLowerCase();
+            
+            // Se encontrar um ID estável ou TestID no meio do caminho, usa como raiz
+            for (const attr of testAttributes) {
+                if (current.hasAttribute(attr)) {
+                    selector = `[${attr}="${current.getAttribute(attr)}"]`;
+                    root = current;
+                    break;
+                }
+            }
+            if (!root && current.id && !/[\d-]{4,}/.test(current.id)) {
+                selector = `#${CSS.escape(current.id)}`;
+                root = current;
+            }
+
+            // Adicionar nth-of-type se necessário para desambiguar irmãos
+            if (!root) {
+                const siblings = Array.from(current.parentNode ? current.parentNode.children : []).filter(c => c.tagName === current.tagName);
+                if (siblings.length > 1) {
+                    const index = siblings.indexOf(current) + 1;
+                    selector += `:nth-of-type(${index})`;
+                }
+            }
+
+            path.unshift(selector);
+            
+            if (root) break; // Encontrou uma âncora forte, para de subir
+            if (current.tagName.toLowerCase() === 'html') break;
+            
+            current = current.parentNode;
+        }
+
+        return path.join(' > ');
+      };
+
       const captureElementPath = (el) => {
         try {
-          const path = [];
-          let node = el;
-          while (node && node.nodeType === Node.ELEMENT_NODE && path.length < 10) {
-            let selector = node.tagName.toLowerCase();
-            if (node.id) selector += `#${node.id}`;
-            if (node.className && typeof node.className === 'string') {
-              const cls = node.className.trim().split(/\s+/).slice(0, 3).join('.');
-              if (cls) selector += `.${cls}`;
-            }
-            path.unshift(selector);
-            node = node.parentElement;
-          }
-          return path.join(' > ');
+            return generateRobustSelector(el);
         } catch (_) {
-          return 'unknown-path';
+            return 'unknown-selector';
         }
       };
 
@@ -294,18 +372,75 @@ if (typeof window.bugSpotterContentInitialized === 'undefined') {
           pageUrl: location.href,
           ...details
         };
-        // Buffer local para robustez
-        if (Array.isArray(this.interactionBuffer)) {
-          this.interactionBuffer.push(item);
-          if (this.interactionBuffer.length > (this.maxInteractions || 200)) {
-            this.interactionBuffer.shift();
-          }
+        // Buffer local para robustez (Circular Buffer - Aumentado para 300 eventos para comportar scroll)
+        if (!this.interactionBuffer) this.interactionBuffer = [];
+        this.interactionBuffer.push(item);
+        if (this.interactionBuffer.length > 300) {
+          this.interactionBuffer.shift();
         }
+
         // Enviar para background
         try {
           chrome.runtime.sendMessage({ action: 'LOG_USER_INTERACTION', data: item });
         } catch (_) {}
       };
+
+      // 🆕 Listener para solicitação de Replay Artifact
+      chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+          if (message.action === 'GET_REPLAY_ARTIFACT') {
+              try {
+                  const artifact = {
+                      version: '1.0.0',
+                      timestamp: new Date().toISOString(),
+                      url: location.href,
+                      userAgent: navigator.userAgent,
+                      viewport: {
+                          width: window.innerWidth,
+                          height: window.innerHeight
+                      },
+                      interactions: this.interactionBuffer || [],
+                      // Capturar estado (localStorage e sessionStorage) para reprodução fiel
+                      // Nota: Filtramos chaves muito longas (>100KB) para evitar payload excessivo
+                      localStorage: (() => {
+                          try {
+                              const store = {};
+                              for (let i = 0; i < localStorage.length; i++) {
+                                  const key = localStorage.key(i);
+                                  const value = localStorage.getItem(key);
+                                  if (value && value.length < 102400) { // < 100KB
+                                      store[key] = value;
+                                  } else {
+                                      store[key] = '[TRUNCATED_TOO_LARGE]';
+                                  }
+                              }
+                              return store;
+                          } catch (_) { return {}; }
+                      })(),
+                      sessionStorage: (() => {
+                          try {
+                              const store = {};
+                              for (let i = 0; i < sessionStorage.length; i++) {
+                                  const key = sessionStorage.key(i);
+                                  const value = sessionStorage.getItem(key);
+                                  if (value && value.length < 102400) { // < 100KB
+                                      store[key] = value;
+                                  } else {
+                                      store[key] = '[TRUNCATED_TOO_LARGE]';
+                                  }
+                              }
+                              return store;
+                          } catch (_) { return {}; }
+                      })(),
+                      // Incluir logs de console capturados até o momento
+                      consoleLogs: this.consoleLogs || []
+                  };
+                  sendResponse({ success: true, artifact });
+              } catch (e) {
+                  sendResponse({ success: false, error: e.message });
+              }
+              return true; // Async response
+          }
+      });
 
       // Clique
       document.addEventListener('click', (e) => {
@@ -354,6 +489,49 @@ if (typeof window.bugSpotterContentInitialized === 'undefined') {
         };
         recordInteraction('submit', details);
       }, true);
+
+      // 🆕 Utilitário de Throttle para eventos de alta frequência
+      const throttle = (func, limit) => {
+        let lastFunc;
+        let lastRan;
+        return function(...args) {
+          const context = this;
+          if (!lastRan) {
+            func.apply(context, args);
+            lastRan = Date.now();
+          } else {
+            clearTimeout(lastFunc);
+            lastFunc = setTimeout(function() {
+              if ((Date.now() - lastRan) >= limit) {
+                func.apply(context, args);
+                lastRan = Date.now();
+              }
+            }, limit - (Date.now() - lastRan));
+          }
+        };
+      };
+
+      // 🆕 Captura de Scroll (Throttled 250ms - 4x por segundo)
+      // Essencial para bugs de lazy loading e posição
+      document.addEventListener('scroll', throttle((e) => {
+        const details = {
+          scrollX: Math.round(window.scrollX),
+          scrollY: Math.round(window.scrollY),
+          viewportW: window.innerWidth,
+          viewportH: window.innerHeight
+        };
+        recordInteraction('scroll', details);
+      }, 250), { passive: true });
+
+      // 🆕 Captura de Resize (Throttled 500ms)
+      // Importante para bugs responsivos
+      window.addEventListener('resize', throttle((e) => {
+        const details = {
+          w: window.innerWidth,
+          h: window.innerHeight
+        };
+        recordInteraction('resize', details);
+      }, 500), { passive: true });
     }
     
     // Método de cleanup centralizado
@@ -492,7 +670,7 @@ if (typeof window.bugSpotterContentInitialized === 'undefined') {
 
         // Verificar se o contexto da extensão ainda é válido
         if (typeof chrome === 'undefined' || !chrome.runtime || !chrome.runtime.id) {
-          console.warn('⚠️ Contexto da extensão invalidado - salvamento cancelado');
+          // Contexto invalidado - falha silenciosa
           return;
         }
         
@@ -504,19 +682,31 @@ if (typeof window.bugSpotterContentInitialized === 'undefined') {
 
         // Usar StorageManager se disponível, senão usar localStorage
         if (window.storageManager) {
-          await window.storageManager.store('bugSpotter_logs', logData, {
-            compress: false, // Desabilitar compressão para evitar erros
-            ttl: 2 * 60 * 60 * 1000, // 2 horas (reduzido)
-            storage: 'local'
-          });
+          try {
+            await window.storageManager.store('bugSpotter_logs', logData, {
+              compress: false, // Desabilitar compressão para evitar erros
+              ttl: 2 * 60 * 60 * 1000, // 2 horas (reduzido)
+              storage: 'local'
+            });
+          } catch (storageError) {
+             // Se falhar o storageManager (ex: contexto invalidado durante await), fallback silencioso ou abortar
+             if (storageError.message && storageError.message.includes('Extension context invalidated')) {
+                 return;
+             }
+             // Fallback para localStorage se não for erro de contexto
+             try {
+                localStorage.setItem('bugSpotter_logs', JSON.stringify(logData));
+             } catch (_) {}
+          }
         } else {
-          localStorage.setItem('bugSpotter_logs', JSON.stringify(logData));
+          try {
+            localStorage.setItem('bugSpotter_logs', JSON.stringify(logData));
+          } catch (_) {}
         }
         
         this.lastSaveTime = now;
       } catch (error) {
         // Silenciar erros de salvamento para evitar spam no console
-        // console.error('Erro ao salvar logs:', error);
       }
     }
 
@@ -530,8 +720,11 @@ if (typeof window.bugSpotterContentInitialized === 'undefined') {
           message.includes('Dados corrompidos') ||
           message.includes('Erro ao parsear JSON') ||
           message.includes('Detectado padrão de corrupção') ||
-          message.includes('Removido dado corrompido')) {
-        return; // Não salvar logs sobre corrupção
+          message.includes('Removido dado corrompido') ||
+          message.includes('Contexto da extensão invalidado') ||
+          message.includes('Contexto invalidado') ||
+          message.includes('Extension context invalidated')) {
+        return; // Não salvar logs sobre corrupção ou contexto invalidado
       }
       
       const logEntry = {

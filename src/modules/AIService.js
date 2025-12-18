@@ -9,15 +9,19 @@ class AIService {
         this.provider = 'gemini';
         this.apiKey = null;
         this.baseUrl = 'https://generativelanguage.googleapis.com/v1beta/models';
+        this.claudeBaseUrl = 'https://api.anthropic.com/v1/messages';
+        this.openaiBaseUrl = 'https://api.openai.com/v1/chat/completions';
         this.model = 'gemini-2.0-flash';
+        this.claudeModel = 'claude-3-haiku-20240307';
+        this.openaiModel = 'gpt-4-turbo-preview';
         this.isEnabled = false;
         this.rateLimiter = {
             requests: 0,
             resetTime: Date.now() + 60000, // Reset a cada minuto
-            maxRequests: 10 // Limite mais conservador para evitar 429
+            maxRequests: 15 // Atualizado para 15 RPM conforme limites do Gemini 2.0 Flash
         };
         this.retryConfig = {
-            maxRetries: 3,
+            maxRetries: 0,
             baseDelay: 1000, // 1 segundo
             maxDelay: 30000  // 30 segundos máximo
         };
@@ -165,7 +169,7 @@ class AIService {
             this.rateLimiter.requests++;
             
             const prompt = this.buildPrompt(errorData);
-            const response = await this.callGeminiAPI(prompt);
+            const response = await this.callAIProvider(prompt);
             
             // Parse da resposta JSON
             const bugReport = this.parseAIResponse(response);
@@ -274,7 +278,14 @@ class AIService {
      * @returns {Promise<Object>} Sugestões de aprimoramento { title, description, stepsToReproduce }
      */
     async enhanceBugFields(payload) {
+        console.log('[AIService] Enhancing bug fields...');
         if (!this.isConfigured()) {
+            console.warn('[AIService] AI not configured properly. Missing API Key or other settings.');
+            console.log('[AIService] Config status:', {
+                enabled: this.isEnabled,
+                hasKey: !!this.apiKey,
+                provider: this.provider
+            });
             let stepsNormalized = Array.isArray(payload?.fields?.steps) ? payload.fields.steps : [];
             if ((!stepsNormalized || stepsNormalized.length === 0) && Array.isArray(payload?.interactions) && payload.interactions.length) {
                 stepsNormalized = this._generateDeterministicSteps(payload.interactions);
@@ -290,8 +301,19 @@ class AIService {
             };
         }
 
+        if (await this.shouldPauseAI()) {
+            console.warn('[AIService] AI is paused due to previous rate limits/errors.');
+            // Fallback logic duplicated...
+        }
+        
+        if (!this.checkRateLimit()) {
+            console.warn('[AIService] Internal rate limit exceeded.');
+            // Fallback logic...
+        }
+        
+        // Simplificando verificação de pausa/rate limit para logs claros
         if (await this.shouldPauseAI() || !this.checkRateLimit()) {
-            let stepsNormalized = Array.isArray(payload?.fields?.steps) ? payload.fields.steps : [];
+             let stepsNormalized = Array.isArray(payload?.fields?.steps) ? payload.fields.steps : [];
             if ((!stepsNormalized || stepsNormalized.length === 0) && Array.isArray(payload?.interactions) && payload.interactions.length) {
                 stepsNormalized = this._generateDeterministicSteps(payload.interactions);
             }
@@ -308,8 +330,10 @@ class AIService {
 
         try {
             this.rateLimiter.requests++;
+            console.log('[AIService] Calling AI Provider:', this.provider);
             const prompt = this.buildEnhancementPrompt(payload);
-            const response = await this.callGeminiAPI(prompt);
+            const response = await this.callAIProvider(prompt);
+            console.log('[AIService] AI Response received');
             const parsed = this.parseAIResponse(response);
             // Normalize steps field from possible variants
             let stepsNormalized = [];
@@ -340,7 +364,9 @@ class AIService {
                 stepsToReproduce: stepsNormalized.length ? stepsNormalized : (Array.isArray(payload?.fields?.steps) ? payload.fields.steps : []),
                 expectedBehavior: parsed.expectedBehavior || payload?.fields?.expectedBehavior || '',
                 actualBehavior: parsed.actualBehavior || payload?.fields?.actualBehavior || '',
-                severity: (parsed.severity || 'medium').toString().toLowerCase()
+                severity: (parsed.severity || 'medium').toString().toLowerCase(),
+                priority: parsed.priority || '',
+                environment: parsed.environment || ''
             };
         } catch (error) {
             return {
@@ -349,7 +375,9 @@ class AIService {
                 stepsToReproduce: Array.isArray(payload?.fields?.steps) ? payload.fields.steps : [],
                 expectedBehavior: payload?.fields?.expectedBehavior || '',
                 actualBehavior: payload?.fields?.actualBehavior || '',
-                severity: 'medium'
+                severity: 'medium',
+                priority: '',
+                environment: ''
             };
         }
     }
@@ -361,6 +389,9 @@ class AIService {
         const fields = payload?.fields || {};
         const interactions = Array.isArray(payload?.interactions) ? payload.interactions : [];
         const context = payload?.context || {};
+        const availablePriorities = Array.isArray(fields.availablePriorities) && fields.availablePriorities.length > 0 
+            ? fields.availablePriorities.join('|') 
+            : 'Lowest|Low|Medium|High|Highest';
 
         const sanitized = {
             existingTitle: fields.title || '',
@@ -389,8 +420,10 @@ Strict instructions:
 - Use only real information present in the provided input. Do not invent data.
 - Limit stepsToReproduce to a maximum of 20 items.
 - If there is insufficient information, keep the existing values or return empty strings.
- - Provide concise 'expectedBehavior' and 'actualBehavior' based on context. Use empty strings if unknown.
- - Provide a simple severity estimate: one of "low", "medium", "high".
+ - ALWAYS Provide concise 'expectedBehavior' and 'actualBehavior' based on context, even if you have to infer generic behavior (e.g., "The button should trigger X" vs "The button did nothing"). Avoid empty strings for these fields if at all possible.
+  - Provide a simple severity estimate: one of "low", "medium", "high".
+  - Infer the 'environment' based on the 'pageUrl': if the hostname starts with 'pp' (e.g., pp.daloop.app), set it to "Staging"; otherwise, set it to "Production".
+  - Suggest a 'priority' level from the following options: ${availablePriorities}.
 
 Input JSON:
 ${JSON.stringify(sanitized, null, 2)}
@@ -400,9 +433,11 @@ Output ONLY a valid JSON object with fields:
   "title": "Improved concise title",
   "description": "Improved description summarizing impact and context",
   "stepsToReproduce": ["Step 1", "Step 2", "... up to 20"],
-  "expectedBehavior": "What should have happened",
-  "actualBehavior": "What actually happened",
-  "severity": "low|medium|high"
+  "expectedBehavior": "What should have happened (inferred if necessary)",
+  "actualBehavior": "What actually happened (inferred if necessary)",
+  "severity": "low|medium|high",
+  "priority": "One of the provided options",
+  "environment": "Production|Staging"
 }`;
         return prompt;
     }
@@ -509,6 +544,153 @@ Output ONLY a valid JSON object with fields:
     }
 
     /**
+     * Chama a API do Anthropic Claude
+     */
+    async callClaudeAPI(prompt, retryCount = 0) {
+        if (!this.apiKey) throw new Error('API Key não configurada');
+
+        const requestBody = {
+            model: this.claudeModel || 'claude-3-haiku-20240307',
+            max_tokens: 1000,
+            temperature: 0.1,
+            system: "You are a QA assistant helping to generate bug reports. Return ONLY valid JSON.",
+            messages: [
+                { role: "user", content: prompt }
+            ]
+        };
+
+        try {
+            const response = await fetch(this.claudeBaseUrl, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'x-api-key': this.apiKey,
+                    'anthropic-version': '2023-06-01'
+                },
+                body: JSON.stringify(requestBody)
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => ({}));
+                
+                // Rate limit handling
+                if (response.status === 429) {
+                    const delay = this.calculateBackoffDelay(retryCount);
+                    if (retryCount < this.retryConfig.maxRetries) {
+                        console.warn(`[AIService] Claude Rate limit. Retrying in ${delay}ms...`);
+                        await this.sleep(delay);
+                        return this.callClaudeAPI(prompt, retryCount + 1);
+                    }
+                }
+                
+                throw new Error(`Claude API Error: ${response.status} - ${errorData.error?.message || response.statusText}`);
+            }
+
+            const data = await response.json();
+            
+            if (!data.content || !data.content[0] || !data.content[0].text) {
+                throw new Error('Invalid response from Claude API');
+            }
+
+            return data.content[0].text;
+
+        } catch (error) {
+            if (retryCount < this.retryConfig.maxRetries && 
+                (error.name === 'TypeError' || error.message.includes('fetch'))) {
+                const delay = this.calculateBackoffDelay(retryCount);
+                await this.sleep(delay);
+                return this.callClaudeAPI(prompt, retryCount + 1);
+            }
+            throw error;
+        }
+    }
+
+    /**
+     * Roteador para o provedor de AI configurado
+     */
+    async callAIProvider(prompt, retryCount = 0) {
+        if (this.provider === 'claude') {
+            return this.callClaudeAPI(prompt, retryCount);
+        } else if (this.provider === 'openai') {
+            return this.callOpenAIAPI(prompt, retryCount);
+        } else {
+            return this.callGeminiAPI(prompt, retryCount);
+        }
+    }
+
+    /**
+     * Chama a API da OpenAI
+     */
+    async callOpenAIAPI(prompt, retryCount = 0) {
+        if (!this.apiKey) throw new Error('API Key não configurada');
+
+        const requestBody = {
+            model: this.openaiModel || 'gpt-4o-mini',
+            messages: [
+                {
+                    role: "system",
+                    content: "You are a QA assistant helping to generate bug reports. Return ONLY valid JSON."
+                },
+                {
+                    role: "user",
+                    content: prompt
+                }
+            ],
+            temperature: 0.1,
+            response_format: { type: "json_object" }
+        };
+
+        try {
+            const headers = {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${this.apiKey}`
+            };
+
+            // Adicionar OpenAI-Project se necessário (atualmente fixo 'bugspotter')
+            headers['OpenAI-Project'] = 'bugspotter';
+
+            const response = await fetch(this.openaiBaseUrl, {
+                method: 'POST',
+                headers: headers,
+                body: JSON.stringify(requestBody)
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => ({}));
+                
+                // Rate limit handling
+                if (response.status === 429) {
+                    const delay = this.calculateBackoffDelay(retryCount);
+                    if (retryCount < this.retryConfig.maxRetries) {
+                        console.warn(`[AIService] OpenAI Rate limit. Retrying in ${delay}ms...`);
+                        await this.sleep(delay);
+                        return this.callOpenAIAPI(prompt, retryCount + 1);
+                    }
+                }
+                
+                throw new Error(`OpenAI API Error: ${response.status} - ${errorData.error?.message || response.statusText}`);
+            }
+
+            const data = await response.json();
+            
+            if (!data.choices || !data.choices[0] || !data.choices[0].message || !data.choices[0].message.content) {
+                throw new Error('Invalid response from OpenAI API');
+            }
+
+            return data.choices[0].message.content;
+
+        } catch (error) {
+            if (retryCount < this.retryConfig.maxRetries && 
+                (error.name === 'TypeError' || error.message.includes('fetch'))) {
+                const delay = this.calculateBackoffDelay(retryCount);
+                await this.sleep(delay);
+                return this.callOpenAIAPI(prompt, retryCount + 1);
+            }
+            throw error;
+        }
+    }
+
+    /**
      * Chama a API do Google Gemini
      */
     async callGeminiAPI(prompt, retryCount = 0, modelOverride = null) {
@@ -589,15 +771,8 @@ Output ONLY a valid JSON object with fields:
                     return this.callGeminiAPI(prompt, retryCount + 1, modelToUse);
                 }
                 
-                // Se for erro 404 (modelo não encontrado ou não suportado), tentar modelos alternativos
+                // Se for erro 404 (modelo não encontrado ou não suportado), não realizar retry alternando modelos
                 if (response.status === 404) {
-                    const allModels = [modelToUse, ...candidateModels.filter(m => m !== modelToUse)];
-                    const nextIndex = retryCount + 1;
-                    if (nextIndex < allModels.length) {
-                        const nextModel = allModels[nextIndex];
-                        console.warn(`[AIService] Modelo não encontrado ou não suportado: ${modelToUse}. Tentando alternativo: ${nextModel}`);
-                        return this.callGeminiAPI(prompt, retryCount + 1, nextModel);
-                    }
                     throw new Error(`Gemini API Error: 404 - Model not found or unsupported: ${modelToUse}`);
                 }
                 
@@ -783,10 +958,10 @@ Output ONLY a valid JSON object with fields:
 
         try {
             const testPrompt = "Respond only with: {\"status\": \"ok\", \"message\": \"Connection working\"}";
-            const response = await this.callGeminiAPI(testPrompt);
+            const response = await this.callAIProvider(testPrompt);
             
             // Teste de conexão bem-sucedido - silenciado
-            return { success: true, message: 'Connection to Gemini AI established' };
+            return { success: true, message: `Connection to ${this.provider === 'claude' ? 'Claude' : 'Gemini'} AI established` };
             
         } catch (error) {
             console.error('[AIService] Connection test failed:', error);

@@ -9,7 +9,12 @@
 try {
   importScripts(
     '/src/background/BackgroundModules.js',
-    '/src/services/ErrorHandler.js',
+    '/src/modules/ErrorHandler.js',
+    '/src/modules/SecurityManager.js',
+    '/src/modules/FingerprintManager.js',
+    '/src/modules/AIService.js',
+    '/src/modules/StorageManager.js',
+    '/src/modules/StorageMonitor.js',
     '/src/storage/StorageInterface.js'
   );
 } catch (error) {
@@ -80,6 +85,27 @@ class BugSpotterBackground {
       
       if (typeof BadgeManager !== 'undefined') {
         this.modules.badgeManager = new BadgeManager();
+      }
+
+      // Inicializar módulos principais do Core
+      if (typeof SecurityManager !== 'undefined') {
+        this.modules.securityManager = new SecurityManager();
+      }
+
+      if (typeof ErrorHandler !== 'undefined') {
+        this.modules.errorHandler = new ErrorHandler();
+      }
+
+      if (typeof FingerprintManager !== 'undefined') {
+        this.modules.fingerprintManager = new FingerprintManager();
+      }
+
+      if (typeof AIService !== 'undefined') {
+        this.modules.aiService = new AIService();
+        // Inicializar AI Service se necessário (assíncrono)
+        this.modules.aiService.initialize().catch(err => 
+          console.error('[Background] Failed to init AIService:', err)
+        );
       }
       
       // Inicializar StorageInterface se disponível

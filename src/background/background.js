@@ -7,6 +7,7 @@ importScripts('../modules/StorageBuckets.js');
 importScripts('../modules/StorageManager.js');
 importScripts('../modules/StorageMonitor.js');
 importScripts('../modules/AIService.js');
+importScripts('../modules/FingerprintManager.js');
 importScripts('../utils/RateLimiter.js');
 importScripts('../utils/PerformanceMonitor.js');
 
@@ -133,6 +134,7 @@ class BugSpotterBackground {
     this.errorHandler = new ErrorHandler();
     this.storageManager = new StorageManager();
     this.aiService = new AIService();
+    this.fingerprintManager = new FingerprintManager();
     this.performanceMonitor = new PerformanceMonitor();
     
     // Inicializar StorageMonitor
@@ -243,6 +245,20 @@ class BugSpotterBackground {
     chrome.storage.onChanged.addListener((changes, areaName) => {
       if (areaName === 'local' && changes.settings) {
         this.scheduleJiraSync(changes.settings.newValue).catch(e => console.error('[Background] Failed to reschedule Jira sync:', e));
+      }
+      
+      // ✅ Atualizar AIService quando configurações de AI mudarem
+      if (areaName === 'sync') {
+          if (changes.aiApiKey || changes.aiProvider || changes.aiEnabled) {
+              console.log('[Background] AI Settings changed in sync storage. Reloading AIService...');
+              if (this.aiService) {
+                  this.aiService.initialize().then(() => {
+                      console.log('[Background] AIService configuration reloaded.');
+                  }).catch(err => {
+                      console.error('[Background] Failed to reload AIService:', err);
+                  });
+              }
+          }
       }
     });
   }
@@ -2225,8 +2241,12 @@ class BugSpotterBackground {
           sendResponse({ success: false, error: 'Unknown message type' });
       }
     } catch (error) {
-      console.error('Error handling message:', error);
-      sendResponse({ error: error.message });
+      if (error.message && (error.message.startsWith('DuplicateLocal:') || error.message.startsWith('DuplicateRemote:'))) {
+        console.warn('Message handling prevented by duplicate detection:', error.message);
+      } else {
+        console.error('Error handling message:', error);
+      }
+      sendResponse({ success: false, error: error.message });
     }
   }
 
@@ -2349,11 +2369,69 @@ class BugSpotterBackground {
         throw new Error('Jira integration not configured');
       }
   
+      // 🔍 Deduplication Check
+      let fingerprint = null;
+      try {
+        fingerprint = await this.fingerprintManager.generateFingerprint(bugData);
+        
+        // 1. Tentar RESERVAR o fingerprint (Check Local + Lock)
+        // Isso previne race conditions se dois tickets forem enviados quase ao mesmo tempo
+        const reserved = await this.fingerprintManager.reserveFingerprint(fingerprint);
+        
+        if (!reserved) {
+          // Se não conseguiu reservar, é porque já existe ou está sendo processado
+          const existing = await this.fingerprintManager.checkLocalDuplicate(fingerprint);
+          if (existing) {
+             throw new Error(`DuplicateLocal:${existing.ticketKey || 'Processing...'}`);
+          } else {
+             // Caso raro: estava reservado mas expirou/foi deletado entre a verificação?
+             // Assumir duplicado por segurança
+             throw new Error('DuplicateLocal:Processing');
+          }
+        }
+
+        // 2. Check Remote Duplicate (Jira)
+        // Se falhar aqui, DEVEMOS libertar o fingerprint reservado
+        try {
+          const jql = `project = "${settings.jira.projectKey}" AND description ~ "${fingerprint}" AND statusCategory != Done`;
+          const searchResponse = await fetch(`${settings.jira.baseUrl}/rest/api/2/search?jql=${encodeURIComponent(jql)}&fields=key,summary&maxResults=1`, {
+            method: 'GET',
+            headers: {
+              'Authorization': `Basic ${btoa(`${settings.jira.email}:${settings.jira.apiToken}`)}`,
+              'Content-Type': 'application/json'
+            }
+          });
+
+          if (searchResponse.ok) {
+            const searchData = await searchResponse.json();
+            if (searchData.total > 0) {
+              throw new Error(`DuplicateRemote:${searchData.issues[0].key}`);
+            }
+          }
+        } catch (remoteErr) {
+          // Se for erro de duplicado remoto, libertar o local e relançar
+          if (remoteErr.message.startsWith('DuplicateRemote')) {
+            await this.fingerprintManager.releaseFingerprint(fingerprint);
+            throw remoteErr;
+          }
+          // Outros erros de rede no check remoto: ignorar e prosseguir (fail open)
+          // MANTENDO a reserva local pois vamos tentar criar
+          console.warn('[Background] Remote deduplication check failed, proceeding:', remoteErr);
+        }
+      } catch (err) {
+        if (err.message.startsWith('Duplicate')) throw err;
+        console.warn('[Background] Deduplication check failed, proceeding anyway:', err);
+      }
+
       // Primeiro, criar o issue
+      // Append fingerprint to description for future checks
+      // Usar formato explícito para facilitar indexação e busca JQL
+      const description = this.formatJiraDescription(bugData) + (fingerprint ? `\n\nBugSpotter Fingerprint: ${fingerprint}` : '');
+
       const baseFields = {
         project: { key: settings.jira.projectKey },
         summary: bugData.title,
-        description: this.formatJiraDescription(bugData),
+        description: description,
         issuetype: { id: settings.jira.issueTypeId || '10035' }
       };
 
@@ -2377,11 +2455,23 @@ class BugSpotterBackground {
       });
   
       if (!response.ok) {
+        // Se falhar o envio, LIBERTAR a reserva
+        if (fingerprint) {
+          await this.fingerprintManager.releaseFingerprint(fingerprint);
+        }
         throw new Error(`Jira API error: ${response.statusText}`);
       }
   
       const result = await response.json();
       
+      // CONFIRMAR fingerprint (atualizar status de pending para confirmed)
+      if (fingerprint && result.key) {
+        this.fingerprintManager.confirmFingerprint(fingerprint, {
+          ticketKey: result.key,
+          title: bugData.title
+        }).catch(e => console.warn('Failed to confirm local fingerprint:', e));
+      }
+
       // Segundo, anexar os arquivos se existirem
       let attachmentResult = null;
       if (bugData.attachments && bugData.attachments.length > 0) {

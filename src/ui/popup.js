@@ -155,6 +155,100 @@ class BugSpotter {
       enhanceBtn.addEventListener('click', () => this.enhanceWithAI());
     }
 
+    // Event listener para o botão de Replay
+    const replayBtn = document.getElementById('replayBtn');
+    if (replayBtn) {
+        replayBtn.addEventListener('click', async () => {
+            const originalText = replayBtn.innerHTML;
+            const btnText = replayBtn.querySelector('.btn-text');
+            replayBtn.disabled = true;
+            if (btnText) btnText.textContent = 'Generating...';
+
+            this.updateCaptureStatus('Generating replay artifact...', 'loading');
+
+            try {
+                const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+                if (!tab?.id) throw new Error('No active tab found');
+
+                // Função auxiliar para enviar mensagem com retry via injeção
+                const sendMessageWithRetry = async (tabId, message) => {
+                    try {
+                        return await chrome.tabs.sendMessage(tabId, message);
+                    } catch (error) {
+                        // Se o erro for de conexão, tenta injetar o script
+                        if (error.message.includes('Receiving end does not exist') || 
+                            error.message.includes('Could not establish connection')) {
+                            
+                            console.log('Content script not active, attempting injection...');
+                            
+                            // Injetar dependências e o content script principal
+                            await chrome.scripting.executeScript({
+                                target: { tabId },
+                                files: [
+                                    'src/modules/IndexedDBManager.js',
+                                    'src/modules/VideoCompressor.js',
+                                    'src/modules/StorageManager.js',
+                                    'src/modules/StorageBuckets.js',
+                                    'src/content/content.js'
+                                ]
+                            });
+                            
+                            // Pequena pausa para garantir inicialização
+                            await new Promise(r => setTimeout(r, 100));
+                            
+                            // Tenta novamente
+                            return await chrome.tabs.sendMessage(tabId, message);
+                        }
+                        throw error;
+                    }
+                };
+
+                const response = await sendMessageWithRetry(tab.id, { action: 'GET_REPLAY_ARTIFACT' });
+                
+                if (response && response.success && response.artifact) {
+                    const artifact = response.artifact;
+                    const fileName = `replay_${Date.now()}.json`;
+                    const jsonStr = JSON.stringify(artifact, null, 2);
+                    
+                    const attachment = {
+                        type: 'replay',
+                        name: fileName,
+                        data: jsonStr,
+                        size: new Blob([jsonStr]).size
+                    };
+
+                    const added = this.addAttachment(attachment);
+                    
+                    if (added) {
+                        this.updateCaptureStatus('Replay attached successfully!', 'success');
+                        
+                        // Aviso se não houver interações (porque o script foi injetado agora)
+                        if (!artifact.interactions || artifact.interactions.length === 0) {
+                            // Usar um pequeno timeout para não sobrescrever imediatamente o sucesso
+                            setTimeout(() => {
+                                this.updateCaptureStatus('Reload page to record interactions', 'warning');
+                            }, 1500);
+                        }
+                    }
+                } else {
+                    throw new Error(response?.error || 'Failed to generate replay artifact');
+                }
+            } catch (error) {
+                console.error('Replay Error:', error);
+                // Mensagem mais amigável para erro de conexão persistente
+                if (error.message.includes('Receiving end does not exist') || 
+                    error.message.includes('Could not establish connection')) {
+                    this.updateCaptureStatus('Please reload the page and try again', 'error');
+                } else {
+                    this.updateCaptureStatus('Failed to attach replay', 'error');
+                }
+            } finally {
+                replayBtn.disabled = false;
+                if (btnText) btnText.textContent = 'Replay';
+                else replayBtn.innerHTML = originalText;
+            }
+        });
+    }
     
     // Event listener for bug form
     document.getElementById('bugForm').addEventListener('submit', (e) => this.submitBug(e));
@@ -190,9 +284,12 @@ class BugSpotter {
           this.loadAIReports().then(aiReports => {
             const report = aiReports[index];
             if (report) {
-              this.sendAIReport(index, report).catch(error => {
+              this.sendAIReport(index, report).then(() => {
+                // Reabilitar o botão independentemente do resultado
+                const btn = document.querySelector(`.ai-report-item .send-btn[data-index="${index}"]`);
+                if (btn) btn.disabled = false;
+              }).catch(error => {
                 console.error('Error sending AI report:', error);
-                // Reabilitar o botão em caso de erro
                 const btn = document.querySelector(`.ai-report-item .send-btn[data-index="${index}"]`);
                 if (btn) btn.disabled = false;
                 this.updateHistoryStatus(`Error sending: ${error.message}`, 'error');
@@ -214,11 +311,14 @@ class BugSpotter {
         } else {
           // É um relatório manual
           this.updateHistoryStatus('Resending...', 'loading');
-          this.retrySubmission(index).catch(err => {
+          this.retrySubmission(index).then(() => {
+            // Reabilitar o botão independentemente do resultado (sucesso ou erro tratado)
+            // Se houve sucesso, a lista foi redesenhada e o botão removido (sem impacto)
+            // Se houve erro (capturado no retrySubmission), o botão persiste e deve ser reativado
+            if (sendBtn) sendBtn.disabled = false;
+          }).catch(err => {
             console.error('Error resending manual report:', err);
-            // Reabilitar o botão manual em caso de erro
-            const btn = document.querySelector(`.history-item .send-btn[data-index="${index}"]`);
-            if (btn) btn.disabled = false;
+            if (sendBtn) sendBtn.disabled = false;
             this.updateHistoryStatus('Error resending: ' + err.message, 'error');
           });
         }
@@ -371,6 +471,16 @@ class BugSpotter {
     
     statusIcon.textContent = icons[type] || 'info';
     
+    // Garantir visibilidade: rolar para o status se estiver fora de vista
+    try {
+      const rect = statusElement.getBoundingClientRect();
+      const viewHeight = Math.max(document.documentElement.clientHeight, window.innerHeight || 0);
+      const isVisible = rect.top >= 0 && rect.bottom <= viewHeight;
+      if (!isVisible) {
+        statusElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    } catch (_) { /* ignore scroll errors */ }
+    
     // Auto-hide for all messages except loading
     if (this.captureStatusTimeout) {
       clearTimeout(this.captureStatusTimeout);
@@ -464,20 +574,34 @@ class BugSpotter {
       const expectedEl = document.getElementById('expectedBehavior');
       const actualEl = document.getElementById('actualBehavior');
       const priorityEl = document.getElementById('priority');
+      const environmentEl = document.getElementById('environment');
+      
+      // Capturar prioridades disponíveis para enviar à IA (usando o texto visível para contexto semântico)
+      const availablePriorities = [];
+      if (priorityEl) {
+        Array.from(priorityEl.options).forEach(opt => {
+          if (opt.value) { // Ignora opção vazia "Select"
+            availablePriorities.push(opt.text);
+          }
+        });
+      }
+
       const before = {
         title: titleEl?.value || '',
         description: descEl?.value || '',
         steps: stepsEl?.value || '',
         expected: expectedEl?.value || '',
         actual: actualEl?.value || '',
-        priority: priorityEl?.value || ''
+        priority: priorityEl?.value || '',
+        environment: environmentEl?.value || ''
       };
       const fields = {
         title: titleEl?.value || '',
         description: descEl?.value || '',
         steps: (stepsEl?.value || '').split('\n').map(s => s.trim()).filter(Boolean),
         expectedBehavior: expectedEl?.value || '',
-        actualBehavior: actualEl?.value || ''
+        actualBehavior: actualEl?.value || '',
+        availablePriorities: availablePriorities // Enviar lista para o prompt
       };
 
       // Resolve active tabId to allow background to fetch interactions
@@ -487,6 +611,40 @@ class BugSpotter {
         tabId = tabs && tabs[0] ? tabs[0].id : null;
       } catch (e) {
         // ignore; will be handled by background if null
+      }
+
+      // Automatically attach Replay artifact if available and not already attached
+      if (tabId) {
+        try {
+          // Check URL first to avoid "Receiving end does not exist" on restricted pages
+          const tabInfo = await chrome.tabs.get(tabId);
+          if (tabInfo.url && !tabInfo.url.startsWith('chrome://') && !tabInfo.url.startsWith('edge://') && !tabInfo.url.startsWith('about:')) {
+              // Add a small timeout to ensure content script is ready if it was just injected
+              const replayResponse = await chrome.tabs.sendMessage(tabId, { action: 'GET_REPLAY_ARTIFACT' }).catch(() => null);
+              
+              if (replayResponse && replayResponse.success && replayResponse.artifact) {
+                 const existingReplay = this.attachments.find(a => a.type === 'replay');
+                 if (!existingReplay) {
+                     const artifact = replayResponse.artifact;
+                     const fileName = `replay_${Date.now()}.json`;
+                     const jsonStr = JSON.stringify(artifact, null, 2);
+                     
+                     const attachment = {
+                         type: 'replay',
+                         name: fileName,
+                         data: jsonStr,
+                         size: new Blob([jsonStr]).size
+                     };
+                     this.addAttachment(attachment);
+                     console.log('Replay automatically attached via AI Enhance');
+                 }
+              }
+          }
+        } catch (replayErr) {
+          // Silently ignore replay attachment errors to not confuse the user
+          // as this is an optional enhancement
+          console.log('Could not auto-attach replay (optional):', replayErr.message);
+        }
       }
 
       const result = await new Promise((resolve, reject) => {
@@ -521,36 +679,60 @@ class BugSpotter {
         if (actualEl && typeof result.actualBehavior === 'string') {
           actualEl.value = result.actualBehavior;
         }
-        // Mapear severidade da IA para prioridade selecionável
-        if (priorityEl && typeof result.severity === 'string') {
-          const sev = result.severity.toLowerCase();
-          const mapSeverityToPriorityKey = (s) => {
-            switch (s) {
-              case 'critical':
-              case 'blocker':
-              case 'highest':
-                return 'Highest';
-              case 'high':
-                return 'High';
-              case 'medium':
-              case 'moderate':
-                return 'Medium';
-              case 'low':
-              case 'minor':
-                return 'Low';
-              case 'lowest':
-                return 'Lowest';
-              default:
-                return 'Medium';
-            }
-          };
-          const key = mapSeverityToPriorityKey(sev);
-          // Verificar se a opção existe antes de setar
-          const hasOption = Array.from(priorityEl.options).some(opt => opt.value === key);
+
+        // Preencher Environment se fornecido pela IA
+        if (environmentEl && typeof result.environment === 'string') {
+          const env = result.environment;
+          const hasOption = Array.from(environmentEl.options).some(opt => opt.value === env);
           if (hasOption) {
-            priorityEl.value = key;
+            environmentEl.value = env;
           }
         }
+
+        // Prioridade: usar sugestão direta ou mapear severidade
+         if (priorityEl) {
+           if (typeof result.priority === 'string') {
+              const prio = result.priority;
+              // Tentar encontrar por valor ou por texto
+              let match = Array.from(priorityEl.options).find(opt => 
+                opt.value === prio || opt.text.toLowerCase() === prio.toLowerCase()
+              );
+              
+              if (match) {
+                priorityEl.value = match.value;
+              }
+           } else if (typeof result.severity === 'string') {
+            // Fallback para severidade
+            const sev = result.severity.toLowerCase();
+            const mapSeverityToPriorityKey = (s) => {
+              switch (s) {
+                case 'critical':
+                case 'blocker':
+                case 'highest':
+                  return 'Highest';
+                case 'high':
+                  return 'High';
+                case 'medium':
+                case 'moderate':
+                  return 'Medium';
+                case 'low':
+                case 'minor':
+                  return 'Low';
+                case 'lowest':
+                  return 'Lowest';
+                default:
+                  return 'Medium';
+              }
+            };
+            const key = mapSeverityToPriorityKey(sev);
+            // Verificar se a opção existe antes de setar
+            const hasOption = Array.from(priorityEl.options).some(opt => opt.value === key);
+            if (hasOption) {
+              priorityEl.value = key;
+            }
+          }
+        }
+        
         // Preencher Steps: se vazio, preencher; se já houver, anexar após separador
         if (stepsEl) {
           let stepsNormalized = [];
@@ -587,7 +769,8 @@ class BugSpotter {
           steps: stepsEl?.value || '',
           expected: expectedEl?.value || '',
           actual: actualEl?.value || '',
-          priority: priorityEl?.value || ''
+          priority: priorityEl?.value || '',
+          environment: environmentEl?.value || ''
         };
         const changed = (
           before.title.trim() !== after.title.trim() ||
@@ -595,7 +778,8 @@ class BugSpotter {
           before.steps.trim() !== after.steps.trim() ||
           before.expected.trim() !== after.expected.trim() ||
           before.actual.trim() !== after.actual.trim() ||
-          before.priority.trim() !== after.priority.trim()
+          before.priority.trim() !== after.priority.trim() ||
+          before.environment.trim() !== after.environment.trim()
         );
         if (changed) {
           this.updateReportStatus('Fields enhanced with AI', 'success');
@@ -1336,7 +1520,8 @@ class BugSpotter {
         logs: 'description',
         dom: 'code',
         recording: 'videocam',
-        video: 'videocam'
+        video: 'videocam',
+        replay: 'history'
       };
       
       // Criar elementos base
@@ -1345,7 +1530,7 @@ class BugSpotter {
       
       const icon = document.createElement('span');
       icon.className = 'material-icons attachment-icon';
-      icon.textContent = typeIcons[attachment.type];
+      icon.textContent = typeIcons[attachment.type] || 'attach_file';
       
       const details = document.createElement('div');
       details.className = 'attachment-details';
@@ -1687,11 +1872,27 @@ class BugSpotter {
             bugData.jiraKey = ticketKey;
             this.updateReportStatus(`Report sent successfully! Jira: ${ticketKey}`, 'success');
           } else {
-            this.updateReportStatus('Saved locally. Error sending to Jira: Invalid response', 'warning');
+            console.error('[Popup] Manual submission: Jira response missing key', jiraResponse);
+            const respStr = JSON.stringify(jiraResponse).substring(0, 100);
+            this.updateReportStatus(`Saved locally. Jira responded but returned no Ticket ID. Response: ${respStr}...`, 'warning');
           }
         } catch (jiraError) {
           console.error('Error sending to Jira:', jiraError);
-          this.updateReportStatus('Saved locally. Error sending to Jira: ' + jiraError.message, 'warning');
+          
+          let errorMessage = jiraError.message;
+          let errorType = 'warning';
+          
+          if (errorMessage && errorMessage.startsWith('DuplicateLocal:')) {
+            const ticketKey = errorMessage.split(':')[1];
+            errorMessage = `Duplicate bug! You already reported this (Jira: ${ticketKey}). Saved locally.`;
+          } else if (errorMessage && errorMessage.startsWith('DuplicateRemote:')) {
+            const ticketKey = errorMessage.split(':')[1];
+            errorMessage = `Duplicate bug! Already reported by team (Jira: ${ticketKey}). Saved locally.`;
+          } else {
+            errorMessage = 'Saved locally. Error sending to Jira: ' + errorMessage;
+          }
+          
+          this.updateReportStatus(errorMessage, errorType);
         }
       } else {
         this.updateReportStatus('Report saved locally!', 'success');
@@ -2384,7 +2585,11 @@ class BugSpotter {
         this.updateHistoryStatus('Resending to Jira...', 'loading');
         const jiraResponse = await this.sendToJira(report);
         const ticketKey = jiraResponse?.key || jiraResponse?.issueKey || jiraResponse?.data?.key || jiraResponse?.data?.issueKey;
-        if (!ticketKey) throw new Error('Invalid Jira response: missing ticket key');
+        if (!ticketKey) {
+          console.error('[Popup] Retry submission: Jira response missing key', jiraResponse);
+          const respStr = JSON.stringify(jiraResponse).substring(0, 100);
+          throw new Error(`Response missing ticket ID. Content: ${respStr}...`);
+        }
 
         const updatedResult = await new Promise((resolve) => {
           chrome.storage.local.get(['bugReports'], resolve);
@@ -2406,7 +2611,28 @@ class BugSpotter {
       }
     } catch (error) {
       console.error('Error resending report:', error);
-      this.updateHistoryStatus('Error resending: ' + error.message, 'error');
+      
+      let errorMessage = error.message;
+      let errorType = 'error';
+      
+      if (errorMessage && errorMessage.startsWith('DuplicateLocal:')) {
+        const ticketKey = errorMessage.split(':')[1];
+        errorMessage = `Duplicate bug! You already reported this (Jira: ${ticketKey}).`;
+        errorType = 'warning';
+      } else if (errorMessage && errorMessage.startsWith('DuplicateRemote:')) {
+        const ticketKey = errorMessage.split(':')[1];
+        errorMessage = `Duplicate bug! Already reported by team (Jira: ${ticketKey}).`;
+        errorType = 'warning';
+      } else if (errorMessage && errorMessage.includes('Response missing ticket ID')) {
+        // Extract content if available
+        const content = errorMessage.split('Content:')[1] || '';
+        errorMessage = `Jira responded without ID. Response: ${content}`;
+        errorType = 'warning';
+      } else {
+        errorMessage = 'Error resending: ' + errorMessage;
+      }
+      
+      this.updateHistoryStatus(errorMessage, errorType);
     }
   }
 
@@ -2752,17 +2978,55 @@ class BugSpotter {
 
   // New method for history status
   updateHistoryStatus(message, type = 'info') {
-    const statusElement = document.getElementById('historyStatus');
-    const statusText = statusElement.querySelector('.status-text');
-    const statusIcon = statusElement.querySelector('.status-icon');
+    let statusElement = document.getElementById('historyStatus');
+    
+    // Safety check: Re-create element if it somehow disappeared from DOM
+    if (!statusElement) {
+      console.warn('History status element missing, recreating...');
+      const historySection = document.querySelector('.history-section');
+      if (historySection) {
+        statusElement = document.createElement('div');
+        statusElement.id = 'historyStatus';
+        statusElement.className = 'capture-status';
+        statusElement.style.display = 'none';
+        statusElement.innerHTML = `
+          <div class="status-item">
+            <span class="material-icons status-icon">info</span>
+            <span class="status-text"></span>
+          </div>
+        `;
+        historySection.appendChild(statusElement);
+      } else {
+        console.error('History section not found, cannot show status');
+        return;
+      }
+    }
+
+    const statusText = statusElement.querySelector('.status-text') || statusElement.querySelector('span');
+    const statusIcon = statusElement.querySelector('.status-icon') || statusElement.querySelector('.material-icons');
+    
+    // Clear any existing timeout stored directly on the element
+    if (typeof statusElement._hideTimeout === 'number') {
+      clearTimeout(statusElement._hideTimeout);
+      statusElement._hideTimeout = null;
+    }
+    
+    // Also clear the instance variable as a fallback/legacy cleanup
+    if (this.historyStatusTimeout) {
+      clearTimeout(this.historyStatusTimeout);
+      this.historyStatusTimeout = null;
+    }
     
     if (!message || message.trim() === '') {
       statusElement.style.display = 'none';
       return;
     }
     
+    // Debug log to confirm call
+    console.log(`[Popup] updateHistoryStatus: "${message}" (${type})`);
+    
     statusElement.style.display = 'block';
-    statusText.textContent = message;
+    if (statusText) statusText.textContent = message;
     
     statusElement.className = 'capture-status';
     statusElement.classList.add(`status-${type}`);
@@ -2775,13 +3039,34 @@ class BugSpotter {
       loading: 'hourglass_empty'
     };
     
-    statusIcon.textContent = icons[type] || 'info';
+    if (statusIcon) statusIcon.textContent = icons[type] || 'info';
+    
+    // Garantir visibilidade: rolar para o status se estiver fora de vista
+    // Usar requestAnimationFrame para garantir que o display:block foi processado
+    requestAnimationFrame(() => {
+      try {
+        const rect = statusElement.getBoundingClientRect();
+        const viewHeight = Math.max(document.documentElement.clientHeight, window.innerHeight || 0);
+        // Verificar se está visível na viewport E se não está escondido por scroll do container pai
+        const isVisible = rect.top >= 0 && rect.bottom <= viewHeight && rect.height > 0;
+        
+        if (!isVisible) {
+          statusElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+      } catch (_) { /* ignore scroll errors */ }
+    });
     
     // Auto-hide for all messages except loading
     if (type !== 'loading') {
-      setTimeout(() => {
-        statusElement.style.display = 'none';
-      }, 3000);
+      const timeoutId = setTimeout(() => {
+        if (document.body.contains(statusElement)) {
+          statusElement.style.display = 'none';
+        }
+        statusElement._hideTimeout = null;
+      }, 4000); // Increased to 4s for better readability
+      
+      // Store timeout ID on the element itself for robustness
+      statusElement._hideTimeout = timeoutId;
     }
   }
 
@@ -3167,7 +3452,9 @@ class BugSpotter {
           });
         }
       } else {
-        throw new Error('Failed to get Jira ticket ID');
+        console.error('[Popup] Jira response missing key:', jiraResponse);
+        const respStr = JSON.stringify(jiraResponse).substring(0, 100);
+        throw new Error(`Response missing ticket ID. Content: ${respStr}...`);
       }
     } catch (error) {
       console.error('Error sending AI report to Jira:', error);
@@ -3177,8 +3464,28 @@ class BugSpotter {
         list[idx].jiraSuccess = false;
         list[idx].jiraError = error.message;
         list[idx].jiraSentAt = new Date().toISOString();
+        
+        let errorMessage = error.message;
+        let errorType = 'error';
+        
+        if (errorMessage && errorMessage.startsWith('DuplicateLocal:')) {
+          const ticketKey = errorMessage.split(':')[1];
+          errorMessage = `Duplicate bug! You already reported this (Jira: ${ticketKey}).`;
+          errorType = 'warning';
+        } else if (errorMessage && errorMessage.startsWith('DuplicateRemote:')) {
+          const ticketKey = errorMessage.split(':')[1];
+          errorMessage = `Duplicate bug! Already reported by team (Jira: ${ticketKey}).`;
+          errorType = 'warning';
+        } else if (errorMessage && errorMessage.includes('Response missing ticket ID')) {
+          const content = errorMessage.split('Content:')[1] || '';
+          errorMessage = `Jira responded without ID. Response: ${content}`;
+          errorType = 'warning';
+        } else {
+          errorMessage = `Error sending to Jira: ${errorMessage}`;
+        }
+        
         chrome.storage.local.set({ [key]: list }, () => {
-          this.updateHistoryStatus(`Error sending to Jira: ${error.message}`, 'error');
+          this.updateHistoryStatus(errorMessage, errorType);
         });
       };
       if (sourceKey) {
