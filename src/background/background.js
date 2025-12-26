@@ -3260,26 +3260,6 @@ ${lines.join('\n')}`;
         this.setCurrentTab(tabId);
       }
     });
-    
-    // Auto-anexar debugger em todas as páginas web
-    if (this.shouldAutoAttach(tab.url)) {
-      // Auto-anexando debugger - silenciado
-      // 🆕 REDUZIR delay para capturar logs mais cedo
-      setTimeout(async () => {
-        // ✅ VALIDAR se a tab ainda existe antes de anexar debugger
-        const tabStillExists = await this.tabExists(tabId);
-        if (tabStillExists) {
-          this.attachDebugger(tabId);
-        } else {
-          // Tab foi fechada antes do auto-attach - silenciado
-        }
-      }, 500); // Reduzido de 1000ms para 500ms
-    }
-  }
-
-  shouldAutoAttach(url) {
-    // Anexar apenas em páginas HTTP/HTTPS (não extensões ou páginas especiais)
-    return url && (url.startsWith('http://') || url.startsWith('https://'));
   }
 
   // Adicionar após setupDebuggerListeners() (linha ~56)

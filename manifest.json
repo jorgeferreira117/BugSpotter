@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "BugSpotter",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Extensão para identificar, registrar e analisar bugs diretamente no browser",
   "permissions": [
     "storage",
@@ -18,12 +18,11 @@
   ],
   "host_permissions": [
     "https://*/*",
-    "http://localhost/*",
-    "file:///*/*"
+    "http://*/*"
   ],
   "content_scripts": [
     {
-      "matches": ["https://*/*", "http://*/*", "file:///*/*"],
+      "matches": ["https://*/*", "http://*/*"],
       "js": [
         "src/modules/IndexedDBManager.js",
         "src/modules/VideoCompressor.js",
