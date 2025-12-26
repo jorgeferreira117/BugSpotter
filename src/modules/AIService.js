@@ -27,6 +27,106 @@ class AIService {
         };
     }
 
+    _redactText(value) {
+        try {
+            if (value === null || value === undefined) return '';
+            let str = typeof value === 'string' ? value : JSON.stringify(value);
+
+            str = str.replace(/([A-Z0-9._%+-])([A-Z0-9._%+-]*?)@([A-Z0-9.-]+\.[A-Z]{2,})/gi, (_, first, _mid, domain) => `${first}***@${domain}`);
+
+            str = str.replace(/\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g, (m) => `${m.slice(0, 8)}…${m.slice(-6)}`);
+            str = str.replace(/\b(?:sk-|rk-|pk_)[A-Za-z0-9_\-]{10,}\b/g, (m) => `${m.slice(0, 6)}…${m.slice(-4)}`);
+            str = str.replace(/\b[0-9a-f]{32,}\b/gi, (m) => `${m.slice(0, 6)}…${m.slice(-4)}`);
+
+            str = str.replace(/(\b(?:authorization|cookie|set-cookie)\b\s*[:=]\s*)([^\s,;]+)/gi, (_, k) => `${k}[REDACTED]`);
+            str = str.replace(/(\bBearer\s+)([A-Za-z0-9._\-]{10,})/g, (_, k) => `${k}[REDACTED]`);
+
+            str = str.replace(/(\b(?:password|passwd|pwd|passcode|secret|api[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token|token)\b\s*[:=]\s*)([^\s,;]+)/gi, (_, k) => `${k}[REDACTED]`);
+
+            str = str.replace(/\b\d{3}[-.\s]?\d{3}[-.\s]?\d{4}\b/g, (m) => `${m.slice(0, 2)}…${m.slice(-2)}`);
+            str = str.replace(/\b(?:\d[ -]*?){13,19}\b/g, (m) => {
+                const digits = m.replace(/\D/g, '');
+                if (digits.length < 13 || digits.length > 19) return m;
+                return `**** **** **** ${digits.slice(-4)}`;
+            });
+
+            return str;
+        } catch (_) {
+            return '';
+        }
+    }
+
+    _isSensitiveKey(key) {
+        try {
+            const k = String(key || '').toLowerCase();
+            return (
+                k.includes('password') ||
+                k.includes('passwd') ||
+                k === 'pwd' ||
+                k.includes('token') ||
+                k.includes('secret') ||
+                k.includes('api_key') ||
+                k.includes('apikey') ||
+                k.includes('authorization') ||
+                k.includes('cookie') ||
+                k.includes('session') ||
+                k.includes('email')
+            );
+        } catch (_) {
+            return false;
+        }
+    }
+
+    _redactObject(value, depth = 0) {
+        try {
+            if (value === null || value === undefined) return value;
+            if (depth > 6) return '[TRUNCATED]';
+            if (typeof value === 'string') return this._redactText(value);
+            if (typeof value === 'number' || typeof value === 'boolean') return value;
+            if (Array.isArray(value)) {
+                return value.slice(0, 50).map(v => this._redactObject(v, depth + 1));
+            }
+            if (typeof value === 'object') {
+                const out = {};
+                const entries = Object.entries(value).slice(0, 80);
+                for (const [k, v] of entries) {
+                    if (this._isSensitiveKey(k)) {
+                        out[k] = '[REDACTED]';
+                    } else {
+                        out[k] = this._redactObject(v, depth + 1);
+                    }
+                }
+                return out;
+            }
+            return String(value);
+        } catch (_) {
+            return '[REDACTED]';
+        }
+    }
+
+    _sanitizeUrl(url) {
+        try {
+            if (!url || typeof url !== 'string') return url || '';
+            const u = new URL(url);
+            const params = new URLSearchParams(u.search);
+            const redacted = new URLSearchParams();
+            for (const [k, v] of params.entries()) {
+                if (this._isSensitiveKey(k)) {
+                    redacted.set(k, '[REDACTED]');
+                    continue;
+                }
+                const vv = typeof v === 'string' ? v : String(v);
+                const looksSensitive = /eyJ[A-Za-z0-9_-]{10,}\./.test(vv) || /^[0-9a-f]{32,}$/i.test(vv) || vv.length > 64;
+                redacted.set(k, looksSensitive ? '[REDACTED]' : vv.slice(0, 32));
+            }
+            u.search = redacted.toString() ? `?${redacted.toString()}` : '';
+            u.hash = '';
+            return u.toString();
+        } catch (_) {
+            return url || '';
+        }
+    }
+
     /**
      * Inicializa o serviço AI com configurações do storage
      */
@@ -394,23 +494,23 @@ class AIService {
             : 'Lowest|Low|Medium|High|Highest';
 
         const sanitized = {
-            existingTitle: fields.title || '',
-            existingDescription: fields.description || '',
-            existingSteps: Array.isArray(fields.steps) ? fields.steps : [],
-            existingExpectedBehavior: fields.expectedBehavior || '',
-            existingActualBehavior: fields.actualBehavior || '',
+            existingTitle: this._redactText(fields.title || ''),
+            existingDescription: this._redactText(fields.description || ''),
+            existingSteps: (Array.isArray(fields.steps) ? fields.steps : []).map(s => this._redactText(s)),
+            existingExpectedBehavior: this._redactText(fields.expectedBehavior || ''),
+            existingActualBehavior: this._redactText(fields.actualBehavior || ''),
             userInteractions: interactions.map(it => ({
                 // Map both content-script and generic keys
                 type: it.type || it.kind || 'unknown',
                 selector: it.selector || it.path || 'unknown',
-                value: it.value || it.text || '',
+                value: this._redactText(it.value || it.text || ''),
                 timestamp: it.timestamp || it.ts || Date.now(),
-                url: it.url || it.pageUrl || context.pageUrl || 'Unknown',
+                url: this._sanitizeUrl(it.url || it.pageUrl || context.pageUrl || 'Unknown'),
                 tag: it.tag || '',
                 id: it.id || '',
                 classes: it.classes || ''
             })),
-            pageUrl: context.pageUrl || context.url || 'Unknown',
+            pageUrl: this._sanitizeUrl(context.pageUrl || context.url || 'Unknown'),
             pageTitle: context.pageTitle || 'Unknown'
         };
 
@@ -501,21 +601,21 @@ Output ONLY a valid JSON object with fields:
         const context = errorData.context || {};
         
         // Sanitiza dados para evitar undefined no JSON
-        const sanitizedData = {
-            url: error.url || context.url || 'Unknown',
+        const sanitizedData = this._redactObject({
+            url: this._sanitizeUrl(error.url || context.url || 'Unknown'),
             method: error.method || context.method || 'GET',
             status: error.status || context.status || 'Unknown',
-            statusText: error.statusText || context.statusText || 'Unknown',
+            statusText: this._redactText(error.statusText || context.statusText || 'Unknown'),
             timestamp: error.timestamp || context.timestamp || new Date().toISOString(),
-            headers: error.headers || context.headers || {},
-            responseBody: error.responseBody || context.responseBody || 'N/A',
+            headers: this._redactObject(error.headers || context.headers || {}),
+            responseBody: this._redactObject(error.responseBody || context.responseBody || 'N/A'),
             userAgent: error.userAgent || context.userAgent || 'N/A',
-            referrer: error.referrer || context.referrer || 'N/A',
-            consoleLogs: context.consoleLogs || [],
-            networkRequests: context.networkRequests || [],
-            jsErrors: context.jsErrors || [],
-            userInteractions: context.userInteractions || []
-        };
+            referrer: this._sanitizeUrl(error.referrer || context.referrer || 'N/A'),
+            consoleLogs: this._redactObject(context.consoleLogs || []),
+            networkRequests: this._redactObject(context.networkRequests || []),
+            jsErrors: this._redactObject(context.jsErrors || []),
+            userInteractions: this._redactObject(context.userInteractions || [])
+        });
 
         const prompt = `You are a web debugging expert. Analyze this HTTP error and generate a structured bug report in English.
 
