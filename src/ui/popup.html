@@ -17,7 +17,7 @@
         <h1 class="app-title">BugSpotter</h1>
       </div>
       <div class="header-actions">
-        <button id="openSettings" class="header-action-btn" title="Configurações" aria-label="Abrir configurações">
+        <button id="openSettings" class="header-action-btn" title="Settings" aria-label="Open settings">
           <span class="material-icons">settings</span>
         </button>
       </div>
@@ -39,7 +39,7 @@
           </button>
           
           <div class="split-button capture-split">
-            <button id="captureLogs" class="capture-btn secondary split-main" aria-label="Logs (selecione no menu)" aria-disabled="true" tabindex="-1">
+            <button id="captureLogs" class="capture-btn secondary split-main" aria-label="Logs (select from menu)" aria-disabled="true" tabindex="-1">
               <span class="material-icons">description</span>
               <span class="btn-text">Logs</span>
             </button>
@@ -66,6 +66,11 @@
           <button id="startRecording" class="capture-btn danger">
             <span class="material-icons">videocam</span>
             <span class="btn-text">Video</span>
+          </button>
+
+          <button id="replayBtn" class="capture-btn secondary" title="Download Replay JSON">
+            <span class="material-icons">history</span>
+            <span class="btn-text">Replay</span>
           </button>
         </div>
 
@@ -191,9 +196,28 @@
             Clear History
           </button>
         </div>
-        
-        <!-- History status (movido para o final) -->
+
+        <!-- History status -->
         <div id="historyStatus" class="capture-status" style="display: none;">
+          <div class="status-item">
+            <span class="material-icons status-icon">info</span>
+            <span class="status-text"></span>
+          </div>
+        </div>
+      </section>
+
+      <!-- Jira Sync (Quick) -->
+      <section class="report-section">
+        <div class="section-header">
+          <h2>Jira Sync</h2>
+        </div>
+        <div class="button-row">
+          <button id="popupJiraSyncNow" class="action-btn">
+            <span class="material-icons">sync</span>
+            Sync Now
+          </button>
+        </div>
+        <div id="popupJiraSyncStatus" class="capture-status" style="display: none;">
           <div class="status-item">
             <span class="material-icons status-icon">info</span>
             <span class="status-text"></span>
