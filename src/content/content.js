@@ -748,6 +748,23 @@ if (typeof window.bugSpotterContentInitialized === 'undefined') {
       // Disponibiliza para o background script
       window.bugSpotterLogs = this.consoleLogs;
       
+      // Enviar erro para background imediatamente para processamento AI e notificação
+      if (level === 'error') {
+        try {
+          chrome.runtime.sendMessage({
+            type: 'CONSOLE_ERROR',
+            data: {
+              message: message,
+              timestamp: logEntry.timestamp,
+              url: logEntry.url,
+              stack: logEntry.stack
+            }
+          });
+        } catch (e) {
+          // Ignorar erros de envio (ex: extensão atualizada/contexto inválido)
+        }
+      }
+      
       // Salvar menos frequentemente (a cada 25 logs ou erros importantes)
       if (level === 'error' || this.consoleLogs.length % 25 === 0) {
         this.saveLogsToStorage();

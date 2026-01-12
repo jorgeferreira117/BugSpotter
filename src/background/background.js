@@ -509,6 +509,38 @@ class BugSpotterBackground {
     } catch (e) {
       // Falha silenciosa ao registrar navegação
     }
+
+    // 🆕 Auto-anexar debugger para análise AI se habilitado
+    // O usuário prefere a barra visível para garantir que a IA funcione com contexto completo
+    try {
+      const settings = await this.getSettings();
+      if (settings.ai && settings.ai.enabled) {
+        let shouldAttach = true; // Default to true if enabled
+        const allowedDomains = settings.ai.allowedDomains;
+        
+        // Verificar domínios permitidos (logica espelhada de processErrorWithAI)
+        if (Array.isArray(allowedDomains) && allowedDomains.length > 0) {
+          const matches = allowedDomains.some(d => typeof d === 'string' && d.trim() !== '' && url.includes(d.trim()));
+          if (!matches) shouldAttach = false;
+        } else {
+          // Fallback para configuração antiga
+          const domainFilter = settings.ai?.domainFilter;
+          if (domainFilter && typeof domainFilter === 'string' && domainFilter.trim() !== '') {
+            if (!url.includes(domainFilter)) shouldAttach = false;
+          }
+        }
+        
+        if (shouldAttach) {
+          // Verificar se já está anexado para evitar chamadas desnecessárias
+          if (!this.debuggerSessions.has(tabId)) {
+            console.log(`[Background] Auto-anexando debugger em ${url} para análise AI`);
+            await this.attachDebugger(tabId);
+          }
+        }
+      }
+    } catch (e) {
+      console.error('[Background] Erro ao auto-anexar debugger:', e);
+    }
   }
   
   cleanupTabData(tabId) {
@@ -1504,8 +1536,8 @@ class BugSpotterBackground {
         }
         return;
       }
-      // Processar mensagens de erro HTTP do content script
-      if (message.type === 'HTTP_ERROR' || message.type === 'NETWORK_ERROR') {
+      // Processar mensagens de erro HTTP ou Console do content script
+      if (message.type === 'HTTP_ERROR' || message.type === 'NETWORK_ERROR' || message.type === 'CONSOLE_ERROR') {
         const tabId = sender.tab?.id;
         if (tabId) {
           // 🆕 Verificar se é um log duplicado antes de processar
@@ -1523,33 +1555,53 @@ class BugSpotterBackground {
             }
           }
           
-          // Adicionar erro aos logs persistentes
-          let errorMessage;
-          if (message.type === 'HTTP_ERROR') {
-            // Incluir corpo da resposta se disponível
-            if (message.data.responseBody) {
-              const responseInfo = typeof message.data.responseBody === 'object' 
-                ? JSON.stringify(message.data.responseBody)
-                : message.data.responseBody;
-              errorMessage = `HTTP ${message.data.status} ${message.data.statusText} - ${message.data.url} | Response: ${responseInfo}`;
-            } else {
-              errorMessage = `HTTP ${message.data.status} ${message.data.statusText} - ${message.data.url}`;
-            }
-          } else {
-            errorMessage = `Network Error: ${message.data.error} - ${message.data.url}`;
-          }
+          let errorLog;
           
-          const errorLog = {
-            level: 'error',
-            message: errorMessage,
-            timestamp: message.data.timestamp || new Date().toISOString(),
-            source: 'network',
-            url: message.data.url,
-            status: message.data.status,
-            method: message.data.method,
-            responseBody: message.data.responseBody,
-            responseText: message.data.responseText
-          };
+          if (message.type === 'CONSOLE_ERROR') {
+            errorLog = {
+              level: 'error',
+              message: message.data.message,
+              timestamp: message.data.timestamp || new Date().toISOString(),
+              source: 'console',
+              url: message.data.url,
+              stack: message.data.stack
+            };
+          } else {
+            // 🆕 Prevenir duplicação: Se o debugger estiver anexado, ignorar mensagens de erro de rede do content script
+            // pois o debugger já captura esses eventos com mais detalhes.
+            if (this.debuggerSessions.has(tabId)) {
+              // Ignorar silenciosamente pois será processado pelo evento Network.responseReceived
+              return;
+            }
+
+            // Adicionar erro aos logs persistentes
+            let errorMessage;
+            if (message.type === 'HTTP_ERROR') {
+              // Incluir corpo da resposta se disponível
+              if (message.data.responseBody) {
+                const responseInfo = typeof message.data.responseBody === 'object' 
+                  ? JSON.stringify(message.data.responseBody)
+                  : message.data.responseBody;
+                errorMessage = `HTTP ${message.data.status} ${message.data.statusText} - ${message.data.url} | Response: ${responseInfo}`;
+              } else {
+                errorMessage = `HTTP ${message.data.status} ${message.data.statusText} - ${message.data.url}`;
+              }
+            } else {
+              errorMessage = `Network Error: ${message.data.error} - ${message.data.url}`;
+            }
+            
+            errorLog = {
+              level: 'error',
+              message: errorMessage,
+              timestamp: message.data.timestamp || new Date().toISOString(),
+              source: 'network',
+              url: message.data.url,
+              status: message.data.status,
+              method: message.data.method,
+              responseBody: message.data.responseBody,
+              responseText: message.data.responseText
+            };
+          }
 
           // Adicionar aos logs persistentes (normalizado: objeto { logs, networkRequests, errors })
           let persistent = this.persistentLogs.get(tabId);
@@ -1559,6 +1611,11 @@ class BugSpotterBackground {
           }
           this.addToBuffer(persistent.logs, errorLog);
           this.addToBuffer(persistent.errors, errorLog);
+          
+          // 🆕 Adicionar também a networkRequests APENAS se for erro de rede
+          if (message.type === 'HTTP_ERROR' || message.type === 'NETWORK_ERROR') {
+            this.addToBuffer(persistent.networkRequests, errorLog);
+          }
           
           // Processar com AI se habilitado
           try {
@@ -3452,7 +3509,8 @@ ${lines.join('\n')}`;
       
       // Verificar se o status do erro atende ao mínimo configurado
       const minStatus = settings.ai.minStatus || 400;
-      if (errorLog.status < minStatus) {
+      // Para erros de console, ignoramos a verificação de statusCode
+      if (errorLog.source !== 'console' && errorLog.status < minStatus) {
         return;
       }
       
@@ -3522,11 +3580,33 @@ ${lines.join('\n')}`;
    * @returns {string} Hash único do erro
    */
   generateErrorHash(errorLog) {
-    // Criar hash baseado em URL, status, método e parte do corpo da resposta
+    // Normalizar URL para remover query params e evitar duplicatas por parâmetros dinâmicos (IDs, timestamps, etc)
+    let normalizedUrl = errorLog.url;
+    try {
+      if (errorLog.url && typeof errorLog.url === 'string') {
+        const urlObj = new URL(errorLog.url);
+        // Usar apenas origin + pathname para agrupar erros do mesmo endpoint
+        let pathname = urlObj.pathname;
+        
+        // Remove UUIDs/IDs from path to group similar endpoints
+        // Example: /api/cs/command/cache/TESTE_1 -> /api/cs/command/cache/{id}
+        // Example: /api/b2bcontract/CT_.../share -> /api/b2bcontract/{id}/share
+        pathname = pathname.replace(/\/([0-9a-fA-F-]{36}|[A-Za-z0-9_-]{5,})\b/g, '/{id}');
+        
+        normalizedUrl = urlObj.origin + pathname;
+      }
+    } catch (e) {
+      // Se falhar o parse (ex: url relativa ou inválida), mantém original
+    }
+
+    // Criar hash baseado em URL normalizada, status, método e parte do corpo da resposta
     const hashData = {
-      url: errorLog.url,
+      url: normalizedUrl,
       status: errorLog.status,
       method: errorLog.method || 'GET',
+      // Incluir mensagem e stack para erros de console
+      message: errorLog.message,
+      stack: errorLog.stack ? errorLog.stack.substring(0, 200) : undefined,
       // Incluir apenas primeiros 200 caracteres do corpo da resposta para evitar hashes diferentes por timestamps
       responseSnippet: (errorLog.responseBody || errorLog.responseText || '').toString().substring(0, 200)
     };
@@ -3909,6 +3989,11 @@ ${lines.join('\n')}`;
       const notificationId = `ai-report-${Date.now()}`;
       const severity = (aiReport.severity || 'unknown').toUpperCase();
       
+      // Definir mensagem baseada na fonte do erro
+      const statusMsg = errorLog.source === 'console' 
+        ? 'Console Error' 
+        : `${errorLog.status || 'N/A'} ${errorLog.statusText || ''}`.trim();
+
       // Definir ícone baseado na severidade
       const iconUrl = this.getNotificationIcon(aiReport.severity);
       
@@ -3916,7 +4001,7 @@ ${lines.join('\n')}`;
         type: 'basic',
         iconUrl: iconUrl,
         title: `BugSpotter AI - ${severity}`,
-        message: `${aiReport.title}\n${errorLog.status} ${errorLog.statusText}`,
+        message: `${aiReport.title}\n${statusMsg}`,
         contextMessage: `URL: ${new URL(errorLog.url).hostname}`,
         priority: aiReport.severity === 'critical' ? 2 : 1,
         requireInteraction: aiReport.severity === 'critical'
@@ -3928,7 +4013,7 @@ ${lines.join('\n')}`;
         type: 'ai-report',
         severity: aiReport.severity,
         title: aiReport.title,
-        message: `${errorLog.status} ${errorLog.statusText}`,
+        message: statusMsg,
         url: errorLog.url,
         timestamp: Date.now(),
         aiReportId: aiReport.id
@@ -3992,29 +4077,32 @@ ${lines.join('\n')}`;
         return;
       }
 
-      // Verificar se o erro atende ao threshold
-      if (errorLog.status < notificationSettings.errorThreshold) {
+      // Verificar se o erro atende ao threshold (ignorar para erros de console)
+      if (errorLog.source !== 'console' && errorLog.status < notificationSettings.errorThreshold) {
         return;
       }
 
       const notificationId = `error-${Date.now()}`;
       
+      const title = errorLog.source === 'console' ? 'BugSpotter - Erro de Console' : 'BugSpotter - Erro HTTP Detectado';
+      const message = errorLog.source === 'console' ? (errorLog.message || 'Erro desconhecido') : `${errorLog.status} ${errorLog.statusText}`;
+      
       chrome.notifications.create(notificationId, {
         type: 'basic',
         iconUrl: chrome.runtime.getURL('icon48.png'),
-        title: 'BugSpotter - Erro HTTP Detectado',
-        message: `${errorLog.status} ${errorLog.statusText}`,
+        title: title,
+        message: message,
         contextMessage: `URL: ${new URL(errorLog.url).hostname}`,
-        priority: errorLog.status >= 500 ? 2 : 1
+        priority: (errorLog.status >= 500 || errorLog.source === 'console') ? 2 : 1
       });
       
       // Armazenar notificação
       await this.storeNotification({
         id: notificationId,
-        type: 'http-error',
-        severity: errorLog.status >= 500 ? 'high' : 'medium',
-        title: `Erro HTTP ${errorLog.status}`,
-        message: errorLog.statusText,
+        type: errorLog.source === 'console' ? 'console-error' : 'http-error',
+        severity: (errorLog.status >= 500 || errorLog.source === 'console') ? 'high' : 'medium',
+        title: title,
+        message: message,
         url: errorLog.url,
         timestamp: Date.now(),
         tabId: tabId

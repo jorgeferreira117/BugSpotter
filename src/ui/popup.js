@@ -918,9 +918,9 @@ class BugSpotter {
           }
         } catch (_) {
           // Ignorar e usar fallback tradicional
-        } finally {
-          try { await chrome.runtime.sendMessage({ action: 'DETACH_DEBUGGER', tabId: tab.id }); } catch (_) {}
         }
+        // ❌ REMOVIDO: Detach imediato removido a pedido do utilizador para garantir estabilidade da IA
+        // A barra de debug permanecerá visível
       }
 
       // 3) Se ainda vazio, usar fallback tradicional que injeta script
