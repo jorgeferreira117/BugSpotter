@@ -19,8 +19,8 @@ class BugSpotterSettings {
     this.defaultSettings = {
       jira: {
         enabled: false,
-        baseUrl: 'https://jorgealijo.atlassian.net',
-        email: 'jorge.alijo@gmail.com',
+        baseUrl: '',
+        email: '',
         apiToken: '',
         projectKey: 'BUG',
         issueTypeId: '10035',

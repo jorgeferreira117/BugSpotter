@@ -55,6 +55,25 @@ class BugSpotter {
     
     // Carregar configurações no cache
     this.cachedSettings = await this.getSettings();
+
+    // Apply feature flags
+    if (typeof AppConfig !== 'undefined' && AppConfig.features) {
+      if (!AppConfig.features.showSettingsButton) {
+        const settingsBtn = document.getElementById('openSettings');
+        if (settingsBtn) settingsBtn.style.display = 'none';
+      }
+      
+      // Hide Jira Sync in popup if disabled in settings
+      if (AppConfig.features.settings && !AppConfig.features.settings.showJiraSyncTab) {
+        const popupJiraSyncBtn = document.getElementById('popupJiraSyncNow');
+        if (popupJiraSyncBtn) {
+          // Find the parent section and hide it
+          const section = popupJiraSyncBtn.closest('.report-section');
+          if (section) section.style.display = 'none';
+        }
+      }
+    }
+
     await this.loadBugHistory();
     await this.loadPriorityOptions();
     this.setupEventListeners();
@@ -2366,7 +2385,7 @@ class BugSpotter {
 
   // Tornar getJiraTicketUrl síncrono usando o cache
   getJiraTicketUrl(ticketKey) {
-    const baseUrl = this.cachedSettings?.jira?.baseUrl || 'https://jorgealijo.atlassian.net';
+    const baseUrl = this.cachedSettings?.jira?.baseUrl || '';
     return `${baseUrl}/browse/${ticketKey}`;
   }
 

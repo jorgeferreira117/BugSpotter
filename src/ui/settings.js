@@ -79,6 +79,38 @@ class BugSpotterSettings {
       
       // Inicializar o estado das keys na UI
       this.updateAPIKeyInputState();
+
+      // Aplicar feature flags
+      this.applyFeatureFlags();
+    }
+
+    applyFeatureFlags() {
+      if (typeof AppConfig === 'undefined' || !AppConfig.features || !AppConfig.features.settings) {
+        return;
+      }
+
+      const settings = AppConfig.features.settings;
+
+      // Helper to hide tab
+      const hideTab = (tabName) => {
+        const btn = document.querySelector(`.tab-button[data-tab="${tabName}"]`);
+        if (btn) btn.style.display = 'none';
+      };
+
+      if (!settings.showJiraTab) hideTab('jira');
+      if (!settings.showEasyVistaTab) hideTab('easyvista');
+      if (!settings.showAITab) hideTab('ai');
+      if (!settings.showCaptureTab) hideTab('capture');
+      if (!settings.showSecurityTab) hideTab('security');
+      if (!settings.showNotificationsTab) hideTab('notifications');
+      if (!settings.showDataTab) hideTab('data');
+      if (!settings.showMetricsTab) hideTab('metrics');
+
+      // Hide Jira Sync Section (which is inside Jira tab)
+      if (!settings.showJiraSyncTab) {
+        const jiraSyncSection = document.querySelector('.jira-sync-section');
+        if (jiraSyncSection) jiraSyncSection.style.display = 'none';
+      }
     }
 
   initTabs() {
@@ -95,7 +127,18 @@ class BugSpotterSettings {
     });
     
     // Load saved active tab or default to first tab
-    const savedTab = localStorage.getItem('bugspotter-active-tab') || 'jira';
+    let savedTab = localStorage.getItem('bugspotter-active-tab') || 'jira';
+    
+    // Verify if saved tab is visible (not hidden by feature flags)
+    const savedTabBtn = document.querySelector(`.tab-button[data-tab="${savedTab}"]`);
+    if (!savedTabBtn || savedTabBtn.style.display === 'none') {
+      // Find first visible tab
+      const firstVisibleTab = Array.from(tabButtons).find(btn => btn.style.display !== 'none');
+      if (firstVisibleTab) {
+        savedTab = firstVisibleTab.getAttribute('data-tab');
+      }
+    }
+    
     this.switchTab(savedTab);
   }
   
