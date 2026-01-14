@@ -261,6 +261,26 @@ class BugSpotterBackground {
           }
       }
     });
+
+    // 🆕 Tentar restaurar sessões de debugger em abas ativas ao iniciar
+    // Isso garante que a barra reapareça após recarregar a extensão
+    this.restoreDebugSessions();
+  }
+
+  // 🆕 Restaurar sessões de debugger em abas qualificadas
+  async restoreDebugSessions() {
+    try {
+      const settings = await this.getSettings();
+      if (!settings.ai || !settings.ai.enabled) return;
+
+      const tabs = await chrome.tabs.query({ url: ["http://*/*", "https://*/*"] });
+      for (const tab of tabs) {
+        // Simular evento de navegação completa para acionar a lógica de auto-attach
+        this.handleNavigationCompleted(tab.id, tab.url);
+      }
+    } catch (e) {
+      console.error('[Background] Erro ao restaurar sessões:', e);
+    }
   }
   
   setupNavigationListeners() {

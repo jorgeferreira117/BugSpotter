@@ -1,0 +1,9 @@
+BugSpotter - Instruções de Instalação
+
+1. Descompacte este ficheiro ZIP (bugSpotter_release.zip) para uma pasta no seu computador.
+2. Abra o Google Chrome.
+3. Na barra de endereço, digite: chrome://extensions
+4. No canto superior direito, ative o "Modo de programador" (Developer mode).
+5. Clique no botão "Carregar não compactada" (Load unpacked) no canto superior esquerdo.
+6. Selecione a pasta onde descompactou os ficheiros (a pasta que contém o ficheiro manifest.json).
+7. A extensão BugSpotter está agora instalada e pronta a usar!
